@@ -1,6 +1,5 @@
 "use client";
 
-import { useParams } from "next/navigation";
 import { ArrowUp, Mic, Plus } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
@@ -8,10 +7,9 @@ import { EXAMPLE_MESSAGES, LOKI_IA_MESSAGES, getChatById } from "@/lib/data/chat
 import { cn } from "@/lib/utils";
 
 // TODO(fase-2): vista de ejemplo; mensajes reales y envío en fase 2.
-export default function ConversationPage(): React.JSX.Element {
-  const params = useParams<{ id: string }>();
-  const chat = getChatById(params.id);
-  const messages = params.id === "loki-ia" ? LOKI_IA_MESSAGES : EXAMPLE_MESSAGES;
+export function ConversationView({ chatId }: { chatId: string }): React.JSX.Element {
+  const chat = getChatById(chatId);
+  const messages = chatId === "loki-ia" ? LOKI_IA_MESSAGES : EXAMPLE_MESSAGES;
 
   return (
     <div className="flex min-h-[calc(100dvh-68px)] flex-col md:min-h-[calc(100dvh-48px)]">

@@ -1,11 +1,24 @@
-import { ProyectosTabs, type ProyectosTab } from "@/app/(app)/proyectos/proyectos-tabs";
+import * as React from "react";
+import { ProyectosTabs } from "@/app/(app)/proyectos/proyectos-tabs";
 
-export default async function ProyectosPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ tab?: string }>;
-}): Promise<React.JSX.Element> {
-  const params = await searchParams;
-  const tab: ProyectosTab = params.tab === "ideas" ? "ideas" : "proyectos";
-  return <ProyectosTabs key={tab} defaultTab={tab} />;
+function ProyectosFallback(): React.JSX.Element {
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 py-4">
+      <div
+        aria-hidden="true"
+        className="flex rounded-full bg-surface-soft p-1"
+      >
+        <span className="h-9 flex-1 rounded-full bg-background shadow-float" />
+        <span className="h-9 flex-1" />
+      </div>
+    </div>
+  );
+}
+
+export default function ProyectosPage(): React.JSX.Element {
+  return (
+    <React.Suspense fallback={<ProyectosFallback />}>
+      <ProyectosTabs defaultTab="proyectos" />
+    </React.Suspense>
+  );
 }

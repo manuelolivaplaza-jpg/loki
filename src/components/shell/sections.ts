@@ -5,6 +5,7 @@ import {
   MessageCircle,
   type LucideIcon,
 } from "lucide-react";
+import { normalizePathname } from "@/lib/navigation";
 
 export type SectionKey = "inicio" | "chat" | "calendario" | "proyectos";
 
@@ -91,15 +92,16 @@ export const SECTIONS: Record<SectionKey, SectionMeta> = {
 };
 
 export function getSectionByPath(pathname: string | null): SectionMeta {
-  if (!pathname) return SECTIONS.inicio;
+  const normalized = normalizePathname(pathname);
+  if (!normalized) return SECTIONS.inicio;
   const found = NAV_ITEMS.find(
-    (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
+    (item) => normalized === item.href || normalized.startsWith(`${item.href}/`),
   );
   // Rutas heredadas: el feed vive dentro del chat e ideas dentro de proyectos.
-  if (pathname === "/feed" || pathname.startsWith("/feed/")) {
+  if (normalized === "/feed" || normalized.startsWith("/feed/")) {
     return SECTIONS.chat;
   }
-  if (pathname === "/ideas" || pathname.startsWith("/ideas/")) {
+  if (normalized === "/ideas" || normalized.startsWith("/ideas/")) {
     return SECTIONS.proyectos;
   }
   return found ?? SECTIONS.inicio;
@@ -111,12 +113,17 @@ export function getSectionByPath(pathname: string | null): SectionMeta {
  * `/chat/publicaciones` es una lista (no una conversación) y conserva la barra.
  */
 export function isFullscreenRoute(pathname: string | null): boolean {
-  if (!pathname) return false;
-  if (pathname === "/perfil" || pathname.startsWith("/perfil/")) return true;
-  if (pathname === "/configuracion" || pathname.startsWith("/configuracion/")) {
+  const normalized = normalizePathname(pathname);
+  if (!normalized) return false;
+  if (normalized === "/perfil" || normalized.startsWith("/perfil/")) return true;
+  if (normalized === "/configuracion" || normalized.startsWith("/configuracion/")) {
     return true;
   }
-  if (pathname === "/chat/publicaciones") return false;
-  if (pathname.startsWith("/chat/") && pathname !== "/chat/") return true;
+  if (normalized === "/chat/publicaciones") return false;
+  if (normalized === "/chat/c" || normalized.startsWith("/chat/c/")) return true;
+  if (normalized === "/chat/loki-ia" || normalized.startsWith("/chat/loki-ia/")) {
+    return true;
+  }
+  if (normalized.startsWith("/chat/") && normalized !== "/chat/") return true;
   return false;
 }

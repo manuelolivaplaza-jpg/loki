@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ensureUserProfile } from "@/lib/data/users";
+import { normalizePathname, useAppPathname } from "@/lib/navigation";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
 
@@ -47,7 +48,7 @@ export function AuthGuard({ children }: AuthGuardProps): React.JSX.Element {
   const setProfileStatus = useProfileStore((state) => state.setProfileStatus);
   const setProfileError = useProfileStore((state) => state.setProfileError);
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = useAppPathname();
   const [attempt, setAttempt] = React.useState(0);
 
   React.useEffect(() => {
@@ -110,9 +111,10 @@ export function AuthGuard({ children }: AuthGuardProps): React.JSX.Element {
     if (profileStatus !== "ready" || profile === null) {
       return;
     }
+    const normalized = normalizePathname(pathname);
     const onOnboarding =
-      pathname === "/onboarding" ||
-      pathname?.startsWith("/onboarding/") === true;
+      normalized === "/onboarding" ||
+      normalized?.startsWith("/onboarding/") === true;
     if (!profile.onboardingCompleted && !onOnboarding) {
       router.replace("/onboarding");
     } else if (profile.onboardingCompleted && onOnboarding) {

@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { Plus } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
@@ -13,6 +12,7 @@ import {
   isFullscreenRoute,
   type SectionMeta,
 } from "@/components/shell/sections";
+import { isActiveHref, useAppPathname } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 
 /**
@@ -54,7 +54,7 @@ function BottomTab({
 }
 
 export function BottomNav(): React.JSX.Element | null {
-  const pathname = usePathname();
+  const pathname = useAppPathname();
   const [actionsOpen, setActionsOpen] = React.useState(false);
 
   if (isFullscreenRoute(pathname)) return null;
@@ -63,7 +63,7 @@ export function BottomNav(): React.JSX.Element | null {
   const right = NAV_ITEMS.slice(2);
 
   function isActive(href: string): boolean {
-    return pathname === href || pathname?.startsWith(`${href}/`) === true;
+    return isActiveHref(pathname, href);
   }
 
   return (

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Lightbulb } from "lucide-react";
 import { SECTIONS } from "@/components/shell/sections";
 import { Card, CardDivider, CardRow } from "@/components/ui/card";
@@ -37,10 +37,13 @@ export function ProyectosTabs({
   defaultTab: ProyectosTab;
 }): React.JSX.Element {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const activeTab: ProyectosTab =
+    searchParams.get("tab") === "ideas" ? "ideas" : defaultTab === "ideas" ? "ideas" : "proyectos";
   const section = SECTIONS.proyectos;
 
   function selectTab(tab: ProyectosTab): void {
-    if (tab === defaultTab) return;
+    if (tab === activeTab) return;
     router.replace(tab === "ideas" ? "/proyectos?tab=ideas" : "/proyectos");
   }
 
@@ -52,7 +55,7 @@ export function ProyectosTabs({
         className="flex rounded-full bg-surface-soft p-1"
       >
         {TABS.map((tab) => {
-          const selected = defaultTab === tab.key;
+          const selected = activeTab === tab.key;
           return (
             <button
               key={tab.key}
@@ -74,7 +77,7 @@ export function ProyectosTabs({
         })}
       </div>
 
-      {defaultTab === "ideas" ? (
+      {activeTab === "ideas" ? (
         <div className="mt-2">
           <SectionLabel>Ideas del espacio</SectionLabel>
           <Card>

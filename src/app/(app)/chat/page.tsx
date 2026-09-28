@@ -48,7 +48,6 @@ export default function ChatPage(): React.JSX.Element {
       </ul>
 
       <div className="mt-2 px-2 md:px-0">
-        <SectionLabel>Publicaciones del espacio</SectionLabel>
         <Card>
           <Link
             href="/chat/publicaciones"
@@ -83,7 +82,7 @@ export default function ChatPage(): React.JSX.Element {
         {EXAMPLE_CHATS.map((chat) => (
           <li key={chat.id}>
             <ListRow
-              href={`/chat/${chat.id}`}
+              href={`/chat/c?id=${chat.id}`}
               title={chat.name}
               subtitle={chat.preview}
               meta={chat.time}

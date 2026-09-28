@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { ChevronLeft, Info, Plus, Search, X } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
@@ -14,7 +14,8 @@ import {
   QuickActionsMobileMenu,
 } from "@/components/shell/quick-actions";
 import { spring } from "@/lib/motion";
-import { getChatById, getChatIdFromPath } from "@/lib/data/chats";
+import { getChatById, getConversationId } from "@/lib/data/chats";
+import { useAppPathname } from "@/lib/navigation";
 import { MobileWorkspaceSwitcher } from "@/components/workspaces/mobile-workspace-switcher";
 import { AVATAR_FALLBACK_COLOR } from "@/types/models";
 
@@ -22,13 +23,14 @@ type MobileHeaderProps = {
   title: string;
 };
 
-export function MobileHeader({ title }: MobileHeaderProps): React.JSX.Element {
-  const pathname = usePathname();
+function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
+  const pathname = useAppPathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [actionsOpen, setActionsOpen] = React.useState(false);
   const [searchOpen, setSearchOpen] = React.useState(false);
 
-  const chatId = getChatIdFromPath(pathname);
+  const chatId = getConversationId(pathname, searchParams.get("id"));
   const isChatList = pathname === "/chat";
   const isPerfil =
     pathname === "/perfil" || (pathname?.startsWith("/perfil/") ?? false);
@@ -133,5 +135,13 @@ export function MobileHeader({ title }: MobileHeaderProps): React.JSX.Element {
         onClose={() => setSearchOpen(false)}
       />
     </header>
+  );
+}
+
+export function MobileHeader({ title }: MobileHeaderProps): React.JSX.Element {
+  return (
+    <React.Suspense fallback={<header className="sticky top-0 z-40 md:hidden"><div className="h-[68px]" /></header>}>
+      <MobileHeaderInner title={title} />
+    </React.Suspense>
   );
 }

@@ -1,3 +1,5 @@
+import { normalizePathname } from "@/lib/navigation";
+
 // TODO(fase-2): reemplazar estos datos de ejemplo por conversaciones reales de Firestore.
 
 export type ChatPreview = {
@@ -36,14 +38,31 @@ export function getChatById(id: string): ChatPreview | null {
 }
 
 /** Subrutas de /chat que son listas, no conversaciones. */
-const CHAT_LIST_ROUTES: readonly string[] = ["publicaciones"];
+const CHAT_LIST_ROUTES: readonly string[] = ["publicaciones", "c"];
 
 export function getChatIdFromPath(pathname: string | null): string | null {
-  if (!pathname) return null;
-  if (!pathname.startsWith("/chat/") || pathname === "/chat/") return null;
-  const segment = pathname.slice("/chat/".length).split("/")[0] ?? "";
+  const normalized = normalizePathname(pathname);
+  if (!normalized) return null;
+  if (normalized === "/chat/loki-ia") return "loki-ia";
+  if (!normalized.startsWith("/chat/") || normalized === "/chat/") return null;
+  const segment = normalized.slice("/chat/".length).split("/")[0] ?? "";
   if (segment === "" || CHAT_LIST_ROUTES.includes(segment)) return null;
   return segment;
+}
+
+/** Resuelve el id de conversación con pathname + query (?id=) de /chat/c. */
+export function getConversationId(
+  pathname: string | null,
+  queryId: string | null,
+): string | null {
+  const normalized = normalizePathname(pathname);
+  if (normalized === "/chat/loki-ia") return "loki-ia";
+  if (normalized === "/chat/c") {
+    if (queryId === null || queryId === "") return null;
+    if (CHAT_LIST_ROUTES.includes(queryId)) return null;
+    return queryId;
+  }
+  return getChatIdFromPath(normalized);
 }
 
 export type ChatMessage = {

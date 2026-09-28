@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { Plus } from "lucide-react";
 import {
   Popover,
@@ -18,10 +17,11 @@ import {
 } from "@/components/shell/quick-actions";
 import { NAV_ITEMS } from "@/components/shell/sections";
 import { WorkspaceSwitcher } from "@/components/workspaces/workspace-switcher";
+import { isActiveHref, useAppPathname } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 
 export function Sidebar(): React.JSX.Element {
-  const pathname = usePathname();
+  const pathname = useAppPathname();
   const [newOpen, setNewOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<QuickAction | null>(null);
 
@@ -37,8 +37,7 @@ export function Sidebar(): React.JSX.Element {
       <nav aria-label="Navegación principal" className="mt-2 flex-1 px-2 xl:px-3">
         <ul className="flex flex-col items-center gap-1 xl:items-stretch">
           {NAV_ITEMS.map((item) => {
-            const active =
-              pathname === item.href || pathname?.startsWith(`${item.href}/`) === true;
+            const active = isActiveHref(pathname, item.href);
             return (
               <li key={item.key} className="w-full">
                 <Link

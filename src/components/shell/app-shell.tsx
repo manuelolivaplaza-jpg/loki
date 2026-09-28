@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { usePathname } from "next/navigation";
 import { PanelRight } from "lucide-react";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { MobileHeader } from "@/components/shell/mobile-header";
@@ -11,6 +10,7 @@ import { Sidebar } from "@/components/shell/sidebar";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { WorkspaceBootstrap } from "@/components/workspaces/workspace-bootstrap";
+import { normalizePathname, useAppPathname } from "@/lib/navigation";
 import { useUiStore } from "@/stores/ui-store";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
@@ -20,20 +20,21 @@ type AppShellProps = {
 };
 
 function getHeaderTitle(pathname: string | null): string {
-  if (pathname === "/perfil" || (pathname?.startsWith("/perfil/") ?? false)) {
+  const normalized = normalizePathname(pathname);
+  if (normalized === "/perfil" || (normalized?.startsWith("/perfil/") ?? false)) {
     return "Perfil";
   }
   if (
-    pathname === "/configuracion" ||
-    (pathname?.startsWith("/configuracion/") ?? false)
+    normalized === "/configuracion" ||
+    (normalized?.startsWith("/configuracion/") ?? false)
   ) {
     return "Configuración";
   }
-  return getSectionByPath(pathname).label;
+  return getSectionByPath(normalized).label;
 }
 
 export function AppShell({ children }: AppShellProps): React.JSX.Element {
-  const pathname = usePathname();
+  const pathname = useAppPathname();
   const section = getSectionByPath(pathname);
   const headerTitle = getHeaderTitle(pathname);
   const hideBottomNav = isFullscreenRoute(pathname);

@@ -1,13 +1,39 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { NAV_ITEMS } from "@/components/shell/sections";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { signOutUser } from "@/lib/auth/actions";
+import { useSessionStore } from "@/stores/session-store";
 import { cn } from "@/lib/utils";
+
+function getInitial(displayName: string | null, email: string | null): string {
+  const source = displayName?.trim() !== "" ? displayName : email;
+  if (source === null || source === undefined || source.trim() === "") {
+    return "L";
+  }
+  return source.trim().charAt(0).toUpperCase();
+}
 
 export function Sidebar(): React.JSX.Element {
   const pathname = usePathname();
+  const router = useRouter();
+  const user = useSessionStore((state) => state.user);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [signingOut, setSigningOut] = React.useState(false);
+
+  async function handleSignOut(): Promise<void> {
+    setSigningOut(true);
+    try {
+      await signOutUser();
+    } finally {
+      setMenuOpen(false);
+      setSigningOut(false);
+      router.replace("/login");
+    }
+  }
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-[68px] shrink-0 flex-col border-r border-border bg-background md:flex xl:w-[220px]">
@@ -75,14 +101,41 @@ export function Sidebar(): React.JSX.Element {
         </ul>
       </nav>
 
-      <div className="flex flex-col items-center gap-3 px-2 py-3 xl:flex-row xl:justify-between xl:px-3">
+      <div className="relative flex flex-col items-center gap-3 px-2 py-3 xl:flex-row xl:justify-between xl:px-3">
         <ThemeToggle />
-        <span
-          aria-hidden
-          className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface-2 text-meta font-medium text-muted-foreground"
+        <button
+          type="button"
+          onClick={() => setMenuOpen((open) => !open)}
+          aria-label="Abrir menú de sesión"
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface-2 text-meta font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
-          M
-        </span>
+          <span aria-hidden>{getInitial(user?.displayName ?? null, user?.email ?? null)}</span>
+        </button>
+        {menuOpen ? (
+          <div
+            role="menu"
+            aria-label="Menú de sesión"
+            className="absolute bottom-12 left-2 z-30 w-48 rounded-xl border border-border bg-popover p-1 shadow-lg xl:left-auto xl:right-2"
+          >
+            {user?.email !== null && user?.email !== undefined ? (
+              <p className="truncate px-3 py-2 text-[13px] text-muted-foreground">
+                {user.email}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              role="menuitem"
+              aria-label="Cerrar sesión"
+              onClick={handleSignOut}
+              disabled={signingOut}
+              className="w-full rounded-lg px-3 py-2 text-left text-[14px] font-medium text-foreground outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
+            >
+              {signingOut ? "Cerrando..." : "Cerrar sesión"}
+            </button>
+          </div>
+        ) : null}
       </div>
     </aside>
   );

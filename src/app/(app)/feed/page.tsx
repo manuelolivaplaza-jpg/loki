@@ -1,3 +1,7 @@
+import { Avatar } from "@/components/ui/avatar";
+import { Card } from "@/components/ui/card";
+import { AVATAR_FALLBACK_COLOR } from "@/types/models";
+
 type FeedPost = {
   name: string;
   handle: string;
@@ -32,30 +36,29 @@ const EXAMPLE_POSTS: FeedPost[] = [
 
 export default function FeedPage(): React.JSX.Element {
   return (
-    <ul className="divide-y divide-border">
+    <ul className="flex flex-col gap-4 px-3 py-3 md:gap-6 md:px-4">
       {EXAMPLE_POSTS.map((post, index) => (
-        <li key={`${post.handle}-${post.time}`} className="flex gap-3 px-3 py-3 md:px-4">
-          <span
-            aria-hidden
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-[15px] font-semibold text-foreground"
-          >
-            {post.name.charAt(0)}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="min-w-0 truncate">
-              <span className="font-semibold text-foreground">{post.name}</span>{" "}
-              <span className="text-meta text-muted-foreground">
-                @{post.handle} · {post.time}
-              </span>
-            </p>
-            <p className="mt-0.5 text-[15px] leading-5 text-foreground">{post.text}</p>
+        <li key={`${post.handle}-${post.time}`}>
+          <Card className="p-4">
+            <div className="flex gap-3">
+              <Avatar initial={post.name.charAt(0)} color={AVATAR_FALLBACK_COLOR} size={40} />
+              <div className="min-w-0 flex-1">
+                <p className="min-w-0 truncate">
+                  <span className="font-semibold text-foreground">{post.name}</span>{" "}
+                  <span className="text-meta text-muted-foreground">
+                    @{post.handle} · {post.time}
+                  </span>
+                </p>
+                <p className="mt-1 text-body-sm leading-5 text-foreground">{post.text}</p>
+              </div>
+            </div>
             {post.withMedia ? (
               <div
-                aria-hidden
-                className={`mt-2 h-36 rounded-2xl border border-border ${MEDIA_STYLES[index % MEDIA_STYLES.length]}`}
+                aria-hidden="true"
+                className={`mt-3 h-36 rounded-lg ${MEDIA_STYLES[index % MEDIA_STYLES.length]}`}
               />
             ) : null}
-          </div>
+          </Card>
         </li>
       ))}
     </ul>

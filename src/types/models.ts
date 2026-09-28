@@ -22,6 +22,12 @@ export const AVATAR_COLORS: readonly AvatarColorOption[] = [
 export const DEFAULT_AVATAR_COLOR: string =
   AVATAR_COLORS[0]?.value ?? "#00b4d8";
 
+/**
+ * Color neutro de respaldo cuando no hay avatar (gris de la paleta).
+ * Vivir aquí evita hex sueltos en los TSX: las pantallas importan la constante.
+ */
+export const AVATAR_FALLBACK_COLOR: string = "#536471";
+
 export function isAvatarColor(value: string): boolean {
   return AVATAR_COLORS.some((option) => option.value === value);
 }

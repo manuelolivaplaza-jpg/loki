@@ -35,7 +35,23 @@
   --destructive-foreground: #000000;
   --input: #cfd9de;
   --ring: #00b4d8;
-  --radius: 0.5rem;
+  /* Superficies suaves estilo Grok: gris muy claro sin bordes duros. */
+  --surface-soft: #f2f2f2;
+  --divider: #e5e5e5;
+
+  /* Sombras: las dos únicas del sistema. */
+  --shadow-float:
+    0 8px 30px rgba(0, 0, 0, 0.1),
+    0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-overlay:
+    0 24px 64px rgba(15, 20, 25, 0.18),
+    0 2px 8px rgba(15, 20, 25, 0.08);
+
+  /* Radios: las tres únicas escalas del sistema. */
+  --radius-sm: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
 }
 
 .dark {
@@ -70,6 +86,19 @@
   --destructive-foreground: #000000;
   --input: #2f3336;
   --ring: #00b4d8;
+  --surface-soft: #16181c;
+  --divider: #2a2d31;
+  --shadow-float:
+    0 12px 40px rgba(0, 0, 0, 0.55),
+    0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-overlay:
+    0 24px 70px rgba(0, 0, 0, 0.65),
+    0 2px 8px rgba(0, 0, 0, 0.5);
+
+  --radius-sm: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
 }
 
 @theme inline {
@@ -104,28 +133,100 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-surface-soft: var(--surface-soft);
+  --color-divider: var(--divider);
+
+  --shadow-float: var(--shadow-float);
+  --shadow-overlay: var(--shadow-overlay);
 
   --font-sans: var(--font-sans);
 
-  --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-sm: calc(var(--radius) - 4px);
+  /* Radios redefinidos: solo sm / lg / xl / full existen en el sistema. */
+  --radius-sm: var(--radius-sm);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-full: var(--radius-full);
+
+  /* Tipografía: las cinco únicas escalas del sistema. */
+  --text-meta: 13px;
+  --text-meta--line-height: 1.25rem;
+  --text-body-sm: 15px;
+  --text-body-sm--line-height: 1.25rem;
+  --text-body: 17px;
+  --text-body--line-height: 1.5rem;
+  --text-title: 20px;
+  --text-title--line-height: 1.4;
+  --text-display: 28px;
+  --text-display--line-height: 1.2;
 }
 
-@utility text-meta {
-  font-size: 13px;
-  line-height: 1.25rem;
+/*
+ * Estados compartidos del sistema (definidos una sola vez):
+ * hover bg-surface-soft, pressed scale 0.97, focus-visible ring 2px accent con offset 2px.
+ * - `interactive`: superficies transparentes / menús / filas.
+ * - `interactive-solid`: botones con fondo propio (hover con opacidad en vez de gris).
+ */
+@utility interactive {
+  outline: none;
+  transition-property: background-color, transform, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
+  /* Hover solo en dispositivos con puntero: en táctil no queda fondo pegado. */
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--surface-soft);
+    }
+  }
+  &:active {
+    transform: scale(0.97);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+@utility interactive-solid {
+  outline: none;
+  transition-property: transform, opacity, background-color;
+  transition-duration: 150ms;
+  transition-timing-function: ease;
+  /* Hover solo en dispositivos con puntero: en táctil no queda estado pegado. */
+  @media (hover: hover) {
+    &:hover {
+      opacity: 0.9;
+    }
+  }
+  &:active {
+    transform: scale(0.97);
+    opacity: 0.85;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }
 
 @utility glass-bar {
-  border-radius: 28px;
+  border-radius: var(--radius-full);
   background-color: rgba(255, 255, 255, 0.65);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.7),
-    0 8px 32px rgba(15, 20, 25, 0.12);
+    0 8px 30px rgba(15, 20, 25, 0.1),
+    0 1px 3px rgba(15, 20, 25, 0.06);
+}
+
+@utility glass-sheet {
+  border-radius: var(--radius-xl);
+  background-color: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 8px 30px rgba(15, 20, 25, 0.1),
+    0 1px 3px rgba(15, 20, 25, 0.06);
 }
 
 @utility glass-pill {
@@ -134,10 +235,18 @@
 
 .dark .glass-bar {
   background-color: rgba(18, 18, 20, 0.58);
-  border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 8px 32px rgba(0, 0, 0, 0.45);
+    0 12px 40px rgba(0, 0, 0, 0.55),
+    0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.dark .glass-sheet {
+  background-color: rgba(22, 24, 28, 0.85);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 12px 40px rgba(0, 0, 0, 0.55),
+    0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 .dark .glass-pill {
@@ -147,7 +256,8 @@
 body {
   background-color: var(--background);
   color: var(--foreground);
-  font-size: 16px;
+  font-size: 17px;
+  line-height: 1.5rem;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

@@ -113,3 +113,17 @@ export function getSectionByPath(pathname: string | null): SectionMeta {
   );
   return found ?? SECTIONS.chat;
 }
+
+/**
+ * Rutas de pantalla completa en móvil: sin barra inferior ni padding extra
+ * (conversación de chat, perfil y configuración).
+ */
+export function isFullscreenRoute(pathname: string | null): boolean {
+  if (!pathname) return false;
+  if (pathname === "/perfil" || pathname.startsWith("/perfil/")) return true;
+  if (pathname === "/configuracion" || pathname.startsWith("/configuracion/")) {
+    return true;
+  }
+  if (pathname.startsWith("/chat/") && pathname !== "/chat/") return true;
+  return false;
+}

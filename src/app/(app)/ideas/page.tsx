@@ -1,4 +1,4 @@
-import { EmptyState } from "@/components/shell/empty-state";
+import { EmptyState } from "@/components/ui/empty-state";
 import { SECTIONS } from "@/components/shell/sections";
 
 export default function IdeasPage(): React.JSX.Element {

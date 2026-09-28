@@ -26,10 +26,9 @@ export function EmojiPicker({ value, onChange, labelId }: EmojiPickerProps): Rea
             aria-pressed={selected}
             onClick={() => onChange(option.char)}
             className={cn(
-              "flex h-10 items-center justify-center rounded-xl border text-xl outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
-              selected
-                ? "border-accent bg-surface"
-                : "border-border-strong bg-background hover:bg-surface",
+              "flex h-10 items-center justify-center rounded-sm bg-surface-soft text-title outline-none interactive",
+              selected &&
+                "ring-2 ring-accent ring-offset-2 ring-offset-background",
             )}
           >
             <span aria-hidden="true">{option.char}</span>

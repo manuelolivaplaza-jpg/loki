@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signInWithGoogle, signUpWithEmail } from "@/lib/auth/actions";
 import { useSessionStore } from "@/stores/session-store";
+import { Avatar } from "@/components/ui/avatar";
 import {
   GoogleIcon,
   googleButtonClassName,
@@ -72,14 +73,9 @@ function RegistroForm(): React.JSX.Element {
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">
       <div className="w-full max-w-[400px]">
         <div className="flex flex-col items-center text-center">
-          <span
-            aria-hidden
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2 text-2xl font-semibold text-foreground"
-          >
-            L
-          </span>
-          <p className="mt-4 text-[15px] font-semibold text-foreground">Loki</p>
-          <h1 className="mt-2 text-[30px] font-semibold leading-tight text-foreground">
+          <Avatar initial="L" size={64} />
+          <p className="mt-4 text-body-sm font-semibold text-foreground">Loki</p>
+          <h1 className="mt-2 text-display font-semibold leading-tight text-foreground">
             Crea tu cuenta
           </h1>
         </div>
@@ -136,7 +132,7 @@ function RegistroForm(): React.JSX.Element {
           </div>
 
           {error !== null ? (
-            <p role="alert" className="text-[13px] text-danger">
+            <p role="alert" className="text-meta text-danger">
               {error}
             </p>
           ) : null}
@@ -150,10 +146,10 @@ function RegistroForm(): React.JSX.Element {
           </button>
         </form>
 
-        <div className="my-5 flex items-center gap-3" aria-hidden="true">
-          <span className="h-px flex-1 bg-border-strong" />
-          <span className="text-[13px] text-muted-foreground">o</span>
-          <span className="h-px flex-1 bg-border-strong" />
+        <div className="my-6 flex items-center gap-3" aria-hidden="true">
+          <span className="h-px flex-1 bg-divider" />
+          <span className="text-meta text-muted-foreground">o</span>
+          <span className="h-px flex-1 bg-divider" />
         </div>
 
         <button
@@ -167,9 +163,9 @@ function RegistroForm(): React.JSX.Element {
           {googlePending ? "Conectando..." : "Continuar con Google"}
         </button>
 
-        <p className="mt-6 text-center text-[14px] text-muted-foreground">
+        <p className="mt-6 text-center text-body-sm text-muted-foreground">
           ¿Ya tienes cuenta?{" "}
-          <Link href={loginHref} className="text-mention hover:underline">
+          <Link href={loginHref} className="text-mention [@media(hover:hover)]:underline">
             Inicia sesión
           </Link>
         </p>
@@ -183,12 +179,7 @@ export default function RegistroPage(): React.JSX.Element {
     <React.Suspense
       fallback={
         <main className="flex min-h-dvh items-center justify-center bg-background">
-          <span
-            aria-hidden
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2 text-2xl font-semibold text-foreground"
-          >
-            L
-          </span>
+          <Avatar initial="L" size={64} />
         </main>
       }
     >

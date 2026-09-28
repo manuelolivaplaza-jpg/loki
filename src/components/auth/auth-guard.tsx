@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { Avatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { ensureUserProfile } from "@/lib/data/users";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -19,26 +21,17 @@ function Splash({
 }): React.JSX.Element {
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-background px-4">
-      <span
-        aria-hidden
-        className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2 text-2xl font-semibold text-foreground"
-      >
-        L
-      </span>
+      <Avatar initial="L" size={64} />
       <span className="sr-only">Cargando Loki…</span>
       {message !== undefined && message !== "" ? (
-        <p role="alert" className="text-[13px] text-danger">
+        <p role="alert" className="text-meta text-danger">
           {message}
         </p>
       ) : null}
       {onRetry !== undefined ? (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="rounded-full border border-border-strong px-4 py-2 text-[14px] font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        >
+        <Button type="button" variant="secondary" onClick={onRetry}>
           Reintentar
-        </button>
+        </Button>
       ) : null}
     </div>
   );

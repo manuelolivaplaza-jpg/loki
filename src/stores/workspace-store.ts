@@ -56,6 +56,9 @@ export function useWorkspaces(): UseWorkspacesResult {
     queryKey: ["workspaces", uid],
     queryFn: () => listMyWorkspaces(uid as string),
     enabled: uid !== null,
+    // Una sola carga por sesión: el WorkspaceBootstrap del shell mantiene la
+    // suscripción viva y las mutaciones invalidan explícitamente la clave.
+    staleTime: Infinity,
   });
 
   const data = query.data ?? stored;

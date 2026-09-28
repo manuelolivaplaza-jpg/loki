@@ -3,7 +3,12 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ChevronDown, Plus } from "lucide-react";
+import { Check, Plus } from "lucide-react";
+import { Avatar } from "@/components/ui/avatar";
+import { Icon } from "@/components/ui/icon";
+import { MenuItem } from "@/components/ui/menu-card";
+import { Pill } from "@/components/ui/pill";
+import { fade, fadeScale } from "@/lib/motion";
 import { CreateWorkspaceDialog } from "@/components/workspaces/create-workspace-dialog";
 import { kindLabel } from "@/components/workspaces/workspace-options";
 import { useSessionStore } from "@/stores/session-store";
@@ -12,7 +17,7 @@ import { cn } from "@/lib/utils";
 
 export function MobileWorkspaceSwitcher(): React.JSX.Element {
   const user = useSessionStore((state) => state.user);
-  const { workspaces, currentWorkspace } = useWorkspaces();
+  const { workspaces, currentWorkspace, isLoading } = useWorkspaces();
   const setCurrent = useWorkspaceStore((state) => state.setCurrent);
   const [open, setOpen] = React.useState(false);
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -24,6 +29,9 @@ export function MobileWorkspaceSwitcher(): React.JSX.Element {
   }, []);
 
   const display = currentWorkspace ?? workspaces[0] ?? null;
+  // Mientras carga nunca se muestra "Espacios": skeleton sobrio con el nombre
+  // real en cuanto llega.
+  const loading = isLoading && display === null;
 
   async function handleSelect(wsId: string): Promise<void> {
     if (user === null || wsId === display?.wsId) {
@@ -41,22 +49,26 @@ export function MobileWorkspaceSwitcher(): React.JSX.Element {
 
   return (
     <>
-      <button
-        type="button"
+      <Pill
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Cambiar de espacio"
         onClick={() => setOpen(true)}
-        className="flex max-w-[60%] items-center gap-1.5 rounded-full px-2 py-1 outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent"
-      >
-        <span aria-hidden="true" className="text-[16px] leading-none">
-          {display?.emoji ?? "🏠"}
-        </span>
-        <span className="truncate text-[16px] font-semibold text-foreground">
-          {display?.name ?? "Espacios"}
-        </span>
-        <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
-      </button>
+        leading={
+          loading ? (
+            <span
+              aria-hidden="true"
+              className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-surface-soft"
+            />
+          ) : (
+            <span aria-hidden="true" className="text-body leading-none">
+              {display?.emoji ?? "🏠"}
+            </span>
+          )
+        }
+        text={loading ? "Cargando" : (display?.name ?? "Espacios")}
+        className={loading ? "animate-pulse" : undefined}
+      />
 
       {mounted
         ? createPortal(
@@ -71,21 +83,22 @@ export function MobileWorkspaceSwitcher(): React.JSX.Element {
                   <motion.button
                     type="button"
                     aria-label="Cerrar selector de espacios"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
+                    variants={fade}
+                    initial="hidden"
+                    animate="show"
+                    exit="exit"
                     onClick={() => setOpen(false)}
-                    className="absolute inset-0 bg-black/30"
+                    className="absolute inset-0 bg-black/20"
                   />
                   <motion.div
-                    initial={{ y: "100%" }}
-                    animate={{ y: 0 }}
-                    exit={{ y: "100%" }}
-                    transition={{ type: "spring", damping: 30, stiffness: 300 }}
-                    className="absolute inset-x-0 bottom-0 max-h-[80dvh] overflow-y-auto rounded-t-[20px] border-t border-border bg-background px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-2"
+                    variants={fadeScale}
+                    initial="hidden"
+                    animate="show"
+                    exit="exit"
+                    style={{ transformOrigin: "50% 100%" }}
+                    className="glass-sheet absolute inset-x-3 bottom-[calc(12px+env(safe-area-inset-bottom))] max-h-[80dvh] overflow-y-auto p-2"
                   >
-                    <div aria-hidden="true" className="mx-auto mb-3 h-1 w-10 rounded-full bg-border-strong" />
-                    <div role="menu" aria-label="Espacios de trabajo" className="flex flex-col gap-0.5">
+                    <div role="menu" aria-label="Espacios de trabajo" className="flex flex-col gap-1">
                       {workspaces.map((item) => {
                         const selected = item.wsId === display?.wsId;
                         return (
@@ -97,39 +110,35 @@ export function MobileWorkspaceSwitcher(): React.JSX.Element {
                             aria-label={`Espacio ${item.name}`}
                             onClick={() => void handleSelect(item.wsId)}
                             className={cn(
-                              "flex h-10 w-full items-center gap-2.5 rounded-xl px-2.5 text-left outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent",
+                              "flex h-12 w-full items-center gap-3 rounded-sm px-3 py-2 text-left outline-none interactive",
                             )}
                           >
-                            <span aria-hidden="true" className="flex h-7 w-7 items-center justify-center rounded-lg bg-surface-2 text-lg">
-                              {item.emoji}
-                            </span>
+                            <Avatar emoji={item.emoji} size={32} />
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[14px] font-medium text-foreground">{item.name}</span>
-                              <span className="block text-[12px] leading-tight text-muted-foreground">{kindLabel(item.kind)}</span>
+                              <span className="block truncate text-body font-medium text-foreground">{item.name}</span>
+                              <span className="block text-meta leading-tight text-muted-foreground">{kindLabel(item.kind)}</span>
                             </span>
-                            {selected ? <Check aria-hidden="true" className="h-4 w-4 shrink-0 text-foreground" /> : null}
+                            {selected ? <Icon icon={Check} size={20} /> : null}
                           </button>
                         );
                       })}
-                      {workspaces.length === 0 ? (
-                        <p className="px-2.5 py-2 text-[13px] text-muted-foreground">Todavía no tienes espacios.</p>
+                      {workspaces.length === 0 && !isLoading ? (
+                        <p className="px-3 py-2 text-meta text-muted-foreground">Todavía no tienes espacios.</p>
                       ) : null}
-                      <div aria-hidden="true" className="my-1.5 h-px bg-border" />
-                      <button
-                        type="button"
+                      <div aria-hidden="true" className="mx-2 my-2 h-px bg-divider" />
+                      <MenuItem
+                        icon={Plus}
                         role="menuitem"
                         aria-label="Crear espacio"
                         onClick={() => {
                           setOpen(false);
                           setCreateOpen(true);
                         }}
-                        className="flex h-10 w-full items-center gap-2.5 rounded-xl px-2.5 text-left text-[14px] font-medium text-foreground outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent"
                       >
-                        <Plus aria-hidden="true" className="h-4 w-4" />
                         Crear espacio
-                      </button>
+                      </MenuItem>
                       {error !== null ? (
-                        <p role="alert" className="px-2.5 py-1 text-[13px] text-danger">
+                        <p role="alert" className="px-3 py-1 text-meta text-danger">
                           {error}
                         </p>
                       ) : null}

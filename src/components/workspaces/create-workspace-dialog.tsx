@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
 import { inputClassName, labelClassName } from "@/components/auth/auth-ui";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { EmojiPicker } from "@/components/workspaces/emoji-picker";
@@ -11,7 +12,7 @@ import { createWorkspace } from "@/lib/data/workspaces";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import type { WorkspaceKind } from "@/types/models";
+import { DEFAULT_AVATAR_COLOR, type WorkspaceKind } from "@/types/models";
 
 type CreateWorkspaceDialogProps = {
   open: boolean;
@@ -62,7 +63,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: CreateWorkspaceDia
         : (user.displayName ?? "").trim() !== ""
           ? (user.displayName as string).trim()
           : "Miembro";
-    const avatarColor = profile?.avatarColor ?? "#00b4d8";
+    const avatarColor = profile?.avatarColor ?? DEFAULT_AVATAR_COLOR;
     setSaving(true);
     setError(null);
     try {
@@ -88,7 +89,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: CreateWorkspaceDia
       <DialogContent aria-describedby={undefined}>
         <DialogTitle>Crear espacio</DialogTitle>
         <DialogDescription>Un espacio para tu familia o tu equipo.</DialogDescription>
-        <form onSubmit={handleSubmit} className="mt-2 flex flex-col gap-5">
+        <form onSubmit={handleSubmit} className="mt-2 flex flex-col gap-4">
           <div>
             <label htmlFor="workspace-name" className={labelClassName}>
               Nombre del espacio
@@ -118,17 +119,13 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: CreateWorkspaceDia
             <KindPicker value={kind} onChange={setKind} labelId="create-kind-label" />
           </div>
           {error !== null ? (
-            <p role="alert" className="text-[13px] text-danger">
+            <p role="alert" className="text-meta text-danger">
               {error}
             </p>
           ) : null}
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex h-11 w-full items-center justify-center rounded-full bg-foreground text-[15px] font-semibold text-background outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <Button type="submit" disabled={saving} className="w-full">
             {saving ? "Creando espacio..." : "Crear espacio"}
-          </button>
+          </Button>
         </form>
       </DialogContent>
     </Dialog>

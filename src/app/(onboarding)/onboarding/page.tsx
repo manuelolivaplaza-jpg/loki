@@ -3,6 +3,9 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
+import { Avatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { fadeScale } from "@/lib/motion";
 import { updateProfile } from "firebase/auth";
 import { inputClassName, labelClassName } from "@/components/auth/auth-ui";
 import { EmojiPicker } from "@/components/workspaces/emoji-picker";
@@ -23,26 +26,20 @@ import {
   type WorkspaceKind,
 } from "@/types/models";
 
-const pillButtonClassName =
-  "flex h-11 w-full items-center justify-center rounded-full bg-foreground text-[15px] font-semibold text-background outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60";
-
-const ghostButtonClassName =
-  "flex h-11 w-full items-center justify-center rounded-full text-[15px] font-medium text-muted-foreground outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60";
-
 function StepIndicator({ step }: { step: 1 | 2 }): React.JSX.Element {
   return (
     <div className="mt-6">
-      <div aria-hidden="true" className="flex gap-1.5">
+      <div aria-hidden="true" className="flex gap-2">
         <span
           className={cn(
             "h-1 flex-1 rounded-full",
-            step >= 1 ? "bg-foreground" : "bg-border-strong",
+            step >= 1 ? "bg-foreground" : "bg-divider",
           )}
         />
         <span
           className={cn(
             "h-1 flex-1 rounded-full",
-            step >= 2 ? "bg-foreground" : "bg-border-strong",
+            step >= 2 ? "bg-foreground" : "bg-divider",
           )}
         />
       </div>
@@ -194,13 +191,8 @@ export default function OnboardingPage(): React.JSX.Element {
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">
       <div className="w-full max-w-[420px]">
         <div className="flex flex-col items-center text-center">
-          <span
-            aria-hidden
-            className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2 text-2xl font-semibold text-foreground"
-          >
-            L
-          </span>
-          <p className="mt-4 text-[15px] font-semibold text-foreground">Loki</p>
+          <Avatar initial="L" size={64} />
+          <p className="mt-4 text-body-sm font-semibold text-foreground">Loki</p>
         </div>
 
         <StepIndicator step={step} />
@@ -209,33 +201,24 @@ export default function OnboardingPage(): React.JSX.Element {
           {step === 1 ? (
             <motion.div
               key="step-profile"
-              initial={{ opacity: 0, x: 24 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -24 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
+              variants={fadeScale}
+              initial="hidden"
+              animate="show"
+              exit="exit"
             >
-              <h1 className="mt-6 text-[24px] font-semibold leading-tight text-foreground">
+              <h1 className="mt-6 text-display font-semibold leading-tight text-foreground">
                 ¿Cómo te llamamos?
               </h1>
-              <p className="mt-1 text-[15px] text-muted-foreground">
+              <p className="mt-1 text-body-sm text-muted-foreground">
                 Así te verán en tus espacios.
               </p>
 
               <form
                 onSubmit={handleProfileSubmit}
-                className="mt-6 flex flex-col gap-5"
+                className="mt-6 flex flex-col gap-4"
               >
                 <div className="flex items-center gap-4">
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      backgroundColor: avatarColor,
-                      color: avatarTextColor(avatarColor),
-                    }}
-                    className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-2xl font-semibold"
-                  >
-                    {initial}
-                  </span>
+                  <Avatar initial={initial} color={avatarColor} size={64} />
                   <div className="min-w-0 flex-1">
                     <label
                       htmlFor="onboarding-displayName"
@@ -269,7 +252,7 @@ export default function OnboardingPage(): React.JSX.Element {
                   <div
                     role="radiogroup"
                     aria-labelledby="avatar-color-label"
-                    className="flex flex-wrap gap-2.5"
+                    className="flex flex-wrap gap-2"
                   >
                     {AVATAR_COLORS.map((option) => {
                       const selected = avatarColor === option.value;
@@ -294,7 +277,7 @@ export default function OnboardingPage(): React.JSX.Element {
                               color: avatarTextColor(option.value),
                             }}
                             className={cn(
-                              "flex h-9 w-9 items-center justify-center rounded-full text-[15px] font-semibold",
+                              "flex h-9 w-9 items-center justify-center rounded-full text-body-sm font-semibold",
                               selected &&
                                 "ring-2 ring-accent ring-offset-2 ring-offset-background",
                             )}
@@ -308,28 +291,28 @@ export default function OnboardingPage(): React.JSX.Element {
                 </div>
 
                 {stepError !== null ? (
-                  <p role="alert" className="text-[13px] text-danger">
+                  <p role="alert" className="text-meta text-danger">
                     {stepError}
                   </p>
                 ) : null}
 
-                <button type="submit" className={pillButtonClassName}>
+                <Button type="submit" className="w-full">
                   Continuar
-                </button>
+                </Button>
               </form>
             </motion.div>
           ) : (
             <motion.div
               key="step-workspace"
-              initial={{ opacity: 0, x: 24 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -24 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
+              variants={fadeScale}
+              initial="hidden"
+              animate="show"
+              exit="exit"
             >
-              <h1 className="mt-6 text-[24px] font-semibold leading-tight text-foreground">
+              <h1 className="mt-6 text-display font-semibold leading-tight text-foreground">
                 Crea tu primer espacio
               </h1>
-              <p className="mt-1 text-[15px] text-muted-foreground">
+              <p className="mt-1 text-body-sm text-muted-foreground">
                 Un espacio para tu familia o tu equipo.
               </p>
 
@@ -346,16 +329,14 @@ export default function OnboardingPage(): React.JSX.Element {
                     setStepError(null);
                   }}
                   className={cn(
-                    "rounded-2xl border p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
-                    mode === "create"
-                      ? "border-accent bg-surface"
-                      : "border-border-strong bg-background hover:bg-surface",
+                    "rounded-lg bg-surface-soft p-4 text-left outline-none interactive",
+                    (mode === "create") && "ring-2 ring-accent",
                   )}
                 >
-                  <span className="block text-[15px] font-semibold text-foreground">
+                  <span className="block text-body-sm font-semibold text-foreground">
                     Crear un espacio
                   </span>
-                  <span className="mt-1 block text-[13px] text-muted-foreground">
+                  <span className="mt-1 block text-meta text-muted-foreground">
                     Empieza desde cero
                   </span>
                 </button>
@@ -367,16 +348,14 @@ export default function OnboardingPage(): React.JSX.Element {
                     setStepError(null);
                   }}
                   className={cn(
-                    "rounded-2xl border p-4 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
-                    mode === "join"
-                      ? "border-accent bg-surface"
-                      : "border-border-strong bg-background hover:bg-surface",
+                    "rounded-lg bg-surface-soft p-4 text-left outline-none interactive",
+                    (mode === "join") && "ring-2 ring-accent",
                   )}
                 >
-                  <span className="block text-[15px] font-semibold text-foreground">
+                  <span className="block text-body-sm font-semibold text-foreground">
                     Unirme con un código
                   </span>
-                  <span className="mt-1 block text-[13px] text-muted-foreground">
+                  <span className="mt-1 block text-meta text-muted-foreground">
                     Usa una invitación
                   </span>
                 </button>
@@ -385,7 +364,7 @@ export default function OnboardingPage(): React.JSX.Element {
               {mode === "create" ? (
                 <form
                   onSubmit={handleWorkspaceSubmit}
-                  className="mt-5 flex flex-col gap-5"
+                  className="mt-6 flex flex-col gap-4"
                 >
                   <div>
                     <label
@@ -427,32 +406,33 @@ export default function OnboardingPage(): React.JSX.Element {
                   </div>
 
                   {stepError !== null ? (
-                    <p role="alert" className="text-[13px] text-danger">
+                    <p role="alert" className="text-meta text-danger">
                       {stepError}
                     </p>
                   ) : null}
 
-                  <button
+                  <Button
                     type="submit"
                     disabled={saving}
-                    className={pillButtonClassName}
+                    className="w-full"
                   >
                     {saving ? "Creando espacio..." : "Crear espacio"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="secondary"
                     onClick={() => {
                       setStep(1);
                       setStepError(null);
                     }}
                     disabled={saving}
-                    className={ghostButtonClassName}
+                    className="w-full"
                   >
                     Atrás
-                  </button>
+                  </Button>
                 </form>
               ) : (
-                <div className="mt-5 flex flex-col gap-4">
+                <div className="mt-6 flex flex-col gap-4">
                   <div>
                     <label
                       htmlFor="onboarding-invite"
@@ -471,27 +451,28 @@ export default function OnboardingPage(): React.JSX.Element {
                       className={inputClassName}
                     />
                   </div>
-                  <button
+                  <Button
                     type="button"
                     disabled
                     title="Disponible próximamente"
-                    className={pillButtonClassName}
+                    className="w-full"
                   >
                     Próximamente
-                  </button>
-                  <p className="text-[13px] text-muted-foreground">
+                  </Button>
+                  <p className="text-meta text-muted-foreground">
                     Los códigos de invitación llegan en T8.
                   </p>
-                  <button
+                  <Button
                     type="button"
+                    variant="secondary"
                     onClick={() => {
                       setStep(1);
                       setStepError(null);
                     }}
-                    className={ghostButtonClassName}
+                    className="w-full"
                   >
                     Atrás
-                  </button>
+                  </Button>
                 </div>
               )}
             </motion.div>

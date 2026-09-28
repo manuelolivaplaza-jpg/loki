@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
+import { menuCardClass } from "@/components/ui/menu-card";
 import { cn } from "@/lib/utils";
 
 const Popover = PopoverPrimitive.Root;
@@ -13,10 +14,7 @@ function PopoverContent({ className, align = "start", sideOffset = 8, ...props }
       <PopoverPrimitive.Content
         align={align}
         sideOffset={sideOffset}
-        className={cn(
-          "z-50 w-64 rounded-2xl border border-border bg-background p-1.5 shadow-lg outline-none",
-          className,
-        )}
+        className={cn(menuCardClass, "z-50 w-64 outline-none", className)}
         {...props}
       />
     </PopoverPrimitive.Portal>

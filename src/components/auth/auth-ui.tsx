@@ -23,14 +23,17 @@ export function GoogleIcon(): React.JSX.Element {
   );
 }
 
+/** Campo gris sin borde del sistema (login, registro, onboarding, espacios). */
 export const inputClassName =
-  "h-12 w-full rounded-lg border border-border-strong bg-background px-3 text-[15px] text-foreground placeholder:text-muted-foreground outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent";
+  "h-12 w-full rounded-sm border-0 bg-surface-soft px-4 text-body-sm text-foreground placeholder:text-muted-foreground outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-accent";
 
 export const labelClassName =
-  "mb-1.5 block text-[13px] font-medium text-muted-foreground";
+  "mb-2 block text-meta font-medium text-muted-foreground";
 
+/** Botón pill negro del sistema (también ver `Button` en ui/button). */
 export const primaryButtonClassName =
-  "flex h-11 w-full items-center justify-center rounded-full bg-foreground text-[15px] font-semibold text-background outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60";
+  "flex h-11 w-full items-center justify-center rounded-full bg-foreground px-6 text-body-sm font-semibold text-background outline-none interactive-solid disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-black";
 
+/** Botón pill gris secundario del sistema. */
 export const googleButtonClassName =
-  "flex h-11 w-full items-center justify-center gap-2 rounded-full border border-border-strong bg-background text-[15px] font-medium text-foreground outline-none transition-colors hover:bg-surface focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60";
+  "flex h-11 w-full items-center justify-center gap-2 rounded-full bg-surface-soft px-6 text-body-sm font-medium text-foreground outline-none interactive disabled:cursor-not-allowed disabled:opacity-60";

@@ -5,7 +5,9 @@ import { Sparkles } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
 import { useAuthorAvatarColor } from "@/hooks/use-avatar-color";
+import { avatarColorFor } from "@/lib/avatar-color";
 import { formatHour } from "@/lib/chat/format";
+import { formatPostTime } from "@/lib/chat/posts";
 import { parseMentionSegments } from "@/lib/chat/mentions";
 import type { MessageDoc, MessageSendStatus } from "@/types/chat";
 import { cn } from "@/lib/utils";
@@ -21,6 +23,15 @@ type MessageBubbleProps = {
   sendStatus?: MessageSendStatus;
   /** Reintenta el envío con el mismo id de cliente. */
   onRetry?: (message: MessageDoc) => void;
+  /**
+   * T17: `post` no es una burbuja sino la fila plana del feed de
+   * publicaciones (avatar + nombre + tiempo relativo + texto, sin
+   * alineación por autor). Lo usa `PostRow` y el padre del panel de
+   * comentarios.
+   */
+  variant?: "bubble" | "post";
+  /** Reloj para el tiempo relativo de la fila de post. */
+  now?: Date;
 };
 
 /**
@@ -109,9 +120,38 @@ export function MessageBubble({
   showTime,
   sendStatus,
   onRetry,
+  variant = "bubble",
+  now,
 }: MessageBubbleProps): React.JSX.Element {
   // Color determinista por autor (el mío sale del perfil).
   const avatarColor = useAuthorAvatarColor(message.authorId);
+
+  // T17: fila plana de publicación (no hay burbuja ni lado a lado).
+  if (variant === "post") {
+    const name = message.authorName.trim() === "" ? "Miembro" : message.authorName;
+    return (
+      <div className="flex gap-3">
+        <Avatar
+          initial={name.charAt(0).toUpperCase()}
+          color={avatarColorFor(message.authorId)}
+          size={40}
+        />
+        <div className="min-w-0 flex-1">
+          <p className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+            <span className="min-w-0 truncate text-body-sm font-semibold leading-5 text-foreground">
+              {name}
+            </span>
+            <span className="shrink-0 text-meta leading-5 text-muted-foreground">
+              {formatPostTime(message.createdAt, now ?? new Date())}
+            </span>
+          </p>
+          <p className="mt-0.5 whitespace-pre-wrap break-words text-body-sm leading-5 text-foreground">
+            <MentionedText text={message.text} mentions={message.mentions} />
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (message.type === "system") {
     return (

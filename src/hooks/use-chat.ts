@@ -9,6 +9,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import {
+  ensurePostsChat,
   fetchChats,
   fetchOlderMessages,
   fetchUnreadCount,
@@ -17,6 +18,7 @@ import {
   listenLatestMessages,
   listenMembers,
   listenMyRead,
+  listenPosts,
   listenThread,
   listenTyping,
   listMembers,
@@ -30,6 +32,7 @@ import {
   type SendMessageInput,
 } from "@/lib/data/chat";
 import { useMessageStatusStore } from "@/lib/chat/message-status";
+import { isPostMessage, POSTS_CHAT_ID } from "@/lib/chat/posts";
 import type {
   ChatDoc,
   MessageDoc,
@@ -51,7 +54,23 @@ function byCreatedAtAsc(a: MessageDoc, b: MessageDoc): number {
   return a.id.localeCompare(b.id);
 }
 
-function mergeUnique(current: MessageDoc[], incoming: MessageDoc[]): MessageDoc[] {
+function byCreatedAtDesc(a: MessageDoc, b: MessageDoc): number {
+  const left = a.createdAt?.toMillis() ?? Number.POSITIVE_INFINITY;
+  const right = b.createdAt?.toMillis() ?? Number.POSITIVE_INFINITY;
+  if (left !== right) return right - left;
+  return b.id.localeCompare(a.id);
+}
+
+/**
+ * Fusiona mensajes nuevos sobre los que ya hay en caché sin duplicar ids.
+ * `sort` decide el orden final: el timeline del chat va de más antiguo a
+ * más nuevo y el feed de publicaciones (T17) al revés.
+ */
+function mergeUnique(
+  current: MessageDoc[],
+  incoming: MessageDoc[],
+  sort: (a: MessageDoc, b: MessageDoc) => number = byCreatedAtAsc,
+): MessageDoc[] {
   // Ids con estado local (optimistas): la versión del servidor siempre
   // los reemplaza al confirmar, aunque el reloj del cliente difiera.
   const localStatus = useMessageStatusStore.getState().status;
@@ -90,7 +109,7 @@ function mergeUnique(current: MessageDoc[], incoming: MessageDoc[]): MessageDoc[
       byId.set(item.id, item);
     }
   }
-  return [...byId.values()].sort(byCreatedAtAsc);
+  return [...byId.values()].sort(sort);
 }
 
 export function useChats(wsId: string | null): UseQueryResult<ChatDoc[], Error> {
@@ -246,6 +265,252 @@ export function useMessages(
     isPending: query.isPending,
     error: query.error,
   };
+}
+
+export type UsePostsResult = {
+  /** Publicaciones del chat `posts`, más reciente primero. */
+  posts: MessageDoc[];
+  isPending: boolean;
+  error: Error | null;
+};
+
+/** Espera antes de reintentar la suscripción al feed que falló. */
+const POSTS_RETRY_MS = 4000;
+/** Reintentos como máximo: evita un bucle si el acceso está negado de verdad. */
+const POSTS_RETRY_MAX = 3;
+
+/** Un fallo de permisos suele ser el chat `posts` que aún no existe. */
+function isPermissionDenied(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "permission-denied"
+  );
+}
+
+/**
+ * Feed de publicaciones (T17): mensajes `type: "post"` del chat `posts` del
+ * espacio, en vivo y ordenados por `createdAt` descendente. Los comentarios
+ * son respuestas de hilo y no entran aquí (`isPostMessage` los excluye).
+ *
+ * Primero asegura el chat con `ensurePostsChat` y **después** se suscribe:
+ * en los espacios creados antes de T17 el doc no existe y la consulta muere
+ * con `permission-denied` (las reglas resuelven `canAccessChat` sobre el doc
+ * inexistente), así que sin ese paso los posts de otros nunca llegarían en
+ * vivo hasta recargar. Si aun así el listener falla con `permission-denied`
+ * (otro proceso lo borró, o la red cortó el stream), se muestra el estado
+ * vacío sin error y se reintenta volviendo a asegurar el chat.
+ */
+export function usePosts(wsId: string | null): UsePostsResult {
+  const queryClient = useQueryClient();
+  const uid = useSessionStore((state) => state.user?.uid ?? null);
+  const enabled = wsId !== null && wsId !== "";
+  const queryKey = React.useMemo(
+    () => ["posts", wsId, uid] as const,
+    [wsId, uid],
+  );
+  const [error, setError] = React.useState<Error | null>(null);
+  // `ready` = el listener ya entregó su primer snapshot (o se rindió): hasta
+  // entonces la vista muestra el esqueleto, no el estado vacío.
+  const [ready, setReady] = React.useState(false);
+
+  // La caché la rellena el listener; la query solo existe para no perder
+  // los ids al re-renderizar (mismo patrón que `useMessages`).
+  const query = useQuery<MessageDoc[], Error>({
+    queryKey,
+    queryFn: async () => [],
+    enabled,
+    staleTime: Infinity,
+  });
+
+  React.useEffect(() => {
+    if (!enabled || wsId === null) return;
+    const activeWsId: string = wsId;
+    const activeUid: string = uid ?? "";
+    const activeKey = queryKey;
+    let cancelled = false;
+    let attempts = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribe: (() => void) | null = null;
+
+    const stop = (): void => {
+      // Desmontado o cambio de espacio: nada de suscribirse después.
+      cancelled = true;
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      if (unsubscribe !== null) {
+        unsubscribe();
+        unsubscribe = null;
+      }
+    };
+
+    const subscribe = (): void => {
+      if (cancelled) return;
+      unsubscribe = listenPosts(
+        activeWsId,
+        (posts) => {
+          setReady(true);
+          setError(null);
+          // Fusión en vez de reemplazo: con el feed en vivo un snapshot
+          // puede llegar mientras hay un post optimista (o con estado
+          // 'error' y su botón de reintento) en la caché. El servidor gana
+          // para los ids que confirma, como en el timeline del chat.
+          queryClient.setQueryData<MessageDoc[]>(activeKey, (old) =>
+            mergeUnique(old ?? [], posts, byCreatedAtDesc),
+          );
+          // Lo que confirma el servidor deja de estar 'sending'.
+          useMessageStatusStore
+            .getState()
+            .clearConfirmed(posts.map((item) => item.id));
+        },
+        (failure: Error) => {
+          if (cancelled) return;
+          unsubscribe = null;
+          // Con `permission-denied` el doc puede no existir todavía (o
+          // acabarse de crear): no es un error que haya que mostrar, el
+          // feed pasa a su estado vacío y la suscripción se reintenta
+          // por debajo; si vuelve a entrar un post, aparece en vivo.
+          const denied = isPermissionDenied(failure);
+          setError(denied ? null : failure);
+          setReady(true);
+          if (attempts >= POSTS_RETRY_MAX) return;
+          attempts += 1;
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            if (cancelled) return;
+            // Reintento = volver a asegurar el chat y suscribirse de nuevo.
+            void boot();
+          }, POSTS_RETRY_MS);
+        },
+      );
+    };
+
+    const boot = async (): Promise<void> => {
+      if (activeUid !== "") {
+        try {
+          await ensurePostsChat(activeWsId, activeUid);
+        } catch {
+          // Sin permisos para crearlo (o sin sesión): se intenta igual la
+          // suscripción, que puede funcionar si el doc ya existía.
+        }
+      }
+      if (cancelled) return;
+      subscribe();
+    };
+
+    setReady(false);
+    setError(null);
+    void boot();
+    return stop;
+  }, [enabled, wsId, uid, queryKey, queryClient]);
+
+  const posts = React.useMemo(
+    () => (query.data ?? []).filter(isPostMessage),
+    [query.data],
+  );
+  // Esqueleto solo mientras no llega nada: si ya hay un post optimista en
+  // caché se muestra la fila en vez de parpadear el esqueleto.
+  const isPending = !ready && error === null && posts.length === 0;
+
+  return { posts, isPending, error };
+}
+
+export type PublishPostInput = {
+  authorId: string;
+  authorName: string;
+  text: string;
+  mentions?: string[];
+  /** Id de cliente para el envío optimista y el reintento. */
+  messageId?: string;
+};
+
+type PublishPostContext = { clientId: string };
+
+/**
+ * Publica un post (T17) como mensaje `type: "post"` con `threadParentId`
+ * null, reutilizando `sendMessage` (que ya actualiza `lastMessage` del chat
+ * `posts` al publicar, no al comentar). Antes asegura el chat con
+ * `ensurePostsChat`: los espacios creados antes de T17 no lo tienen.
+ * Optimista como el envío del chat: id de cliente en caché y estados
+ * `sending` / `error` para reintentar.
+ */
+export function usePublishPost(
+  wsId: string | null,
+): UseMutationResult<
+  string,
+  Error,
+  PublishPostInput,
+  PublishPostContext | undefined
+> {
+  const queryClient = useQueryClient();
+  const uid = useSessionStore((state) => state.user?.uid ?? null);
+  const queryKey = React.useMemo(
+    () => ["posts", wsId, uid] as const,
+    [wsId, uid],
+  );
+  return useMutation({
+    mutationFn: async (input) => {
+      if (wsId === null || wsId === "") {
+        throw new Error("Falta el espacio.");
+      }
+      if (input.authorId === "") {
+        throw new Error("Inicia sesión para publicar.");
+      }
+      await ensurePostsChat(wsId, input.authorId);
+      return sendMessage(wsId, POSTS_CHAT_ID, {
+        authorId: input.authorId,
+        authorName: input.authorName,
+        text: input.text,
+        mentions: input.mentions ?? [],
+        threadParentId: null,
+        type: "post",
+        messageId: input.messageId,
+      });
+    },
+    onMutate: (input) => {
+      if (wsId === null || wsId === "") return undefined;
+      if (input.messageId === undefined || input.messageId === "") {
+        input.messageId = newMessageId(wsId, POSTS_CHAT_ID);
+      }
+      const clientId: string = input.messageId;
+      const optimistic: MessageDoc = {
+        id: clientId,
+        authorId: input.authorId,
+        authorName: input.authorName,
+        text: input.text.trim(),
+        mentions: input.mentions ?? [],
+        replyTo: null,
+        threadParentId: null,
+        threadCount: 0,
+        lastReplyAt: null,
+        attachments: [],
+        reactions: {},
+        lastReaction: null,
+        createdAt: Timestamp.now(),
+        editedAt: null,
+        deleted: false,
+        type: "post",
+      };
+      queryClient.setQueryData<MessageDoc[]>(queryKey, (old) =>
+        mergeUnique(old ?? [], [optimistic], byCreatedAtDesc),
+      );
+      useMessageStatusStore.getState().setStatus(clientId, "sending");
+      return { clientId };
+    },
+    onError: (_error, _variables, context) => {
+      if (context !== undefined) {
+        useMessageStatusStore.getState().setStatus(context.clientId, "error");
+      }
+    },
+    onSuccess: (_messageId, _variables, context) => {
+      if (context !== undefined) {
+        useMessageStatusStore.getState().clearStatus(context.clientId);
+      }
+    },
+  });
 }
 
 export function useThread(

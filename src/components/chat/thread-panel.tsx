@@ -28,6 +28,12 @@ type ThreadPanelProps = {
   /** Miembros del espacio (para el menú @ del composer del hilo). */
   members: MentionCandidate[];
   onClose: () => void;
+  /** Título del drawer: "Hilo" en el chat, "Comentarios" en Publicaciones. */
+  title?: string;
+  /** Etiqueta del bloque del padre: "Mensaje original" o "Publicación". */
+  parentLabel?: string;
+  /** Placeholder del composer de respuestas. */
+  composerPlaceholder?: string;
 };
 
 /**
@@ -43,6 +49,10 @@ type ThreadPanelProps = {
  * `useSendMessage` (ese hook inserta en la caché del timeline
  * principal); aquí va directo con `sendMessage` y las muestra el
  * listener del hilo.
+ *
+ * T17: `title`/`parentLabel` hacen que Publicaciones lo reutilice como
+ * panel de comentarios ("Comentarios" sobre "Publicación"): el contador
+ * y el estado vacío hablan de comentarios, no de respuestas.
  */
 export function ThreadPanel({
   wsId,
@@ -52,6 +62,9 @@ export function ThreadPanel({
   authorName,
   members,
   onClose,
+  title = "Hilo",
+  parentLabel = "Mensaje original",
+  composerPlaceholder = "Responder en el hilo",
 }: ThreadPanelProps): React.JSX.Element | null {
   const [mounted, setMounted] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -61,6 +74,10 @@ export function ThreadPanel({
   const replies = React.useMemo(() => thread.data ?? [], [thread.data]);
   const { notify: notifyTyping } = useNotifyTyping(wsId, chatId, currentUid, authorName);
   const parentIsMine = currentUid !== null && parent.authorId === currentUid;
+  // T17: abierto desde Publicaciones el panel es de comentarios: el padre
+  // se muestra con la fila plana del feed (no con burbuja) y el contador y
+  // el estado vacío hablan de comentarios en vez de respuestas.
+  const isPostParent = parent.type === "post";
 
   React.useEffect(() => {
     setMounted(true);
@@ -110,7 +127,7 @@ export function ThreadPanel({
       className="fixed inset-0 z-50"
       role="dialog"
       aria-modal="true"
-      aria-label={`Hilo de ${parent.authorName}`}
+      aria-label={title}
     >
       <motion.button
         type="button"
@@ -136,7 +153,7 @@ export function ThreadPanel({
       >
         <div className="flex h-14 shrink-0 items-center gap-2 border-b border-divider px-4">
           <h2 className="min-w-0 flex-1 truncate text-body font-semibold text-foreground">
-            Hilo
+            {title}
           </h2>
           <button
             type="button"
@@ -150,29 +167,47 @@ export function ThreadPanel({
 
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           <p className="px-1 pb-1.5 text-meta font-semibold leading-4 text-muted-foreground">
-            Mensaje original
+            {parentLabel}
           </p>
-          <div className="rounded-xl border-l-2 border-accent bg-surface-2 p-3">
-            <div
-              className={cn(
-                MESSAGE_ROW_CLASS,
-                parentIsMine ? "justify-end" : "justify-start",
-              )}
-            >
-              <div className={MESSAGE_BUBBLE_FIT_CLASS}>
-                <MessageBubble
-                  message={parent}
-                  isMine={parentIsMine}
-                  showAuthor
-                  showTime
-                />
+          {isPostParent ? (
+            // T17: el padre de un post se muestra como la fila plana del
+            // feed (no como una burbuja de chat).
+            <div className="rounded-xl border-l-2 border-accent bg-surface-2 p-3">
+              <MessageBubble
+                message={parent}
+                isMine={parentIsMine}
+                showAuthor
+                showTime
+                variant="post"
+              />
+            </div>
+          ) : (
+            <div className="rounded-xl border-l-2 border-accent bg-surface-2 p-3">
+              <div
+                className={cn(
+                  MESSAGE_ROW_CLASS,
+                  parentIsMine ? "justify-end" : "justify-start",
+                )}
+              >
+                <div className={MESSAGE_BUBBLE_FIT_CLASS}>
+                  <MessageBubble
+                    message={parent}
+                    isMine={parentIsMine}
+                    showAuthor
+                    showTime
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          )}
           <p className="px-1 py-2 text-meta leading-5 text-muted-foreground">
             {replies.length === 0
-              ? "Sin respuestas todavía. Responde para abrir el hilo."
-              : `${replies.length} ${replies.length === 1 ? "respuesta" : "respuestas"}`}
+              ? isPostParent
+                ? "Sin comentarios todavía."
+                : "Sin respuestas todavía. Responde para abrir el hilo."
+              : isPostParent
+                ? `${replies.length} ${replies.length === 1 ? "comentario" : "comentarios"}`
+                : `${replies.length} ${replies.length === 1 ? "respuesta" : "respuestas"}`}
           </p>
           {thread.isPending && replies.length === 0 ? (
             <div className="flex flex-col gap-3" aria-hidden="true">
@@ -185,7 +220,7 @@ export function ThreadPanel({
               No se pudieron cargar las respuestas.
             </p>
           ) : null}
-          <ul aria-label="Respuestas del hilo" className="flex flex-col gap-3">
+          <ul aria-label={`Respuestas: ${title}`} className="flex flex-col gap-3">
             {replies.map((reply) => (
               <li key={reply.id}>
                 <MessageReply reply={reply} currentUid={currentUid} />
@@ -202,7 +237,7 @@ export function ThreadPanel({
         <Composer
           isLoki={false}
           chatName=""
-          placeholder="Responder en el hilo"
+          placeholder={composerPlaceholder}
           sending={sending}
           members={members}
           onSend={handleSend}

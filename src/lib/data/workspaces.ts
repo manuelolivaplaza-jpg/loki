@@ -9,6 +9,8 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { getDb } from "@/lib/firebase/firestore";
+import { buildPostsChatPayload } from "@/lib/data/chat";
+import { POSTS_CHAT_ID } from "@/lib/chat/posts";
 import type { WorkspaceKind, WorkspaceMembership } from "@/types/models";
 
 export type CreateWorkspaceInput = {
@@ -78,6 +80,8 @@ export async function createWorkspace(
     updatedAt: serverTimestamp(),
     lastMessage: null,
   });
+  // T17: feed de publicaciones unido al chat, mismo batch que "general".
+  batch.set(doc(db, "workspaces", wsId, "chats", POSTS_CHAT_ID), buildPostsChatPayload(actor.uid));
   await batch.commit();
   return wsId;
 }

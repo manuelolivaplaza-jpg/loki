@@ -152,7 +152,10 @@ service cloud.firestore {
       match /chats/{chatId} {
         allow get, list: if canAccessChat(wsId, resource.data);
         // existsAfter sobre members/{uid} permite crear el chat general
-        // en el mismo batch que crea el espacio y el miembro owner.
+        // y el de publicaciones (T17) en el mismo batch que crea el
+        // espacio y el miembro owner. Para un espacio ya existente
+        // existsAfter equivale a exists, asi que cualquier miembro puede
+        // crear el chat 'posts' que le falte (espacios previos a T17).
         // 'ai' no existe en espacios (solo en users/{uid}/aiChats).
         allow create: if isSignedIn()
           && existsAfter(/databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid))

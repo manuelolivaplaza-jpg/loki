@@ -9,6 +9,7 @@ import { Icon } from "@/components/ui/icon";
 import { SectionLabel } from "@/components/ui/section-label";
 import { LOKI_IA_CHAT } from "@/lib/data/chats";
 import { formatChatTime } from "@/lib/chat/format";
+import { POSTS_CHAT_ID } from "@/lib/chat/posts";
 import { avatarColorFor } from "@/lib/avatar-color";
 import { useChats, useUnread } from "@/hooks/use-chat";
 import { useSessionStore } from "@/stores/session-store";
@@ -83,6 +84,18 @@ export function ChatList(): React.JSX.Element {
 
   const realChats = chats.filter((chat) => chat.type !== "posts");
 
+  // T17: la tarjeta muestra el preview real del último post del chat
+  // `posts` (mismo formato "Autor: texto" que las conversaciones) en vez
+  // del texto genérico. Sin posts todavía mantiene la frase original.
+  const postsChat = chats.find((chat) => chat.id === POSTS_CHAT_ID) ?? null;
+  const postsLast = postsChat?.lastMessage ?? null;
+  const postsPreview =
+    postsLast === null
+      ? "Lo compartido en este espacio"
+      : `${postsLast.authorName}: ${postsLast.text}`;
+  const postsMeta =
+    postsLast === null ? null : formatChatTime(postsLast.createdAt);
+
   return (
     <div className="px-2 py-2 md:px-4">
       <ul>
@@ -141,10 +154,16 @@ export function ChatList(): React.JSX.Element {
                   Publicaciones
                 </span>
                 <span className="block truncate text-body-sm leading-5 text-muted-foreground">
-                  Lo compartido en este espacio
+                  {postsPreview}
                 </span>
               </span>
-              <Icon icon={ChevronRight} size={20} className="shrink-0 text-muted-foreground" />
+              {postsMeta !== null ? (
+                <span className="shrink-0 text-meta leading-4 text-muted-foreground">
+                  {postsMeta}
+                </span>
+              ) : (
+                <Icon icon={ChevronRight} size={20} className="shrink-0 text-muted-foreground" />
+              )}
             </CardRow>
           </Link>
         </Card>

@@ -1,25 +1,40 @@
-# Chat (T13–T16)
+# Chat (T13–T17)
 
-Pantalla de conversación estilo Grok con datos reales de Firestore.
+Pantalla de conversación estilo Grok con datos reales de Firestore, más el
+feed de Publicaciones unido al chat.
 
 ## Componentes (`src/components/chat/`)
 
 | Componente | Archivo | Uso |
 |---|---|---|
-| `ChatList` | `chat-list.tsx` | Loki IA fijado + tarjeta Publicaciones + conversaciones reales de `useChats` (preview `Autor: texto`, hora corta). `EmptyState` si no hay chats. El color del avatar del chat sale de `avatarColorFor(chat.id)`. |
+| `ChatList` | `chat-list.tsx` | Loki IA fijado + tarjeta Publicaciones + conversaciones reales de `useChats` (preview `Autor: texto`, hora corta). `EmptyState` si no hay chats. El color del avatar del chat sale de `avatarColorFor(chat.id)`. Desde T17 la tarjeta Publicaciones muestra el preview real del `lastMessage` del chat `posts` (y su hora) cuando existe. |
 | `ConversationView` | `conversation-view.tsx` | `useMessages` + `useSendMessage` (o mocks locales en `loki-ia`). Scroll al final sin animación, auto-scroll <120px, pastilla de nuevos, paginación con `IntersectionObserver` conservando posición. Desde T16 es también el dueño del estado de interacción: cita (`replyTo`), edición en curso, hilo abierto y avisos de "Mensaje copiado". |
 | `MessageList` | `message-list.tsx` | `role=log` + `aria-live=polite`. Agrupa por autor (<5 min), separa por día, anima solo ids nuevos con el spring único. Pasa a cada `MessageItem` los seis callbacks de T16 (reacción, respuesta, hilo, copiar, editar, eliminar). |
 | `MessageItem` | `message-item.tsx` | Burbuja interactiva: long-press 500ms (táctil) o hover (ratón) → `ReactionBar`; botón `...` en hover y click derecho → `MessageContextMenu`. Debajo: cita `replyTo`, chips de reacciones y botón `N respuestas`. Exporta desde aquí las clases de ancho (`MESSAGE_ROW_CLASS`, `MESSAGE_BUBBLE_FIT_CLASS`). |
-| `MessageBubble` | `message-bubble.tsx` | Propios `#0F0F0F`/`#2A2A2A`, otros `#F0F0F0`/`#16181C`, radio 22px, 15px/1.45, `break-words`. IA sin burbuja (`Loki` + Sparkles), system centrado, eliminado en itálica. Avatar 28px en el último del grupo, hora `HH:mm` bajo el grupo y `· (editado)` si `editedAt`. Color de avatar por `useAuthorAvatarColor`. |
+| `MessageBubble` | `message-bubble.tsx` | Propios `#0F0F0F`/`#2A2A2A`, otros `#F0F0F0`/`#16181C`, radio 22px, 15px/1.45, `break-words`. IA sin burbuja (`Loki` + Sparkles), system centrado, eliminado en itálica. Avatar 28px en el último del grupo, hora `HH:mm` bajo el grupo y `· (editado)` si `editedAt`. Color de avatar por `useAuthorAvatarColor`. Desde T17 acepta `variant="post"`: fila plana del feed (avatar 40 + nombre + tiempo relativo), sin burbuja. |
 | `ReactionBar` | `reaction-bar.tsx` | `MenuCard` flotante con 6 emojis rápidos + `+` que abre el grid de 24 (`EXTENDED_REACTIONS`). `role=toolbar`, `aria-label="Reaccionar con X"` por emoji, Escape/click afuera cierran. |
 | `ReactionChips` | `reaction-chips.tsx` | Chips bajo la burbuja (emoji + contador, ordenados por cantidad). El propio lleva `aria-pressed` y borde accent; tocarlo alterna el uid propio. |
 | `MessageContextMenu` | `message-context-menu.tsx` | `role=menu` con Responder, Responder en hilo, Copiar, Editar y Eliminar (las dos últimas solo del autor). Eliminar pide confirmación en línea "Eliminar mensaje?" (Cancelar/Eliminar). |
-| `ThreadPanel` | `thread-panel.tsx` | Hilo en portal a `document.body`: drawer derecho de 420px en escritorio (scrim included) y bottom sheet casi a pantalla completa en móvil. Padre + `useThread` en vivo + `Composer` que envía con `threadParentId`. |
+| `ThreadPanel` | `thread-panel.tsx` | Hilo en portal a `document.body`: drawer derecho de 420px en escritorio (scrim included) y bottom sheet casi a pantalla completa en móvil. Padre + `useThread` en vivo + `Composer` que envía con `threadParentId`. Desde T17 acepta `title`/`parentLabel` (Publicaciones lo abre como "Comentarios" sobre "Publicación"). |
+| `PostsView` | `posts-view.tsx` | `/chat/publicaciones`: composer arriba (sticky bajo el header, columna de 760px), feed y estado vacío. `usePosts` + `usePublishPost`; errores y reintento con el mismo id de cliente. |
+| `PostRow` | `post-row.tsx` | Fila plana estilo X separada por `border-divider`: `MessageBubble variant="post"` + acciones Me gusta (Heart relleno/`text-danger`/`aria-pressed` con contador) y Comentar (MessageCircle + `threadCount`). Exporta `usePostClock`, un único reloj para todos los tiempos relativos. |
 | `DaySeparator` | `day-separator.tsx` | `Hoy` / `Ayer` / `lunes 21 de septiembre`, 13px muted. |
-| `Composer` | `composer.tsx` | Botón `+` 44px + pastilla con textarea 1–6 líneas, mic deshabilitado, enviar 36px solo con texto (spring). Enter envía solo con puntero fino; `visualViewport` + `safe-area` para el teclado. Desde T16 también acepta `replyTo` (barra de cita con X), `edit` (precarga el texto y Enter guarda) y `placeholder`. |
+| `Composer` | `composer.tsx` | Botón `+` 44px + pastilla con textarea 1–6 líneas, mic deshabilitado, enviar 36px solo con texto (spring). Enter envía solo con puntero fino; `visualViewport` + `safe-area` para el teclado. Desde T16 también acepta `replyTo` (barra de cita con X), `edit` (precarga el texto y Enter guarda) y `placeholder`. Desde T17 `mode="post"` lo convierte en el composer superior del feed. |
 | `AttachMenu` | `attach-menu.tsx` | `MenuCard` con 3 opciones deshabilitadas + aviso `Los adjuntos llegan pronto`. Cierra con click afuera o Escape. `+` rota a ×. |
 | `NewMessagesPill` | `new-messages-pill.tsx` | Pastilla flotante `Nuevos mensajes` + flecha, baja con scroll suave. |
 | `TypingIndicator` | `typing-indicator.tsx` | `X está escribiendo…` / `X e Y están…` / `Varias personas…` debajo de los mensajes (`aria-live=polite`). Nada si nadie escribe. |
+
+## Publicaciones (T17)
+
+Feed estilo X unido al chat: los posts son mensajes `type: "post"` con `threadParentId: null` del chat `posts` del espacio (id fijo, creado en el mismo batch que `general`; `ensurePostsChat` lo crea si el espacio es anterior a T17). Los comentarios son respuestas de hilo normales.
+
+- `src/lib/chat/posts.ts` (puro): `POSTS_CHAT_ID`/nombre/emoji, `POST_LIKE_EMOJI` (corazón rojo U+2764 U+FE0F), textos de la pantalla, `formatPostTime` ("ahora" / "5 min" / "2 h" / "ayer" / fecha) y los helpers `isPostMessage`, `postLikeCount`, `hasPostLike`, `postCommentCount`.
+- `PostsView` + `PostRow`: `usePosts` (misma query que el timeline: `threadParentId == null` + `createdAt` desc, así que reutiliza el índice existente) y `usePublishPost` con envío optimista e idempotente (`ensurePostsChat` → `sendMessage` type `post`). Publicar actualiza `lastMessage` del chat; comentar solo sube `threadCount`.
+- Un post **no** es una burbuja: `MessageBubble` acepta `variant="post"` (fila plana con avatar `avatarColorFor(uid)`, nombre semibold, tiempo relativo muted) y las acciones viven en `PostRow`: Me gusta (Heart relleno + `text-danger` + `aria-pressed` cuando el uid propio ya reaccionó, contador al lado, alterna con `toggleReaction`) y Comentar (MessageCircle + `threadCount`, abre el `ThreadPanel` con título "Comentarios").
+- `Composer` acepta `mode="post"`: mismo autogrow y Enter con puntero fino, pero botón de imagen deshabilitado "Próximamente", botón "Publicar" (deshabilitado sin texto) y sin menú de menciones. Va arriba, `sticky` bajo el header y centrado en la columna de 760px; en la lista de chats la tarjeta Publicaciones muestra el preview real del `lastMessage` del chat `posts`.
+- **Alta del chat antes de escuchar**: `usePosts` llama a `ensurePostsChat` y solo después se suscribe a `listenPosts` (`use-chat.ts`). En un espacio anterior a T17 el doc no existe y la consulta moría con `permission-denied` (`canAccessChat` sobre un doc inexistente), así que los posts de otros nunca llegaban en vivo hasta recargar. `listenPosts` recibe `onError`: con `permission-denied` **no** se muestra error (el feed queda en su estado vacío) y se reintenta 3 veces cada 4 s volviendo a asegurar el chat; el esqueleto solo aparece hasta el primer snapshot y los snapshots entran con `mergeUnique` (desc), para que un post optimista o con error de envío no desaparezca por un snapshot ajeno.
+- **Móvil**: `MobileHeader` detecta `/chat/publicaciones` y pinta la misma cabecera que una conversación (volver a `/chat`, pastilla con el emoji 📰 y "Publicaciones", botón de detalles), en vez del selector de espacio. En escritorio no cambia nada.
+- **Acentos**: los literales de `posts.ts` van con tilde y signos correctos (`¿Qué quieres compartir?`, `Publicación`, `Próximamente`, `Todavía no hay publicaciones…`); en el panel de comentarios el contador dice `1 comentario` / `N comentarios` y el vacío `Sin comentarios todavía.` (el hilo normal sigue con "respuesta(s)").
 
 ## Interacción por mensaje (T16)
 
@@ -62,6 +77,7 @@ El orden importa: si el contenedor de la burbuja encoge al contenido (`items-end
 ## Utilidades (`src/lib/chat/`)
 
 - `format.ts`: `formatHour`, `formatDayLabel`, `formatChatTime`, `dayKey`, `groupMessages` (ventana 5 min).
+- `posts.ts` (T17): id/nombre/emoji del chat `posts`, `POST_LIKE_EMOJI`, textos de la pantalla, `formatPostTime` y los helpers de like/comentarios.
 - `reactions.ts`: `QUICK_REACTIONS` (6) y `EXTENDED_REACTIONS` (24) como {emoji, nombre accesible, codepoints} construidos con `String.fromCodePoint` (sin emojis pegados a mano en el código).
 - `mentions.ts`: `getMentionQuery`, `filterMentionCandidates`, `resolveMentionIds`, `parseMentionSegments`, `mentionsLoki`, `isAiEnabled`, `buildLokiDisabledMessage` (puras, testeables con Node sin runner).
 

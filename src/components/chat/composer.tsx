@@ -2,12 +2,19 @@
 
 import * as React from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ArrowUp, Mic, Plus, Sparkles, X } from "lucide-react";
+import { ArrowUp, ImageIcon, Mic, Plus, Sparkles, X } from "lucide-react";
 import { AttachMenu } from "@/components/chat/attach-menu";
 import { Avatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { MenuCard } from "@/components/ui/menu-card";
+import {
+  POSTS_MEDIA_LABEL,
+  POSTS_MEDIA_SOON,
+  POSTS_PLACEHOLDER,
+  POSTS_PUBLISH_LABEL,
+} from "@/lib/chat/posts";
 import {
   LOKI_CANDIDATE,
   buildMentionToken,
@@ -41,6 +48,14 @@ type ComposerProps = {
   onCancelReply?: () => void;
   /** Placeholder propio (el hilo usa "Responder en el hilo"). */
   placeholder?: string;
+  /**
+   * T17: `post` convierte la barra en el composer superior de Publicaciones
+   * (botón de imagen deshabilitado "Próximamente" en vez de `+` adjuntos,
+   * botón "Publicar" en vez de la flecha, sin menú de menciones ni pastilla
+   * de mic). El resto (autogrow 1–6 líneas, Enter con puntero fino,
+   * `visualViewport`) es el mismo.
+   */
+  mode?: "chat" | "post";
 };
 
 type MentionState = {
@@ -139,6 +154,7 @@ export function Composer({
   replyTo = null,
   onCancelReply,
   placeholder: placeholderOverride,
+  mode = "chat",
 }: ComposerProps): React.JSX.Element {
   const [value, setValue] = React.useState("");
   const [attachOpen, setAttachOpen] = React.useState(false);
@@ -149,14 +165,19 @@ export function Composer({
   const hasText = value.trim() !== "";
   const editingId = edit?.id ?? null;
   const editingText = edit?.text ?? "";
+  // T17: en el feed de Publicaciones el composer va arriba, no es una barra
+  // pegada abajo, y no lleva menciones (no hay menú @ ni @Loki).
+  const isPost = mode === "post";
 
   const placeholder =
     placeholderOverride ??
-    (replyTo !== null
-      ? `Responder a ${replyTo.authorName}`
-      : isLoki
-        ? "Pregunta a Loki"
-        : `Mensaje para ${chatName}`);
+    (isPost
+      ? POSTS_PLACEHOLDER
+      : replyTo !== null
+        ? `Responder a ${replyTo.authorName}`
+        : isLoki
+          ? "Pregunta a Loki"
+          : `Mensaje para ${chatName}`);
 
   // Al entrar en modo edición el input se llena con el texto original.
   React.useEffect(() => {
@@ -180,7 +201,7 @@ export function Composer({
   );
 
   // Sin resultados el menú se cierra (no se muestra vacío).
-  const open = mention !== null && filtered.length > 0;
+  const open = !isPost && mention !== null && filtered.length > 0;
   const activeIndex =
     mention === null
       ? 0
@@ -218,6 +239,10 @@ export function Composer({
   }, []);
 
   const updateMention = React.useCallback((next: string, caret: number) => {
+    if (isPost) {
+      setMention(null);
+      return;
+    }
     const found = getMentionQuery(next, caret);
     if (found === null) {
       setMention(null);
@@ -228,7 +253,7 @@ export function Composer({
         ? { ...prev, caret }
         : { start: found.start, caret, query: found.query, active: 0 },
     );
-  }, []);
+  }, [isPost]);
 
   const insertMention = React.useCallback(
     (candidate: MentionCandidate) => {
@@ -253,7 +278,8 @@ export function Composer({
   const send = React.useCallback(() => {
     const text = value.trim();
     if (text === "" || sending) return;
-    const mentions = resolveMentionIds(value, allCandidates);
+    // T17: sin menciones en el feed de posts.
+    const mentions = isPost ? [] : resolveMentionIds(value, allCandidates);
     // En modo edición el mismo Enter guarda con editMessage.
     if (editingId !== null) onSaveEdit?.(text, mentions);
     else onSend(text, mentions);
@@ -263,7 +289,7 @@ export function Composer({
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
-  }, [value, sending, editingId, onSaveEdit, onSend, allCandidates, onValueChange]);
+  }, [value, sending, editingId, isPost, onSaveEdit, onSend, allCandidates, onValueChange]);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (open && mention !== null) {
@@ -307,8 +333,17 @@ export function Composer({
   return (
     <div
       ref={wrapRef}
-      className="px-3 pt-2"
-      style={{ paddingBottom: "calc(12px + env(safe-area-inset-bottom) + var(--kb, 0px))" }}
+      className={cn(
+        "px-3 pt-2",
+        // T17: el feed de posts separa el composer de la lista con un
+        // divisor y no deja la barra pegada al borde inferior.
+        isPost && "border-b border-divider pb-3",
+      )}
+      style={
+        isPost
+          ? undefined
+          : { paddingBottom: "calc(12px + env(safe-area-inset-bottom) + var(--kb, 0px))" }
+      }
     >
       <div className="mx-auto w-full max-w-[760px]">
         {editingId !== null ? (
@@ -357,29 +392,49 @@ export function Composer({
           </div>
         ) : null}
         <div className="flex items-end gap-2">
-          <div className="relative shrink-0">
-            <AnimatePresence>
-              {attachOpen ? <AttachMenu onClose={() => setAttachOpen(false)} /> : null}
-            </AnimatePresence>
-            <IconButton
-              variant="floating"
-              aria-label={attachOpen ? "Cerrar adjuntos" : "Adjuntar"}
-              aria-expanded={attachOpen}
-              aria-haspopup="menu"
-              onClick={() => setAttachOpen((openAttach) => !openAttach)}
-              className="dark:border dark:border-white/10"
+          {isPost ? (
+            // T17: la imagen llega pronto; el botón queda visible y deshabilitado.
+            <button
+              type="button"
+              disabled
+              title={POSTS_MEDIA_SOON}
+              aria-label={POSTS_MEDIA_LABEL}
+              className="flex h-11 w-11 shrink-0 cursor-not-allowed items-center justify-center rounded-full text-muted-foreground outline-none"
             >
-              <motion.span
-                animate={{ rotate: attachOpen ? 45 : 0 }}
-                transition={spring}
-                className="flex items-center justify-center"
+              <Icon icon={ImageIcon} size={22} />
+            </button>
+          ) : (
+            <div className="relative shrink-0">
+              <AnimatePresence>
+                {attachOpen ? <AttachMenu onClose={() => setAttachOpen(false)} /> : null}
+              </AnimatePresence>
+              <IconButton
+                variant="floating"
+                aria-label={attachOpen ? "Cerrar adjuntos" : "Adjuntar"}
+                aria-expanded={attachOpen}
+                aria-haspopup="menu"
+                onClick={() => setAttachOpen((openAttach) => !openAttach)}
+                className="dark:border dark:border-white/10"
               >
-                <Icon icon={Plus} size={24} />
-              </motion.span>
-            </IconButton>
-          </div>
+                <motion.span
+                  animate={{ rotate: attachOpen ? 45 : 0 }}
+                  transition={spring}
+                  className="flex items-center justify-center"
+                >
+                  <Icon icon={Plus} size={24} />
+                </motion.span>
+              </IconButton>
+            </div>
+          )}
 
-          <div className="relative flex min-h-11 min-w-0 flex-1 items-end gap-1 rounded-full bg-surface-soft py-1 pl-4 pr-1">
+          <div
+            className={cn(
+              "relative flex min-h-11 min-w-0 flex-1 items-end gap-1 bg-surface-soft py-1",
+              // El chat es una pastilla redondeada; el post, un bloque con
+              // esquinas suaves (estilo X) para que se lea como composer.
+              isPost ? "rounded-2xl pl-3 pr-1.5" : "rounded-full pl-4 pr-1",
+            )}
+          >
             {open ? (
               <div className="absolute inset-x-0 bottom-full z-20 mb-2">
                 <MenuCard
@@ -423,7 +478,7 @@ export function Composer({
               )}
               style={{ maxHeight: 120 }}
             />
-            {!hasText ? (
+            {!hasText && !isPost ? (
               <button
                 type="button"
                 disabled
@@ -434,27 +489,41 @@ export function Composer({
                 <Icon icon={Mic} size={20} />
               </button>
             ) : null}
-            <AnimatePresence initial={false}>
-              {hasText ? (
-                <motion.button
-                  key="send"
-                  type="button"
-                  onClick={send}
-                  disabled={sending}
-                  aria-label={editingId !== null ? "Guardar cambios" : "Enviar mensaje"}
-                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.8 }}
-                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
-                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.8 }}
-                  transition={spring}
-                  className={cn(
-                    "flex h-9 w-9 shrink-0 items-center justify-center rounded-full outline-none interactive-solid",
-                    "bg-foreground text-background dark:bg-white dark:text-black",
-                  )}
-                >
-                  <Icon icon={ArrowUp} size={20} />
-                </motion.button>
-              ) : null}
-            </AnimatePresence>
+            {isPost ? (
+              // Botón "Publicar": siempre visible, deshabilitado sin texto.
+              <Button
+                type="button"
+                size="sm"
+                onClick={send}
+                disabled={!hasText || sending}
+                aria-label={POSTS_PUBLISH_LABEL}
+                className="shrink-0"
+              >
+                {POSTS_PUBLISH_LABEL}
+              </Button>
+            ) : (
+              <AnimatePresence initial={false}>
+                {hasText ? (
+                  <motion.button
+                    key="send"
+                    type="button"
+                    onClick={send}
+                    disabled={sending}
+                    aria-label={editingId !== null ? "Guardar cambios" : "Enviar mensaje"}
+                    initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.8 }}
+                    animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.8 }}
+                    transition={spring}
+                    className={cn(
+                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-full outline-none interactive-solid",
+                      "bg-foreground text-background dark:bg-white dark:text-black",
+                    )}
+                  >
+                    <Icon icon={ArrowUp} size={20} />
+                  </motion.button>
+                ) : null}
+              </AnimatePresence>
+            )}
           </div>
         </div>
       </div>

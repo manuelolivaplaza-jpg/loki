@@ -60,6 +60,20 @@ function chatPayload(overrides = {}) {
   };
 }
 
+/** Mismo payload que `buildPostsChatPayload` en src/lib/data/chat.ts. */
+function postsChatPayload(uid) {
+  return {
+    type: "posts",
+    name: "Publicaciones",
+    emoji: "\u{1F4F0}",
+    memberIds: [],
+    createdBy: uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    lastMessage: null,
+  };
+}
+
 function messagePayload(overrides = {}) {
   return {
     authorId: MEMBER_UID,
@@ -529,7 +543,7 @@ describe("firestore.rules T12 chat", () => {
     );
   });
 
-  it("creacion de workspace + member + chat general en un mismo batch OK", async () => {
+  it("creacion de workspace + member + chats general y posts en un mismo batch OK", async () => {
     const db = ownerDb();
     const batch = writeBatch(db);
     batch.set(doc(db, "workspaces", WS_BATCH), {
@@ -568,10 +582,138 @@ describe("firestore.rules T12 chat", () => {
       updatedAt: serverTimestamp(),
       lastMessage: null,
     });
+    batch.set(doc(db, "workspaces", WS_BATCH, "chats", "posts"), postsChatPayload(OWNER_UID));
     await assertSucceeds(batch.commit());
     const chatSnap = await assertSucceeds(
       getDoc(doc(db, "workspaces", WS_BATCH, "chats", "general")),
     );
     assert.equal(chatSnap.exists(), true);
+    const postsSnap = await assertSucceeds(
+      getDoc(doc(db, "workspaces", WS_BATCH, "chats", "posts")),
+    );
+    assert.equal(postsSnap.exists(), true);
+    assert.equal(postsSnap.data()?.type, "posts");
+  });
+
+  it("T17: miembro crea el chat posts de un espacio pre-T17 (fuera de batch) OK", async () => {
+    const db = memberDb();
+    // WS_ID se sembró sin el chat 'posts': representa un espacio creado
+    // antes de T17. Cualquier miembro puede crearlo (ensurePostsChat).
+    // Ojo: no se puede comprobar la ausencia con un getDoc, porque
+    // canAccessChat lee el doc del chat y la lectura de un doc inexistente
+    // se deniega en vez de devolver exists: false (por eso ensurePostsChat
+    // trata ese error como "no está").
+    const ref = doc(db, "workspaces", WS_ID, "chats", "posts");
+    await assertFails(getDoc(ref));
+    await assertSucceeds(setDoc(ref, postsChatPayload(MEMBER_UID)));
+    const snap = await assertSucceeds(getDoc(ref));
+    assert.equal(snap.data()?.type, "posts");
+    assert.equal(snap.data()?.name, "Publicaciones");
+    assert.deepEqual(snap.data()?.memberIds, []);
+  });
+
+  it("T17: el chat posts no lo puede crear un no miembro", async () => {
+    await assertFails(
+      setDoc(
+        doc(strangerDb(), "workspaces", WS_ID, "chats", "posts-ajeno"),
+        postsChatPayload(STRANGER_UID),
+      ),
+    );
+  });
+
+  it("T17: miembro publica un post (type 'post', threadParentId null) y lista el feed", async () => {
+    const db = memberDb();
+    await assertSucceeds(
+      setDoc(
+        doc(db, "workspaces", WS_ID, "chats", "posts", "messages", "post-1"),
+        messagePayload({ text: "primer post", type: "post", authorId: MEMBER_UID }),
+      ),
+    );
+    // Comentario de otro miembro: type "user" con threadParentId (no es post).
+    await assertSucceeds(
+      setDoc(
+        doc(ownerDb(), "workspaces", WS_ID, "chats", "posts", "messages", "post-reply"),
+        messagePayload({
+          text: "comentario",
+          authorId: OWNER_UID,
+          threadParentId: "post-1",
+        }),
+      ),
+    );
+    // El feed es la misma query que el timeline del chat.
+    const snap = await assertSucceeds(
+      getDocs(
+        query(
+          collection(db, "workspaces", WS_ID, "chats", "posts", "messages"),
+          where("threadParentId", "==", null),
+          orderBy("createdAt", "desc"),
+          limit(30),
+        ),
+      ),
+    );
+    assert.equal(snap.size, 1);
+    assert.equal(snap.docs[0].data().type, "post");
+    // Publicar actualiza el preview del chat; el comentario de hilo no.
+    await assertSucceeds(
+      updateDoc(doc(db, "workspaces", WS_ID, "chats", "posts"), {
+        lastMessage: {
+          text: "primer post",
+          authorId: MEMBER_UID,
+          authorName: "Member",
+          type: "post",
+          createdAt: serverTimestamp(),
+        },
+        updatedAt: serverTimestamp(),
+      }),
+    );
+    await assertSucceeds(
+      updateDoc(doc(db, "workspaces", WS_ID, "chats", "posts", "messages", "post-1"), {
+        threadCount: 1,
+        lastReplyAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  it("T17: 'Me gusta' alterna solo mi uid en el corazon del post", async () => {
+    const db = memberDb();
+    await assertSucceeds(
+      updateDoc(
+        doc(db, "workspaces", WS_ID, "chats", "posts", "messages", "post-1"),
+        {
+          reactions: { "❤️": [MEMBER_UID] },
+          lastReaction: { uid: MEMBER_UID, emoji: "❤️" },
+        },
+      ),
+    );
+    await assertSucceeds(
+      updateDoc(
+        doc(db, "workspaces", WS_ID, "chats", "posts", "messages", "post-1"),
+        {
+          reactions: { "❤️": [] },
+          lastReaction: { uid: MEMBER_UID, emoji: "❤️" },
+        },
+      ),
+    );
+    // Reaccionar con un uid ajeno sigue denegado.
+    await assertFails(
+      updateDoc(
+        doc(db, "workspaces", WS_ID, "chats", "posts", "messages", "post-1"),
+        {
+          reactions: { "❤️": [OWNER_UID] },
+          lastReaction: { uid: MEMBER_UID, emoji: "❤️" },
+        },
+      ),
+    );
+  });
+
+  it("T17: el feed de posts no es visible para un no miembro", async () => {
+    await assertFails(
+      getDoc(doc(strangerDb(), "workspaces", WS_ID, "chats", "posts")),
+    );
+    await assertFails(
+      getDocs(
+        collection(strangerDb(), "workspaces", WS_ID, "chats", "posts", "messages"),
+      ),
+    );
   });
 });

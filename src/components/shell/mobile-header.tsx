@@ -14,6 +14,7 @@ import {
   QuickActionsMobileMenu,
 } from "@/components/shell/quick-actions";
 import { avatarColorFor } from "@/lib/avatar-color";
+import { POSTS_CHAT_EMOJI, POSTS_CHAT_NAME } from "@/lib/chat/posts";
 import { spring } from "@/lib/motion";
 import { getConversationId } from "@/lib/data/chats";
 import { useChats } from "@/hooks/use-chat";
@@ -73,6 +74,39 @@ function ConversationHeader({ chatId }: { chatId: string }): React.JSX.Element {
   );
 }
 
+/**
+ * Cabecera de Publicaciones en móvil: misma cabecera que una conversación
+ * (volver a /chat, pastilla con el emoji de periódico y el nombre, botón
+ * circular a la derecha), pero fija y sin consultar los chats del espacio.
+ */
+function PostsHeader(): React.JSX.Element {
+  const router = useRouter();
+  return (
+    <header className="sticky top-0 z-40 bg-gradient-to-b from-background via-background/70 to-transparent md:hidden">
+      <div className="flex h-[68px] items-center justify-between gap-2 px-3">
+        <IconButton variant="floating" aria-label="Volver" onClick={() => router.push("/chat")}>
+          <Icon icon={ChevronLeft} size={24} />
+        </IconButton>
+        <Pill
+          aria-label={POSTS_CHAT_NAME}
+          chevron={false}
+          leading={<Avatar emoji={POSTS_CHAT_EMOJI} size={32} />}
+          text={POSTS_CHAT_NAME}
+          onClick={() => undefined}
+          className="py-2 pl-2 pr-4"
+        />
+        <IconButton
+          variant="floating"
+          aria-label="Detalles de las publicaciones"
+          title="Próximamente"
+        >
+          <Icon icon={Info} size={20} />
+        </IconButton>
+      </div>
+    </header>
+  );
+}
+
 function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
   const pathname = useAppPathname();
   const router = useRouter();
@@ -82,6 +116,7 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
 
   const chatId = getConversationId(pathname, searchParams.get("id"));
   const isChatList = pathname === "/chat";
+  const isPosts = pathname === "/chat/publicaciones";
   const isPerfil =
     pathname === "/perfil" || (pathname?.startsWith("/perfil/") ?? false);
   const isConfig =
@@ -91,6 +126,11 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
   // Vista de conversación: volver + pastilla del chat + botón circular.
   if (chatId !== null) {
     return <ConversationHeader chatId={chatId} />;
+  }
+
+  // T17: el feed de Publicaciones es una conversación más en móvil.
+  if (isPosts) {
+    return <PostsHeader />;
   }
 
   // Perfil y configuración en móvil: pantalla completa con X para cerrar.

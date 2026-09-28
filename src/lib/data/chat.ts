@@ -29,6 +29,13 @@ import {
   LOKI_CANDIDATE,
   type MentionCandidate,
 } from "@/lib/chat/mentions";
+import {
+  isPostMessage,
+  POSTS_CHAT_EMOJI,
+  POSTS_CHAT_ID,
+  POSTS_CHAT_NAME,
+  POSTS_PAGE_SIZE,
+} from "@/lib/chat/posts";
 import type {
   ChatDoc,
   MessageAttachment,
@@ -156,6 +163,89 @@ function latestMessagesQuery(wsId: string, chatId: string, pageSize = MESSAGES_P
     where("threadParentId", "==", null),
     orderBy("createdAt", "desc"),
     limit(pageSize),
+  );
+}
+
+// --- Publicaciones (T17) -----------------------------------------------------
+
+/**
+ * Campos del doc `chats/posts`. Es el mismo payload que escribe el batch de
+ * `createWorkspace`, reutilizado aquí para los espacios que ya existían antes
+ * de T17 (sin ese chat): cualquier miembro del espacio puede crearlo porque
+ * `create` en firestore.rules admite type "posts" para un firmante que ya
+ * es miembro (no hace falta el batch con el workspace).
+ */
+export function buildPostsChatPayload(uid: string): DocumentData {
+  return {
+    type: "posts",
+    name: POSTS_CHAT_NAME,
+    emoji: POSTS_CHAT_EMOJI,
+    memberIds: [],
+    createdBy: uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    lastMessage: null,
+  };
+}
+
+/**
+ * Crea el chat `posts` si falta (espacios creados antes de T17).
+ *
+ * El `getDoc` de control está dentro de un try: las reglas resuelven
+ * `canAccessChat(wsId, chatDoc(wsId, chatId))` y, si el documento no
+ * existe, ese `get` falla con `permission-denied` en lugar de devolver
+ * `exists: false`. Se trata igual que "no está" y se intenta el create,
+ * que las reglas sí permiten a cualquier miembro del espacio. Si el
+ * documento ya existía y soy miembro, el `get` lo lee y no se escribe
+ * nada (no se pisa `lastMessage`).
+ */
+export async function ensurePostsChat(wsId: string, uid: string): Promise<void> {
+  const ref = doc(chatsCollection(wsId), POSTS_CHAT_ID);
+  try {
+    const snapshot = await getDoc(ref);
+    if (snapshot.exists()) return;
+  } catch {
+    // Chat ausente (o sin acceso): se intenta crear abajo.
+  }
+  await setDoc(ref, buildPostsChatPayload(uid));
+}
+
+/**
+ * Consulta del feed: los 30 mensajes del timeline del chat `posts` (misma
+ * forma que `latestMessagesQuery`, así que reutiliza el índice compuesto ya
+ * declarado en firestore.indexes.json) filtrados a `type: "post"`. Los
+ * comentarios son respuestas de hilo (`threadParentId != null`) y nunca
+ * entran al feed.
+ */
+function postsQuery(wsId: string, pageSize = POSTS_PAGE_SIZE) {
+  return latestMessagesQuery(wsId, POSTS_CHAT_ID, pageSize);
+}
+
+/**
+ * Suscripción en vivo al feed de publicaciones (más reciente primero).
+ *
+ * `onError` recibe el fallo del listener: las reglas resuelven
+ * `canAccessChat(wsId, chatDoc(wsId, "posts"))`, así que un espacio
+ * anterior a T17 (sin ese doc) responde `permission-denied` en vez de
+ * una lista vacía. Quien llama decide qué hacer (ver `usePosts`).
+ */
+export function listenPosts(
+  wsId: string,
+  cb: (posts: MessageDoc[]) => void,
+  onError?: (error: Error) => void,
+): Unsubscribe {
+  return onSnapshot(
+    postsQuery(wsId),
+    (snapshot) => {
+      cb(
+        snapshot.docs
+          .map((item) => toMessageDoc(item.id, item.data({ serverTimestamps: "estimate" })))
+          .filter(isPostMessage),
+      );
+    },
+    (error) => {
+      onError?.(error);
+    },
   );
 }
 

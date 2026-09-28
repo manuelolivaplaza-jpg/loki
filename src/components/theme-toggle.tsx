@@ -24,13 +24,18 @@ export function ThemeToggle(): React.JSX.Element {
   return (
     <Button
       type="button"
-      variant="outline"
+      variant="ghost"
       size="icon"
       onClick={toggle}
       aria-label={isDark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
       title={isDark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
+      className="h-10 w-10 rounded-full border-0 text-foreground hover:bg-surface-2"
     >
-      {mounted && isDark ? <Sun /> : <Moon />}
+      {mounted && isDark ? (
+        <Sun className="h-5 w-5" />
+      ) : (
+        <Moon className="h-5 w-5" />
+      )}
     </Button>
   );
 }

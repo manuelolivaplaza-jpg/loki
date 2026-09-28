@@ -25,22 +25,44 @@ import type { DocumentData, QueryDocumentSnapshot } from "firebase/firestore";
 import { useSessionStore } from "@/stores/session-store";
 
 function byCreatedAtAsc(a: MessageDoc, b: MessageDoc): number {
-  const left = a.createdAt?.toMillis() ?? 0;
-  const right = b.createdAt?.toMillis() ?? 0;
+  const left = a.createdAt?.toMillis() ?? Number.POSITIVE_INFINITY;
+  const right = b.createdAt?.toMillis() ?? Number.POSITIVE_INFINITY;
   if (left !== right) return left - right;
   return a.id.localeCompare(b.id);
 }
 
 function mergeUnique(current: MessageDoc[], incoming: MessageDoc[]): MessageDoc[] {
-  const seen = new Set(current.map((item) => item.id));
-  const merged = [...current];
+  const byId = new Map<string, MessageDoc>();
+  for (const item of current) {
+    byId.set(item.id, item);
+  }
+  // La versión que llega después (snapshot en vivo) reemplaza a la
+  // cacheada: un mensaje con createdAt null pendiente es sustituido
+  // por el confirmado sin duplicar ids.
   for (const item of incoming) {
-    if (!seen.has(item.id)) {
-      seen.add(item.id);
-      merged.push(item);
+    const prev = byId.get(item.id);
+    if (prev === undefined) {
+      byId.set(item.id, item);
+      continue;
+    }
+    const prevPending = prev.createdAt == null;
+    const nextPending = item.createdAt == null;
+    // La versión confirmada siempre gana a la pendiente.
+    if (prevPending && !nextPending) {
+      byId.set(item.id, item);
+      continue;
+    }
+    if (!prevPending && nextPending) {
+      continue;
+    }
+    const prevMs = prev.createdAt?.toMillis() ?? Number.POSITIVE_INFINITY;
+    const nextMs = item.createdAt?.toMillis() ?? Number.POSITIVE_INFINITY;
+    // Gana la versión confirmada más nueva; a igualdad, la última vista.
+    if (nextMs >= prevMs) {
+      byId.set(item.id, item);
     }
   }
-  return merged.sort(byCreatedAtAsc);
+  return [...byId.values()].sort(byCreatedAtAsc);
 }
 
 export function useChats(wsId: string | null): UseQueryResult<ChatDoc[], Error> {

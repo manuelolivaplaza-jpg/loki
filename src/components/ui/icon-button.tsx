@@ -6,7 +6,7 @@ export type IconButtonVariant = "floating" | "ghost" | "accent" | "solid";
 const VARIANT_CLASS: Record<IconButtonVariant, string> = {
   /** Botón circular blanco flotante con sombra (volver, cerrar, buscar, adjuntar). */
   floating:
-    "bg-background text-foreground shadow-float interactive dark:bg-surface-soft",
+    "bg-background text-foreground shadow-float interactive dark:border dark:border-white/10 dark:bg-surface-soft",
   /** Botón circular transparente (panel, micrófono, toggle de tema). */
   ghost: "text-foreground interactive",
   /** Botón circular de acento para la acción central (+). */

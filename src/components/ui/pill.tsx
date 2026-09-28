@@ -30,7 +30,7 @@ export function Pill({
       type={type}
       {...props}
       className={cn(
-        "flex max-w-full items-center gap-2 rounded-full bg-background px-4 py-2 shadow-float outline-none interactive dark:bg-surface-soft",
+        "flex max-w-full items-center gap-2 rounded-full bg-background px-4 py-2 shadow-float outline-none interactive dark:border dark:border-white/10 dark:bg-surface-soft",
         className,
       )}
     >

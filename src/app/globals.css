@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --surface: #f7f9f9;
@@ -38,6 +40,9 @@
   /* Superficies suaves estilo Grok: gris muy claro sin bordes duros. */
   --surface-soft: #f2f2f2;
   --divider: #e5e5e5;
+  /* Burbujas de chat: propias oscuras, ajenas claras. */
+  --bubble-mine: #0f0f0f;
+  --bubble-other: #f0f0f0;
 
   /* Sombras: las dos únicas del sistema. */
   --shadow-float:
@@ -88,6 +93,9 @@
   --ring: #00b4d8;
   --surface-soft: #16181c;
   --divider: #2a2d31;
+  /* Burbujas de chat en oscuro: propia #2A2A2A, ajena #16181C. */
+  --bubble-mine: #2a2a2a;
+  --bubble-other: #16181c;
   --shadow-float:
     0 12px 40px rgba(0, 0, 0, 0.55),
     0 1px 3px rgba(0, 0, 0, 0.5);
@@ -135,6 +143,8 @@
   --color-ring: var(--ring);
   --color-surface-soft: var(--surface-soft);
   --color-divider: var(--divider);
+  --color-bubble-mine: var(--bubble-mine);
+  --color-bubble-other: var(--bubble-other);
 
   --shadow-float: var(--shadow-float);
   --shadow-overlay: var(--shadow-overlay);

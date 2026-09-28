@@ -102,11 +102,11 @@ export function listenChats(
     cb(mergeChatsDedup([...docsA, ...docsB]));
   };
   const unsubA = onSnapshot(qA, (snapshot) => {
-    docsA = snapshot.docs.map((item) => toChatDoc(item.id, item.data()));
+    docsA = snapshot.docs.map((item) => toChatDoc(item.id, item.data({ serverTimestamps: "estimate" })));
     emit();
   });
   const unsubB = onSnapshot(qB, (snapshot) => {
-    docsB = snapshot.docs.map((item) => toChatDoc(item.id, item.data()));
+    docsB = snapshot.docs.map((item) => toChatDoc(item.id, item.data({ serverTimestamps: "estimate" })));
     emit();
   });
   return () => {
@@ -135,7 +135,7 @@ export async function fetchChats(wsId: string, uid: string): Promise<ChatDoc[]> 
   ]);
   return mergeChatsDedup(
     [...snapA.docs, ...snapB.docs].map((item) =>
-      toChatDoc(item.id, item.data()),
+      toChatDoc(item.id, item.data({ serverTimestamps: "estimate" })),
     ),
   );
 }
@@ -162,7 +162,7 @@ export function listenLatestMessages(
   return onSnapshot(latestMessagesQuery(wsId, chatId), (snapshot) => {
     const ascending = [...snapshot.docs].reverse();
     cb(
-      ascending.map((item) => toMessageDoc(item.id, item.data())),
+      ascending.map((item) => toMessageDoc(item.id, item.data({ serverTimestamps: "estimate" }))),
       [...snapshot.docs],
     );
   });
@@ -199,7 +199,7 @@ export async function fetchOlderMessages(
   const snapshot = await getDocs(q);
   const ascending = [...snapshot.docs].reverse();
   return {
-    messages: ascending.map((item) => toMessageDoc(item.id, item.data())),
+    messages: ascending.map((item) => toMessageDoc(item.id, item.data({ serverTimestamps: "estimate" }))),
     snapshots: [...snapshot.docs],
     hasMore: snapshot.docs.length === pageSize,
   };
@@ -218,7 +218,7 @@ export function listenThread(
     limit(100),
   );
   return onSnapshot(q, (snapshot) => {
-    cb(snapshot.docs.map((item) => toMessageDoc(item.id, item.data())));
+    cb(snapshot.docs.map((item) => toMessageDoc(item.id, item.data({ serverTimestamps: "estimate" }))));
   });
 }
 
@@ -391,7 +391,7 @@ export function listenAiMessages(
     limit(100),
   );
   return onSnapshot(q, (snapshot) => {
-    cb(snapshot.docs.map((item) => toMessageDoc(item.id, item.data())));
+    cb(snapshot.docs.map((item) => toMessageDoc(item.id, item.data({ serverTimestamps: "estimate" }))));
   });
 }
 

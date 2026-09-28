@@ -1,9 +1,10 @@
 import { avatarTextColor } from "@/types/models";
 import { cn } from "@/lib/utils";
 
-export type AvatarSize = 32 | 36 | 40 | 44 | 52 | 64;
+export type AvatarSize = 28 | 32 | 36 | 40 | 44 | 52 | 64;
 
 const FONT_SIZE: Record<AvatarSize, number> = {
+  28: 13,
   32: 15,
   36: 16,
   40: 17,

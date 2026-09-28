@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
-import { ChevronLeft, Info, Plus, Search, X } from "lucide-react";
+import { ChevronLeft, Info, Plus, Search, Sparkles, X } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
@@ -13,15 +13,65 @@ import {
   PlaceholderDialog,
   QuickActionsMobileMenu,
 } from "@/components/shell/quick-actions";
+import { colorForChat } from "@/components/chat/chat-list";
 import { spring } from "@/lib/motion";
-import { getChatById, getConversationId } from "@/lib/data/chats";
+import { getConversationId } from "@/lib/data/chats";
+import { useChats } from "@/hooks/use-chat";
 import { useAppPathname } from "@/lib/navigation";
 import { MobileWorkspaceSwitcher } from "@/components/workspaces/mobile-workspace-switcher";
+import { useWorkspaces } from "@/stores/workspace-store";
 import { AVATAR_FALLBACK_COLOR } from "@/types/models";
 
 type MobileHeaderProps = {
   title: string;
 };
+
+function ConversationHeader({ chatId }: { chatId: string }): React.JSX.Element {
+  const router = useRouter();
+  const { currentWorkspaceId } = useWorkspaces();
+  const chatsQuery = useChats(chatId === "loki-ia" ? null : currentWorkspaceId);
+  const chat =
+    (chatsQuery.data ?? []).find((item) => item.id === chatId) ?? null;
+  const isLoki = chatId === "loki-ia";
+  const name = isLoki ? "Loki IA" : (chat?.name ?? "Chat");
+  const leading = isLoki ? (
+    <span
+      aria-hidden="true"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-foreground text-background dark:bg-white dark:text-black"
+    >
+      <Icon icon={Sparkles} size={20} />
+    </span>
+  ) : chat?.emoji ? (
+    <Avatar emoji={chat.emoji} size={32} />
+  ) : (
+    <Avatar
+      initial={name.charAt(0).toUpperCase()}
+      color={chat ? colorForChat(chat.id) : AVATAR_FALLBACK_COLOR}
+      size={32}
+    />
+  );
+
+  return (
+    <header className="sticky top-0 z-40 bg-gradient-to-b from-background via-background/70 to-transparent md:hidden">
+      <div className="flex h-[68px] items-center justify-between gap-2 px-3">
+        <IconButton variant="floating" aria-label="Volver" onClick={() => router.push("/chat")}>
+          <Icon icon={ChevronLeft} size={24} />
+        </IconButton>
+        <Pill
+          aria-label={name}
+          chevron={false}
+          leading={leading}
+          text={name}
+          onClick={() => undefined}
+          className="py-2 pl-2 pr-4"
+        />
+        <IconButton variant="floating" aria-label="Detalles de la conversación" title="Próximamente">
+          <Icon icon={Info} size={20} />
+        </IconButton>
+      </div>
+    </header>
+  );
+}
 
 function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
   const pathname = useAppPathname();
@@ -40,33 +90,7 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
 
   // Vista de conversación: volver + pastilla del chat + botón circular.
   if (chatId !== null) {
-    const chat = getChatById(chatId);
-    return (
-      <header className="sticky top-0 z-40 bg-gradient-to-b from-background via-background/70 to-transparent md:hidden">
-        <div className="flex h-[68px] items-center justify-between gap-2 px-3">
-          <IconButton variant="floating" aria-label="Volver" onClick={() => router.push("/chat")}>
-            <Icon icon={ChevronLeft} size={24} />
-          </IconButton>
-          <Pill
-            aria-label={chat?.name ?? "Chat"}
-            chevron={false}
-            leading={
-              <Avatar
-                initial={(chat?.name ?? "C").charAt(0)}
-                color={chat?.color ?? AVATAR_FALLBACK_COLOR}
-                size={32}
-              />
-            }
-            text={chat?.name ?? "Chat"}
-            onClick={() => undefined}
-            className="py-2 pl-2 pr-4"
-          />
-          <IconButton variant="floating" aria-label="Detalles de la conversación" title="Próximamente">
-            <Icon icon={Info} size={20} />
-          </IconButton>
-        </div>
-      </header>
-    );
+    return <ConversationHeader chatId={chatId} />;
   }
 
   // Perfil y configuración en móvil: pantalla completa con X para cerrar.

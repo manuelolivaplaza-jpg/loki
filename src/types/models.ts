@@ -98,3 +98,5 @@ export interface WorkspaceMembership {
 export type User = UserProfile;
 export type Workspace = WorkspaceDoc & { id: string; memberCount?: number };
 export type Member = WorkspaceMember;
+
+export * from "./chat";

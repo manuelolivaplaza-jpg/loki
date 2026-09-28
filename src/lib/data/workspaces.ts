@@ -25,7 +25,8 @@ export type WorkspaceActor = {
 
 /**
  * Crea el espacio, el miembro owner y el índice espejo en memberships,
- * y deja el espacio como actual del usuario. Todo en un solo batch.
+ * deja el espacio como actual del usuario y crea el chat grupal
+ * general. Todo en un solo batch.
  */
 export async function createWorkspace(
   input: CreateWorkspaceInput,
@@ -66,6 +67,16 @@ export async function createWorkspace(
   batch.update(doc(db, "users", actor.uid), {
     currentWorkspaceId: wsId,
     updatedAt: serverTimestamp(),
+  });
+  batch.set(doc(db, "workspaces", wsId, "chats", "general"), {
+    type: "group",
+    name: "General",
+    emoji: "\u{1F4AC}",
+    memberIds: [],
+    createdBy: actor.uid,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    lastMessage: null,
   });
   await batch.commit();
   return wsId;

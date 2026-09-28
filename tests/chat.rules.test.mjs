@@ -423,6 +423,112 @@ describe("firestore.rules T12 chat", () => {
     assert.ok(snap.size >= 1);
   });
 
+  it("T14 typing: miembro escribe su marca OK y la ajena denegada", async () => {
+    await assertSucceeds(
+      setDoc(
+        doc(memberDb(), "workspaces", WS_ID, "chats", "general", "typing", MEMBER_UID),
+        { displayName: "Member", updatedAt: serverTimestamp() },
+      ),
+    );
+    await assertFails(
+      setDoc(
+        doc(memberDb(), "workspaces", WS_ID, "chats", "general", "typing", OWNER_UID),
+        { displayName: "Member", updatedAt: serverTimestamp() },
+      ),
+    );
+  });
+
+  it("T14 typing: otro miembro con acceso lee marcas OK; extraño denegado", async () => {
+    await assertSucceeds(
+      setDoc(
+        doc(ownerDb(), "workspaces", WS_ID, "chats", "general", "typing", OWNER_UID),
+        { displayName: "Owner", updatedAt: serverTimestamp() },
+      ),
+    );
+    const memberSnap = await assertSucceeds(
+      getDoc(doc(memberDb(), "workspaces", WS_ID, "chats", "general", "typing", OWNER_UID)),
+    );
+    assert.equal(memberSnap.exists(), true);
+    const memberList = await assertSucceeds(
+      getDocs(collection(memberDb(), "workspaces", WS_ID, "chats", "general", "typing")),
+    );
+    assert.ok(memberList.size >= 1);
+    await assertFails(
+      getDoc(doc(strangerDb(), "workspaces", WS_ID, "chats", "general", "typing", OWNER_UID)),
+    );
+    await assertFails(
+      getDocs(collection(strangerDb(), "workspaces", WS_ID, "chats", "general", "typing")),
+    );
+  });
+
+  it("T14 typing: displayName vacío denegado; borrado propio OK y ajeno no", async () => {
+    await assertFails(
+      setDoc(
+        doc(memberDb(), "workspaces", WS_ID, "chats", "general", "typing", MEMBER_UID),
+        { displayName: "", updatedAt: serverTimestamp() },
+      ),
+    );
+    await assertSucceeds(
+      deleteDoc(doc(memberDb(), "workspaces", WS_ID, "chats", "general", "typing", MEMBER_UID)),
+    );
+    await assertFails(
+      deleteDoc(doc(memberDb(), "workspaces", WS_ID, "chats", "general", "typing", OWNER_UID)),
+    );
+  });
+
+  it("T14 reads: miembro escribe su marca OK y la ajena denegada", async () => {
+    await assertSucceeds(
+      setDoc(
+        doc(memberDb(), "workspaces", WS_ID, "chats", "general", "reads", MEMBER_UID),
+        { lastReadAt: serverTimestamp(), lastReadMessageId: "m-1" },
+      ),
+    );
+    await assertSucceeds(
+      updateDoc(
+        doc(memberDb(), "workspaces", WS_ID, "chats", "general", "reads", MEMBER_UID),
+        { lastReadAt: serverTimestamp(), lastReadMessageId: "m-parent" },
+      ),
+    );
+    await assertFails(
+      setDoc(
+        doc(memberDb(), "workspaces", WS_ID, "chats", "general", "reads", OWNER_UID),
+        { lastReadAt: serverTimestamp(), lastReadMessageId: "m-1" },
+      ),
+    );
+  });
+
+  it("T14 reads: otro miembro con acceso lee marcas OK; extraño denegado", async () => {
+    const ownerSnap = await assertSucceeds(
+      getDoc(doc(ownerDb(), "workspaces", WS_ID, "chats", "general", "reads", MEMBER_UID)),
+    );
+    assert.equal(ownerSnap.exists(), true);
+    const ownerList = await assertSucceeds(
+      getDocs(collection(ownerDb(), "workspaces", WS_ID, "chats", "general", "reads")),
+    );
+    assert.ok(ownerList.size >= 1);
+    await assertFails(
+      getDoc(doc(strangerDb(), "workspaces", WS_ID, "chats", "general", "reads", MEMBER_UID)),
+    );
+    await assertFails(
+      getDocs(collection(strangerDb(), "workspaces", WS_ID, "chats", "general", "reads")),
+    );
+  });
+
+  it("T14 reads: borrado propio OK y ajeno denegado", async () => {
+    await assertSucceeds(
+      setDoc(
+        doc(ownerDb(), "workspaces", WS_ID, "chats", "general", "reads", OWNER_UID),
+        { lastReadAt: serverTimestamp(), lastReadMessageId: "m-1" },
+      ),
+    );
+    await assertFails(
+      deleteDoc(doc(memberDb(), "workspaces", WS_ID, "chats", "general", "reads", OWNER_UID)),
+    );
+    await assertSucceeds(
+      deleteDoc(doc(memberDb(), "workspaces", WS_ID, "chats", "general", "reads", MEMBER_UID)),
+    );
+  });
+
   it("creacion de workspace + member + chat general en un mismo batch OK", async () => {
     const db = ownerDb();
     const batch = writeBatch(db);

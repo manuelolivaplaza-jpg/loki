@@ -5,7 +5,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
 import { formatHour } from "@/lib/chat/format";
 import { AVATAR_FALLBACK_COLOR } from "@/types/models";
-import type { MessageDoc } from "@/types/chat";
+import type { MessageDoc, MessageSendStatus } from "@/types/chat";
 import { cn } from "@/lib/utils";
 
 type MessageBubbleProps = {
@@ -15,6 +15,10 @@ type MessageBubbleProps = {
   showAuthor: boolean;
   /** Mostrar hora bajo el mensaje (último del grupo). */
   showTime: boolean;
+  /** Estado local del envío optimista (solo mensajes propios). */
+  sendStatus?: MessageSendStatus;
+  /** Reintenta el envío con el mismo id de cliente. */
+  onRetry?: (message: MessageDoc) => void;
 };
 
 /**
@@ -30,6 +34,8 @@ export function MessageBubble({
   isMine,
   showAuthor,
   showTime,
+  sendStatus,
+  onRetry,
 }: MessageBubbleProps): React.JSX.Element {
   if (message.type === "system") {
     return (
@@ -88,6 +94,18 @@ export function MessageBubble({
           {showTime ? (
             <p className="mt-1 text-center text-meta leading-4 text-muted-foreground">
               {formatHour(message.createdAt)}
+            </p>
+          ) : null}
+          {sendStatus === "error" ? (
+            <p className="mt-1 text-center text-meta leading-4 text-danger">
+              No se pudo enviar ·{" "}
+              <button
+                type="button"
+                onClick={() => onRetry?.(message)}
+                className="font-semibold underline outline-none"
+              >
+                Reintentar
+              </button>
             </p>
           ) : null}
         </div>

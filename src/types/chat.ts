@@ -72,3 +72,20 @@ export interface AiChatDoc {
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
+
+/** Quién está escribiendo en un chat. Doc typing/{uid}. */
+export interface TypingDoc {
+  uid: string;
+  displayName: string;
+  updatedAt: Timestamp | null;
+}
+
+/** Marca de lectura por usuario. Doc reads/{uid}. */
+export interface ReadReceiptDoc {
+  uid: string;
+  lastReadAt: Timestamp | null;
+  lastReadMessageId: string | null;
+}
+
+/** Estado local de un mensaje en envío optimista. */
+export type MessageSendStatus = "sending" | "error";

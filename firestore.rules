@@ -61,6 +61,19 @@ service cloud.firestore {
       return canAccessChat(wsId, chatDoc(wsId, chatId));
     }
 
+    function validTyping(value) {
+      return value.displayName is string
+        && value.displayName.size() >= 1
+        && value.displayName.size() <= 40
+        && value.updatedAt == request.time;
+    }
+
+    function validRead(value) {
+      return value.lastReadAt == request.time
+        && (value.lastReadMessageId == null
+          || (value.lastReadMessageId is string && value.lastReadMessageId.size() >= 1));
+    }
+
     // Perfil y espejo de membresías: solo el propio usuario.
     match /users/{uid} {
       allow get: if isSelf(uid);
@@ -193,6 +206,22 @@ service cloud.firestore {
             && request.resource.data.threadCount == resource.data.threadCount + 1;
           allow delete: if canAccessChatId(wsId, chatId)
             && resource.data.authorId == request.auth.uid;
+        }
+
+        // T14 typing: solo escribo/borro mi doc typing/{miUid};
+        // cualquier miembro con acceso al chat puede leer.
+        match /typing/{uid} {
+          allow get, list: if canAccessChatId(wsId, chatId);
+          allow create, update: if isSelf(uid) && validTyping(request.resource.data);
+          allow delete: if isSelf(uid);
+        }
+
+        // T14 leídos: solo escribo mi doc reads/{miUid};
+        // cualquier miembro con acceso al chat puede leer.
+        match /reads/{uid} {
+          allow get, list: if canAccessChatId(wsId, chatId);
+          allow create, update: if isSelf(uid) && validRead(request.resource.data);
+          allow delete: if isSelf(uid);
         }
       }
     }

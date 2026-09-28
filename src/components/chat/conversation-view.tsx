@@ -6,8 +6,18 @@ import { MessageCircle } from "lucide-react";
 import { Composer } from "@/components/chat/composer";
 import { MessageList } from "@/components/chat/message-list";
 import { NewMessagesPill } from "@/components/chat/new-messages-pill";
+import { TypingIndicator } from "@/components/chat/typing-indicator";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useChats, useMessages, useSendMessage } from "@/hooks/use-chat";
+import {
+  useChats,
+  useMarkChatRead,
+  useMessages,
+  useNotifyTyping,
+  useSendMessage,
+  useTyping,
+} from "@/hooks/use-chat";
+import { newMessageId } from "@/lib/data/chat";
+import { useMessageStatusStore } from "@/lib/chat/message-status";
 import { LOKI_IA_MESSAGES } from "@/lib/data/chats";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -91,6 +101,19 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   const sessionName = user?.displayName?.trim() ?? "";
   const authorName = profileName !== "" ? profileName : sessionName !== "" ? sessionName : "Miembro";
 
+  // T14: typing en vivo (sin mí), aviso de escritura y marcas de lectura.
+  const wsForLive = isLoki ? null : currentWorkspaceId;
+  const chatForLive = isLoki ? null : chatId;
+  const typingNames = useTyping(wsForLive, chatForLive, currentUid);
+  const { notify: notifyTyping } = useNotifyTyping(
+    wsForLive,
+    chatForLive,
+    currentUid,
+    authorName,
+  );
+  const markAsRead = useMarkChatRead(wsForLive, chatForLive, currentUid);
+  const sendStatus = useMessageStatusStore((state) => state.status);
+
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const nearBottomRef = React.useRef(true);
@@ -98,6 +121,17 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   const [animatedIds, setAnimatedIds] = React.useState<Set<string>>(new Set());
   const [showNewPill, setShowNewPill] = React.useState(false);
   const [sendError, setSendError] = React.useState<string | null>(null);
+
+  // Id del último mensaje: al abrir y al llegar al fondo se marca leído.
+  const latestId =
+    messages.length > 0 ? (messages[messages.length - 1]?.id ?? null) : null;
+  const latestIdRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    latestIdRef.current = latestId;
+    if (!isLoki && latestId !== null && nearBottomRef.current) {
+      markAsRead(latestId);
+    }
+  }, [isLoki, latestId, markAsRead]);
 
   // Apertura: scroll al final sin animación.
   React.useEffect(() => {
@@ -150,8 +184,13 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
     if (el === null) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     nearBottomRef.current = distance < NEAR_BOTTOM_PX;
-    if (nearBottomRef.current) setShowNewPill(false);
-  }, []);
+    if (nearBottomRef.current) {
+      setShowNewPill(false);
+      // Al llegar al fondo se actualiza la marca de lectura.
+      const latestId = latestIdRef.current;
+      if (!isLoki && latestId !== null) markAsRead(latestId);
+    }
+  }, [isLoki, markAsRead]);
 
   // Paginación hacia atrás conservando la posición.
   React.useEffect(() => {
@@ -218,8 +257,21 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
         setSendError("Inicia sesión para enviar mensajes.");
         return;
       }
+      if (wsForLive === null || chatForLive === null) {
+        setSendError("Falta el espacio o el chat.");
+        return;
+      }
+      // Id de cliente para el envío optimista (el reintento reusa el mismo).
+      const messageId = newMessageId(wsForLive, chatForLive);
       sendMutation.mutate(
-        { authorId: currentUid, authorName, text, mentions: [], type: "user" },
+        {
+          authorId: currentUid,
+          authorName,
+          text,
+          mentions: [],
+          type: "user",
+          messageId,
+        },
         {
           onSuccess: () => {
             requestAnimationFrame(() => {
@@ -231,7 +283,34 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
         },
       );
     },
-    [isLoki, currentUid, authorName, sendMutation],
+    [isLoki, currentUid, authorName, sendMutation, wsForLive, chatForLive],
+  );
+
+  // Reintenta un mensaje fallido con el mismo id de cliente.
+  const handleRetry = React.useCallback(
+    (message: MessageDoc) => {
+      setSendError(null);
+      if (isLoki || currentUid === null) return;
+      const retryType =
+        message.type === "post" || message.type === "system" ? message.type : "user";
+      sendMutation.mutate(
+        {
+          authorId: message.authorId,
+          authorName: message.authorName,
+          text: message.text,
+          mentions: message.mentions,
+          replyTo: message.replyTo,
+          threadParentId: message.threadParentId,
+          attachments: message.attachments,
+          type: retryType,
+          messageId: message.id,
+        },
+        {
+          onError: (error) => setSendError(error.message),
+        },
+      );
+    },
+    [isLoki, currentUid, sendMutation],
   );
 
   const handlePillClick = React.useCallback(() => {
@@ -283,11 +362,14 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
               topSentinelRef={sentinelRef}
               isLoadingOlder={isLoadingOlder}
               hasMore={hasMore}
+              sendStatus={sendStatus}
+              onRetryMessage={handleRetry}
             />
           </div>
         )}
       </div>
 
+      {!isLoki ? <TypingIndicator names={typingNames} /> : null}
       <div className="relative bg-gradient-to-t from-background via-background/85 to-transparent">
         <div className="absolute -top-12 left-0 right-0 flex justify-center">
           <NewMessagesPill visible={showNewPill} onClick={handlePillClick} />
@@ -302,6 +384,7 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           isLoki={isLoki}
           sending={sendMutation.isPending}
           onSend={handleSend}
+          onValueChange={notifyTyping}
         />
       </div>
     </div>

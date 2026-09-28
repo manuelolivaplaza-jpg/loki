@@ -50,8 +50,7 @@ export function dayKey(input: MessageDateInput): string {
 }
 
 /** Hora relativa corta para la lista: "9:41" | "Ayer" | "lun" | "21/09/25". */
-export function formatChatTime(input: MessageDateInput, now = new Date()): string {
-  const date = toDateSafe(input) ?? now;
+export function formatChatTime(input: MessageDateInput, now = new Date()): string {  const date = toDateSafe(input) ?? now;
   if (sameDay(date, now)) return formatHour(date);
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
@@ -72,6 +71,20 @@ export function formatChatTime(input: MessageDateInput, now = new Date()): strin
 
 function startOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+/**
+ * Texto de "está escribiendo" (T14): 1 nombre, 2 nombres o genérico.
+ * Devuelve null si no hay nadie escribiendo.
+ */
+export function formatTypingText(names: readonly string[]): string | null {
+  const unique = [...new Set(names.map((name) => name.trim()).filter((name) => name !== ""))].sort(
+    (a, b) => a.localeCompare(b, "es"),
+  );
+  if (unique.length === 0) return null;
+  if (unique.length === 1) return `${unique[0]} está escribiendo…`;
+  if (unique.length === 2) return `${unique[0]} y ${unique[1]} están escribiendo…`;
+  return "Varias personas están escribiendo…";
 }
 
 export type MessageGroup = {

@@ -11,17 +11,34 @@ import {
 import {
   fetchChats,
   fetchOlderMessages,
+  fetchUnreadCount,
   listenAiMessages,
   listenChats,
   listenLatestMessages,
+  listenMyRead,
   listenThread,
+  listenTyping,
+  markChatRead,
   MESSAGES_PAGE_SIZE,
+  newMessageId,
   sendAiUserMessage,
   sendMessage,
+  setTyping,
+  clearTyping,
   type SendMessageInput,
 } from "@/lib/data/chat";
-import type { ChatDoc, MessageDoc } from "@/types/chat";
-import type { DocumentData, QueryDocumentSnapshot } from "firebase/firestore";
+import { useMessageStatusStore } from "@/lib/chat/message-status";
+import type {
+  ChatDoc,
+  MessageDoc,
+  ReadReceiptDoc,
+  TypingDoc,
+} from "@/types/chat";
+import type {
+  DocumentData,
+  QueryDocumentSnapshot,
+} from "firebase/firestore";
+import { Timestamp } from "firebase/firestore";
 import { useSessionStore } from "@/stores/session-store";
 
 function byCreatedAtAsc(a: MessageDoc, b: MessageDoc): number {
@@ -32,6 +49,9 @@ function byCreatedAtAsc(a: MessageDoc, b: MessageDoc): number {
 }
 
 function mergeUnique(current: MessageDoc[], incoming: MessageDoc[]): MessageDoc[] {
+  // Ids con estado local (optimistas): la versión del servidor siempre
+  // los reemplaza al confirmar, aunque el reloj del cliente difiera.
+  const localStatus = useMessageStatusStore.getState().status;
   const byId = new Map<string, MessageDoc>();
   for (const item of current) {
     byId.set(item.id, item);
@@ -42,6 +62,11 @@ function mergeUnique(current: MessageDoc[], incoming: MessageDoc[]): MessageDoc[
   for (const item of incoming) {
     const prev = byId.get(item.id);
     if (prev === undefined) {
+      byId.set(item.id, item);
+      continue;
+    }
+    // Optimista local vs confirmado del servidor: gana el servidor.
+    if (prev.id in localStatus) {
       byId.set(item.id, item);
       continue;
     }
@@ -133,6 +158,10 @@ export function useMessages(
           ["messages", activeWsId, activeChatId],
           [...latest].sort(byCreatedAtAsc),
         );
+        // Lo que el servidor ya trae queda confirmado (limpia 'sending').
+        useMessageStatusStore
+          .getState()
+          .clearConfirmed(latest.map((item) => item.id));
         const oldest = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
         setCursor(oldest ?? null);
         setHasMore(snapshots.length === MESSAGES_PAGE_SIZE);
@@ -142,6 +171,9 @@ export function useMessages(
         ["messages", activeWsId, activeChatId],
         (old) => mergeUnique(old ?? [], latest),
       );
+      useMessageStatusStore
+        .getState()
+        .clearConfirmed(latest.map((item) => item.id));
     });
     return () => {
       unsubscribe();
@@ -226,16 +258,84 @@ export type SendMessageVariables = SendMessageInput & {
   chatId: string;
 };
 
+type SendMessageContext = {
+  clientId: string;
+};
+
+/**
+ * Envío optimista (T14): inserta el mensaje en la caché de TanStack Query
+ * de inmediato con un id de cliente y `createdAt` provisional; el
+ * snapshot en vivo lo reemplaza al confirmar. Si falla, el id queda en
+ * estado 'error' para mostrar "No se pudo enviar · Reintentar".
+ * Para reintentar, muta de nuevo con el mismo `messageId`.
+ */
 export function useSendMessage(
   wsId: string | null,
   chatId: string | null,
-): UseMutationResult<string, Error, Omit<SendMessageVariables, "wsId" | "chatId">, unknown> {
+): UseMutationResult<
+  string,
+  Error,
+  Omit<SendMessageVariables, "wsId" | "chatId">,
+  SendMessageContext | undefined
+> {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input) => {
       if (wsId === null || wsId === "" || chatId === null || chatId === "") {
         throw new Error("Falta el espacio o el chat.");
       }
       return sendMessage(wsId, chatId, input);
+    },
+    onMutate: (input) => {
+      if (wsId === null || wsId === "" || chatId === null || chatId === "") {
+        return undefined;
+      }
+      const activeWsId: string = wsId;
+      const activeChatId: string = chatId;
+      // El mismo objeto llega a mutationFn: fijar aquí el id garantiza
+      // que el optimista y el envío real compartan id (y el reintento).
+      if (input.messageId === undefined || input.messageId === "") {
+        input.messageId = newMessageId(activeWsId, activeChatId);
+      }
+      const clientId: string = input.messageId;
+      void queryClient.cancelQueries({
+        queryKey: ["messages", activeWsId, activeChatId],
+      });
+      const text = input.text.trim();
+      const optimistic: MessageDoc = {
+        id: clientId,
+        authorId: input.authorId,
+        authorName: input.authorName,
+        text,
+        mentions: input.mentions ?? [],
+        replyTo: input.replyTo ?? null,
+        threadParentId: input.threadParentId ?? null,
+        threadCount: 0,
+        lastReplyAt: null,
+        attachments: input.attachments ?? [],
+        reactions: {},
+        lastReaction: null,
+        createdAt: Timestamp.now(),
+        editedAt: null,
+        deleted: false,
+        type: input.type ?? "user",
+      };
+      queryClient.setQueryData<MessageDoc[]>(
+        ["messages", activeWsId, activeChatId],
+        (old) => mergeUnique(old ?? [], [optimistic]),
+      );
+      useMessageStatusStore.getState().setStatus(clientId, "sending");
+      return { clientId };
+    },
+    onError: (_error, _variables, context) => {
+      if (context !== undefined) {
+        useMessageStatusStore.getState().setStatus(context.clientId, "error");
+      }
+    },
+    onSuccess: (_messageId, _variables, context) => {
+      if (context !== undefined) {
+        useMessageStatusStore.getState().clearStatus(context.clientId);
+      }
     },
   });
 }
@@ -287,4 +387,281 @@ export function useSendAiMessage(
       });
     },
   });
+}
+
+// --- Tiempo real T14: typing y leídos ---------------------------------------
+
+/** Un typing se considera vigente si updatedAt tiene menos de 4s. */
+export const TYPING_FRESH_MS = 4000;
+
+/** Escrituras de typing con throttle de 800ms. */
+export const TYPING_THROTTLE_MS = 800;
+
+type ActiveIds = {
+  wsId: string;
+  chatId: string;
+  uid: string;
+};
+
+function activeIds(
+  wsId: string | null,
+  chatId: string | null,
+  uid: string | null,
+): ActiveIds | null {
+  if (wsId === null || wsId === "") return null;
+  if (chatId === null || chatId === "") return null;
+  if (uid === null || uid === "") return null;
+  return { wsId, chatId, uid };
+}
+
+/**
+ * Nombres de quién está escribiendo (sin mí), con updatedAt < 4s.
+ * Revalida cada segundo para que el aviso expire solo.
+ */
+export function useTyping(
+  wsId: string | null,
+  chatId: string | null,
+  myUid: string | null,
+): string[] {
+  const [all, setAll] = React.useState<TypingDoc[]>([]);
+  const [now, setNow] = React.useState(() => Date.now());
+  const enabled = wsId !== null && wsId !== "" && chatId !== null && chatId !== "";
+
+  React.useEffect(() => {
+    if (!enabled || wsId === null || chatId === null) return;
+    const activeWsId: string = wsId;
+    const activeChatId: string = chatId;
+    setAll([]);
+    const unsubscribe = listenTyping(activeWsId, activeChatId, setAll);
+    return () => {
+      unsubscribe();
+    };
+  }, [enabled, wsId, chatId]);
+
+  React.useEffect(() => {
+    if (!enabled || all.length === 0) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [enabled, all.length]);
+
+  return React.useMemo(() => {
+    const fresh = all
+      .filter((item) => item.uid !== myUid)
+      .filter((item) => {
+        const ms = item.updatedAt?.toMillis() ?? now;
+        return now - ms < TYPING_FRESH_MS;
+      })
+      .map((item) => item.displayName.trim())
+      .filter((name) => name !== "");
+    return [...new Set(fresh)].sort((a, b) => a.localeCompare(b, "es"));
+  }, [all, myUid, now]);
+}
+
+export type NotifyTyping = {
+  /** Notifica escritura (throttle 800ms); con texto vacío borra la marca. */
+  notify: (text: string) => void;
+  /** Borra la marca de inmediato. */
+  clear: () => void;
+};
+
+/**
+ * Publica mi typing con throttle de 800ms; borra al vaciar el input,
+ * al enviar o al desmontar/cambiar de chat.
+ */
+export function useNotifyTyping(
+  wsId: string | null,
+  chatId: string | null,
+  uid: string | null,
+  displayName: string,
+): NotifyTyping {
+  const paramsRef = React.useRef({ wsId, chatId, uid, displayName });
+  paramsRef.current = { wsId, chatId, uid, displayName };
+  const lastSentRef = React.useRef(0);
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clear = React.useCallback(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    const params = paramsRef.current;
+    const ids = activeIds(params.wsId, params.chatId, params.uid);
+    if (ids === null) return;
+    void clearTyping(ids.wsId, ids.chatId, ids.uid);
+  }, []);
+
+  const notify = React.useCallback(
+    (text: string) => {
+      const params = paramsRef.current;
+      const ids = activeIds(params.wsId, params.chatId, params.uid);
+      if (ids === null) return;
+      const activeName = params.displayName;
+      if (text.trim() === "") {
+        clear();
+        return;
+      }
+      const now = Date.now();
+      const elapsed = now - lastSentRef.current;
+      if (elapsed >= TYPING_THROTTLE_MS && timerRef.current === null) {
+        lastSentRef.current = now;
+        void setTyping(ids.wsId, ids.chatId, ids.uid, activeName);
+        return;
+      }
+      if (timerRef.current === null) {
+        timerRef.current = setTimeout(
+          () => {
+            timerRef.current = null;
+            const latest = paramsRef.current;
+            const latestIds = activeIds(latest.wsId, latest.chatId, latest.uid);
+            if (latestIds === null) return;
+            lastSentRef.current = Date.now();
+            void setTyping(latestIds.wsId, latestIds.chatId, latestIds.uid, latest.displayName);
+          },
+          Math.max(0, TYPING_THROTTLE_MS - elapsed),
+        );
+      }
+    },
+    [clear],
+  );
+
+  // Al desmontar o cambiar de conversación se borra la marca anterior.
+  React.useEffect(() => {
+    const ids = activeIds(wsId, chatId, uid);
+    return () => {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      if (ids === null) return;
+      void clearTyping(ids.wsId, ids.chatId, ids.uid);
+    };
+  }, [wsId, chatId, uid]);
+
+  return React.useMemo(() => ({ notify, clear }), [notify, clear]);
+}
+
+export type MyReadState = {
+  read: ReadReceiptDoc | null;
+  /** True cuando el listener ya resolvió (null = nunca abrió el chat). */
+  ready: boolean;
+};
+
+/** Mi marca de lectura de un chat en vivo. */
+export function useMyRead(
+  wsId: string | null,
+  chatId: string | null,
+  uid: string | null,
+): MyReadState {
+  const [read, setRead] = React.useState<ReadReceiptDoc | null>(null);
+  const [ready, setReady] = React.useState(false);
+  const ids = activeIds(wsId, chatId, uid);
+
+  React.useEffect(() => {
+    if (ids === null) {
+      setRead(null);
+      setReady(false);
+      return;
+    }
+    setRead(null);
+    setReady(false);
+    const unsubscribe = listenMyRead(ids.wsId, ids.chatId, ids.uid, (next) => {
+      setRead(next);
+      setReady(true);
+    });
+    return () => {
+      unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids?.wsId, ids?.chatId, ids?.uid]);
+
+  return React.useMemo(() => ({ read, ready }), [read, ready]);
+}
+
+export type UnreadInfo = {
+  unread: boolean;
+  /** Mensajes no leídos (tope 50 por la ventana de lectura). */
+  count: number;
+};
+
+/**
+ * No leídos de un chat para la lista: punto azul + contador cuando
+ * lastMessage es más nuevo que mi lastReadAt y el autor no soy yo.
+ */
+export function useUnread(
+  wsId: string | null,
+  chat: ChatDoc | null,
+  uid: string | null,
+): UnreadInfo {
+  const chatId = chat?.id ?? null;
+  const { read, ready } = useMyRead(wsId, chatId, uid);
+  const [count, setCount] = React.useState(0);
+
+  const last = chat?.lastMessage ?? null;
+  const lastId = last === null ? null : `${last.authorId}:${last.text}:${last.createdAt?.toMillis() ?? 0}`;
+  const lastMs = last?.createdAt?.toMillis() ?? null;
+
+  const unread = React.useMemo(() => {
+    if (chat === null || uid === null || !ready) return false;
+    if (last === null) return false;
+    if (last.authorId === uid) return false;
+    if (read === null) return true;
+    const readMs = read.lastReadAt?.toMillis() ?? 0;
+    return (lastMs ?? 0) > readMs;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat, uid, ready, read, lastId]);
+
+  React.useEffect(() => {
+    if (!unread || wsId === null || wsId === "" || chatId === null || uid === null) {
+      setCount(0);
+      return;
+    }
+    const activeWsId: string = wsId;
+    const activeChatId: string = chatId;
+    const activeUid: string = uid;
+    const sinceMs = read?.lastReadAt?.toMillis() ?? null;
+    let cancelled = false;
+    void fetchUnreadCount(activeWsId, activeChatId, activeUid, sinceMs)
+      .then((next) => {
+        if (!cancelled) setCount(next);
+      })
+      .catch(() => {
+        if (!cancelled) setCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unread, wsId, chatId, uid, lastId]);
+
+  return React.useMemo(() => ({ unread, count }), [unread, count]);
+}
+
+/**
+ * Escribe mi marca de lectura (lastReadAt + lastReadMessageId).
+ * Solo escribe cuando cambia el id (evita escrituras por cada render).
+ */
+export function useMarkChatRead(
+  wsId: string | null,
+  chatId: string | null,
+  uid: string | null,
+): (messageId: string | null) => void {
+  const lastMarkedRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    lastMarkedRef.current = null;
+  }, [wsId, chatId, uid]);
+
+  return React.useCallback(
+    (messageId: string | null) => {
+      const ids = activeIds(wsId, chatId, uid);
+      if (ids === null) return;
+      const key = `${ids.wsId}/${ids.chatId}/${messageId ?? "-"}`;
+      if (lastMarkedRef.current === key) return;
+      lastMarkedRef.current = key;
+      void markChatRead(ids.wsId, ids.chatId, ids.uid, messageId).catch(() => {
+        lastMarkedRef.current = null;
+      });
+    },
+    [wsId, chatId, uid],
+  );
 }

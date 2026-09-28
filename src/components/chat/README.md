@@ -14,6 +14,13 @@ Pantalla de conversación estilo Grok con datos reales de Firestore.
 | `Composer` | `composer.tsx` | Botón `+` 44px + pastilla con textarea 1–6 líneas, mic deshabilitado, enviar 36px solo con texto (spring). Enter envía solo con puntero fino; `visualViewport` + `safe-area` para el teclado. |
 | `AttachMenu` | `attach-menu.tsx` | `MenuCard` con 3 opciones deshabilitadas + aviso `Los adjuntos llegan pronto`. Cierra con click afuera o Escape. `+` rota a ×. |
 | `NewMessagesPill` | `new-messages-pill.tsx` | Pastilla flotante `Nuevos mensajes` + flecha, baja con scroll suave. |
+| `TypingIndicator` | `typing-indicator.tsx` | `X está escribiendo…` / `X e Y están…` / `Varias personas…` debajo de los mensajes (`aria-live=polite`). Nada si nadie escribe. |
+
+## Tiempo real (T14)
+
+- **Envío optimista**: `useSendMessage` inserta el mensaje con id de cliente (`newMessageId`) y `createdAt` provisional en la caché de TanStack Query; el snapshot lo reemplaza al confirmar. Estado local en `src/lib/chat/message-status.ts` (`sending`/`error`); en error la burbuja muestra `No se pudo enviar · Reintentar` y reintenta con el mismo id.
+- **Typing**: `typing/{uid}` (`displayName`, `updatedAt`) con throttle 800ms (`useNotifyTyping`); se borra al vaciar, enviar o desmontar. `useTyping` filtra `updatedAt < 4s` (sin mí) y revalida cada segundo.
+- **Leídos**: `reads/{uid}` (`lastReadAt`, `lastReadMessageId`); se marca al abrir y al llegar al fondo (`useMarkChatRead`). La lista muestra punto azul + contador (`useUnread`: `lastMessage.createdAt > lastReadAt` y autor ajeno).
 
 ## Utilidades (`src/lib/chat/format.ts`)
 

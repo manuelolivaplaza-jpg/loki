@@ -6,7 +6,7 @@ import { DaySeparator } from "@/components/chat/day-separator";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { dayKey, formatDayLabel, groupMessages, toDateSafe } from "@/lib/chat/format";
 import { spring } from "@/lib/motion";
-import type { MessageDoc } from "@/types/chat";
+import type { MessageDoc, MessageSendStatus } from "@/types/chat";
 import { cn } from "@/lib/utils";
 
 type MessageListProps = {
@@ -17,6 +17,10 @@ type MessageListProps = {
   topSentinelRef: React.RefObject<HTMLDivElement | null>;
   isLoadingOlder: boolean;
   hasMore: boolean;
+  /** Estado local por id del envío optimista (T14). */
+  sendStatus?: Record<string, MessageSendStatus>;
+  /** Reintenta un mensaje fallido con el mismo id de cliente. */
+  onRetryMessage?: (message: MessageDoc) => void;
 };
 
 /**
@@ -30,6 +34,8 @@ export function MessageList({
   topSentinelRef,
   isLoadingOlder,
   hasMore,
+  sendStatus,
+  onRetryMessage,
 }: MessageListProps): React.JSX.Element {
   const reduceMotion = useReducedMotion();
   const groups = React.useMemo(
@@ -76,6 +82,8 @@ export function MessageList({
                 isMine={group.isMine}
                 showAuthor={index === 0}
                 showTime={index === group.messages.length - 1}
+                sendStatus={group.isMine ? sendStatus?.[message.id] : undefined}
+                onRetry={onRetryMessage}
               />
             );
             if (!animate) return <div key={message.id}>{bubble}</div>;

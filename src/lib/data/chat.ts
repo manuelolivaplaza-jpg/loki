@@ -4,7 +4,9 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
+  getDoc,
   getDocs,
   increment,
   limit,
@@ -12,6 +14,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   startAfter,
   updateDoc,
   where,
@@ -27,6 +30,8 @@ import type {
   MessageAttachment,
   MessageDoc,
   MessageReplyRef,
+  ReadReceiptDoc,
+  TypingDoc,
 } from "@/types/chat";
 
 export const MESSAGES_PAGE_SIZE = 30;
@@ -231,6 +236,11 @@ export type SendMessageInput = {
   threadParentId?: string | null;
   attachments?: MessageAttachment[];
   type?: "user" | "post" | "system";
+  /**
+   * Id de cliente para envío optimista y reintentos: si se pasa, el
+   * mensaje se escribe con ese id (set con el mismo id al reintentar).
+   */
+  messageId?: string;
 };
 
 export async function sendMessage(
@@ -248,7 +258,10 @@ export async function sendMessage(
   const type = input.type ?? "user";
   const threadParentId = input.threadParentId ?? null;
   const db = getDb();
-  const messageRef = doc(messagesCollection(wsId, chatId));
+  const messageRef =
+    input.messageId !== undefined && input.messageId !== ""
+      ? doc(messagesCollection(wsId, chatId), input.messageId)
+      : doc(messagesCollection(wsId, chatId));
   const batch = writeBatch(db);
   batch.set(messageRef, {
     authorId: input.authorId,
@@ -434,4 +447,165 @@ export async function sendAiUserMessage(
   );
   await batch.commit();
   return messageRef.id;
+}
+
+// --- Typing (T14) -----------------------------------------------------------
+
+function typingCollection(wsId: string, chatId: string) {
+  return collection(
+    getDb(),
+    "workspaces",
+    wsId,
+    "chats",
+    chatId,
+    "typing",
+  );
+}
+
+function toTypingDoc(uid: string, data: DocumentData): TypingDoc {
+  return { uid, ...(data as Omit<TypingDoc, "uid">) };
+}
+
+/** Marca que el usuario está escribiendo (el throttle lo hace el hook). */
+export async function setTyping(
+  wsId: string,
+  chatId: string,
+  uid: string,
+  displayName: string,
+): Promise<void> {
+  const name = displayName.trim() === "" ? "Miembro" : displayName.trim();
+  await setDoc(doc(typingCollection(wsId, chatId), uid), {
+    displayName: name.slice(0, 40),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Borra la marca de escritura (input vacío o desmontaje). */
+export async function clearTyping(
+  wsId: string,
+  chatId: string,
+  uid: string,
+): Promise<void> {
+  try {
+    await deleteDoc(doc(typingCollection(wsId, chatId), uid));
+  } catch {
+    // Borrar una marca inexistente o sin red no bloquea la salida.
+  }
+}
+
+/** Suscripción en vivo a quién está escribiendo en el chat. */
+export function listenTyping(
+  wsId: string,
+  chatId: string,
+  cb: (typing: TypingDoc[]) => void,
+): Unsubscribe {
+  return onSnapshot(typingCollection(wsId, chatId), (snapshot) => {
+    cb(
+      snapshot.docs.map((item) =>
+        toTypingDoc(item.id, item.data({ serverTimestamps: "estimate" })),
+      ),
+    );
+  });
+}
+
+// --- Lecturas (T14) ---------------------------------------------------------
+
+function readsCollection(wsId: string, chatId: string) {
+  return collection(getDb(), "workspaces", wsId, "chats", chatId, "reads");
+}
+
+function toReadReceiptDoc(uid: string, data: DocumentData): ReadReceiptDoc {
+  return { uid, ...(data as Omit<ReadReceiptDoc, "uid">) };
+}
+
+/** Guarda mi marca de lectura (solo mi doc reads/{uid}). */
+export async function markChatRead(
+  wsId: string,
+  chatId: string,
+  uid: string,
+  lastReadMessageId: string | null,
+): Promise<void> {
+  await setDoc(
+    doc(readsCollection(wsId, chatId), uid),
+    {
+      lastReadAt: serverTimestamp(),
+      lastReadMessageId,
+    },
+    { merge: true },
+  );
+}
+
+/** Suscripción a mi marca de lectura de un chat (null si nunca lo abrí). */
+export function listenMyRead(
+  wsId: string,
+  chatId: string,
+  uid: string,
+  cb: (read: ReadReceiptDoc | null) => void,
+): Unsubscribe {
+  return onSnapshot(doc(readsCollection(wsId, chatId), uid), (snapshot) => {
+    if (!snapshot.exists()) {
+      cb(null);
+      return;
+    }
+    cb(
+      toReadReceiptDoc(
+        snapshot.id,
+        snapshot.data({ serverTimestamps: "estimate" }),
+      ),
+    );
+  });
+}
+
+/**
+ * Cuenta mensajes del timeline principal más nuevos que `since`
+ * (excluyendo los míos). Sin filtro de fecha en servidor para no pedir
+ * índices nuevos: trae los últimos 50 y filtra en cliente.
+ */
+export async function fetchUnreadCount(
+  wsId: string,
+  chatId: string,
+  uid: string,
+  sinceMs: number | null,
+): Promise<number> {
+  const snapshot = await getDocs(
+    query(
+      messagesCollection(wsId, chatId),
+      where("threadParentId", "==", null),
+      orderBy("createdAt", "desc"),
+      limit(50),
+    ),
+  );
+  let count = 0;
+  for (const item of snapshot.docs) {
+    const data = item.data({ serverTimestamps: "estimate" });
+    if (data.authorId === uid) continue;
+    if (sinceMs === null) {
+      count += 1;
+      continue;
+    }
+    try {
+      const ms =
+        typeof data.createdAt?.toMillis === "function"
+          ? (data.createdAt.toMillis() as number)
+          : 0;
+      if (ms > sinceMs) count += 1;
+    } catch {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/** Lee mi marca de lectura una vez (para el E2E y revalidaciones). */
+export async function fetchMyRead(
+  wsId: string,
+  chatId: string,
+  uid: string,
+): Promise<ReadReceiptDoc | null> {
+  const snapshot = await getDoc(doc(readsCollection(wsId, chatId), uid));
+  if (!snapshot.exists()) return null;
+  return toReadReceiptDoc(
+    snapshot.id,
+    snapshot.data({ serverTimestamps: "estimate" }),
+  );
 }

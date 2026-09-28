@@ -6,13 +6,14 @@ import { Avatar } from "@/components/ui/avatar";
 import { Card, CardRow } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/ui/icon";
-import { ListRow } from "@/components/ui/list-row";
 import { SectionLabel } from "@/components/ui/section-label";
 import { LOKI_IA_CHAT } from "@/lib/data/chats";
 import { formatChatTime } from "@/lib/chat/format";
-import { useChats } from "@/hooks/use-chat";
+import { useChats, useUnread } from "@/hooks/use-chat";
+import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { DEFAULT_AVATAR_COLOR } from "@/types/models";
+import type { ChatDoc } from "@/types/chat";
 
 export function colorForChat(id: string): string {
   let hash = 0;
@@ -24,11 +25,68 @@ export function colorForChat(id: string): string {
 }
 
 /**
+ * Fila de conversación con no leídos (T14): punto azul + contador cuando
+ * lastMessage es más nuevo que mi lastReadAt y el autor no soy yo.
+ * Réplica el layout de ListRow sin salir del ámbito de chat (ListRow
+ * vive en ui/ y no acepta contador).
+ */
+function ChatRow({ wsId, uid, chat }: { wsId: string; uid: string | null; chat: ChatDoc }): React.JSX.Element {
+  const { unread, count } = useUnread(wsId, chat, uid);
+  const preview =
+    chat.lastMessage === null
+      ? "Sin mensajes todavía"
+      : `${chat.lastMessage.authorName}: ${chat.lastMessage.text}`;
+  const meta = formatChatTime(chat.lastMessage?.createdAt ?? chat.updatedAt);
+  return (
+    <Link
+      href={`/chat/c?id=${chat.id}`}
+      aria-label={`${chat.name}${unread ? `, ${count > 0 ? count : "mensajes"} sin leer` : ""}`}
+      className="flex items-center gap-3 rounded-lg px-2 py-4 outline-none interactive"
+    >
+      {chat.emoji ? (
+        <Avatar emoji={chat.emoji} size={52} />
+      ) : (
+        <Avatar
+          initial={chat.name.charAt(0).toUpperCase()}
+          color={colorForChat(chat.id)}
+          size={52}
+        />
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-body font-semibold leading-6 text-foreground">
+          {chat.name}
+        </span>
+        <span className="block truncate text-body-sm leading-5 text-muted-foreground">
+          {preview}
+        </span>
+      </span>
+      <span className="flex shrink-0 flex-col items-end gap-1">
+        <span className="text-meta leading-4 text-muted-foreground">{meta}</span>
+        <span className="flex h-4 items-center gap-1">
+          {count > 0 ? (
+            <span
+              aria-hidden="true"
+              className="flex h-4 min-w-4 items-center justify-center rounded-full bg-mention px-1 text-[11px] font-semibold leading-4 text-white"
+            >
+              {count > 99 ? "99+" : count}
+            </span>
+          ) : null}
+          {unread ? (
+            <span aria-hidden="true" className="h-2 w-2 rounded-full bg-mention" />
+          ) : null}
+        </span>
+      </span>
+    </Link>
+  );
+}
+
+/**
  * Lista de chats del espacio actual: Loki IA fijado, tarjeta de
  * Publicaciones y conversaciones reales desde useChats.
  */
 export function ChatList(): React.JSX.Element {
   const { currentWorkspaceId } = useWorkspaces();
+  const uid = useSessionStore((state) => state.user?.uid ?? null);
   const chatsQuery = useChats(currentWorkspaceId);
   const chats = chatsQuery.data ?? [];
 
@@ -124,46 +182,13 @@ export function ChatList(): React.JSX.Element {
         />
       ) : (
         <ul>
-          {realChats.map((chat) => {
-            const preview =
-              chat.lastMessage === null
-                ? "Sin mensajes todavía"
-                : `${chat.lastMessage.authorName}: ${chat.lastMessage.text}`;
-            const meta = formatChatTime(chat.lastMessage?.createdAt ?? chat.updatedAt);
-            return (
-              <li key={chat.id}>
-                {chat.emoji ? (
-                  <Link
-                    href={`/chat/c?id=${chat.id}`}
-                    className="flex items-center gap-3 rounded-lg px-2 py-4 outline-none interactive"
-                  >
-                    <Avatar emoji={chat.emoji} size={52} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-body font-semibold leading-6 text-foreground">
-                        {chat.name}
-                      </span>
-                      <span className="block truncate text-body-sm leading-5 text-muted-foreground">
-                        {preview}
-                      </span>
-                    </span>
-                    <span className="flex shrink-0 flex-col items-end gap-1">
-                      <span className="text-meta leading-4 text-muted-foreground">{meta}</span>
-                      <span className="flex h-4 items-center" />
-                    </span>
-                  </Link>
-                ) : (
-                  <ListRow
-                    href={`/chat/c?id=${chat.id}`}
-                    title={chat.name}
-                    subtitle={preview}
-                    meta={meta}
-                    initial={chat.name.charAt(0).toUpperCase()}
-                    color={colorForChat(chat.id)}
-                  />
-                )}
-              </li>
-            );
-          })}
+          {realChats.map((chat) => (
+            <li key={chat.id}>
+              {currentWorkspaceId !== null ? (
+                <ChatRow wsId={currentWorkspaceId} uid={uid} chat={chat} />
+              ) : null}
+            </li>
+          ))}
         </ul>
       )}
       {chatsQuery.isError ? (

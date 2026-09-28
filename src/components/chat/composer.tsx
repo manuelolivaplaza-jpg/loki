@@ -14,6 +14,8 @@ type ComposerProps = {
   isLoki: boolean;
   sending: boolean;
   onSend: (text: string) => void;
+  /** Avisa cada cambio del input (para typing T14). */
+  onValueChange?: (value: string) => void;
 };
 
 /**
@@ -22,7 +24,7 @@ type ComposerProps = {
  * - Enter envía solo con puntero fino; en táctil Enter salta de línea.
  * - La barra se mantiene sobre el teclado con window.visualViewport.
  */
-export function Composer({ chatName, isLoki, sending, onSend }: ComposerProps): React.JSX.Element {
+export function Composer({ chatName, isLoki, sending, onSend, onValueChange }: ComposerProps): React.JSX.Element {
   const [value, setValue] = React.useState("");
   const [attachOpen, setAttachOpen] = React.useState(false);
   const reduceMotion = useReducedMotion();
@@ -68,10 +70,11 @@ export function Composer({ chatName, isLoki, sending, onSend }: ComposerProps): 
     if (text === "" || sending) return;
     onSend(text);
     setValue("");
+    onValueChange?.("");
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
-  }, [value, sending, onSend]);
+  }, [value, sending, onSend, onValueChange]);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key !== "Enter" || event.shiftKey) return;
@@ -118,7 +121,10 @@ export function Composer({ chatName, isLoki, sending, onSend }: ComposerProps): 
             ref={textareaRef}
             rows={1}
             value={value}
-            onChange={(event) => setValue(event.target.value)}
+            onChange={(event) => {
+              setValue(event.target.value);
+              onValueChange?.(event.target.value);
+            }}
             onKeyDown={onKeyDown}
             placeholder={placeholder}
             aria-label={placeholder}

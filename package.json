@@ -12,7 +12,8 @@
     "emulators": "firebase emulators:start --project demo-loki",
     "emulators:export": "firebase emulators:start --project demo-loki --export-on-exit .emulator-data --import .emulator-data",
     "test:rules:run": "node --test --test-concurrency=1 tests/firestore.rules.test.mjs tests/chat.rules.test.mjs",
-    "test:rules": "firebase emulators:exec --project demo-loki --only firestore \"npm run test:rules:run\""
+    "test:rules": "firebase emulators:exec --project demo-loki --only firestore \"npm run test:rules:run\"",
+    "test:mentions": "node tests/mentions.test.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",

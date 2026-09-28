@@ -1,9 +1,11 @@
 "use client";
 
+import * as React from "react";
 import { Sparkles } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
 import { formatHour } from "@/lib/chat/format";
+import { parseMentionSegments } from "@/lib/chat/mentions";
 import { AVATAR_FALLBACK_COLOR } from "@/types/models";
 import type { MessageDoc, MessageSendStatus } from "@/types/chat";
 import { cn } from "@/lib/utils";
@@ -26,9 +28,40 @@ type MessageBubbleProps = {
  * - Propios: bg-bubble-mine (#0F0F0F / #2A2A2A). Otros: bg-bubble-other (#F0F0F0 / #16181C).
  * - IA (type "ai"): texto sobre fondo, ancho completo, con "Loki" + Sparkles.
  * - System: centrado muted. Eliminado: itálica muted.
+ * - Menciones conocidas (@Nombre o lookup por mentions[]): color mention
+ *   (#1D9BF0), peso 600, sin subrayado. El texto plano sigue igual.
  * - Avatar solo en el último del grupo (showTime), nombre solo en el primero (showAuthor).
  * - Hora de 13px muted centrada bajo la burbuja del grupo, nunca al lado del avatar.
  */
+function MentionedText({
+  text,
+  mentions,
+}: {
+  text: string;
+  mentions?: readonly string[];
+}): React.JSX.Element {
+  const segments = React.useMemo(
+    () => parseMentionSegments(text, undefined, mentions),
+    [text, mentions],
+  );
+  return (
+    <>
+      {segments.map((segment, index) =>
+        segment.isMention ? (
+          <span
+            key={index}
+            className="font-semibold text-mention no-underline"
+          >
+            {segment.text}
+          </span>
+        ) : (
+          <React.Fragment key={index}>{segment.text}</React.Fragment>
+        ),
+      )}
+    </>
+  );
+}
+
 export function MessageBubble({
   message,
   isMine,
@@ -41,7 +74,11 @@ export function MessageBubble({
     return (
       <div className="flex justify-center px-4">
         <p className="text-center text-meta leading-5 text-muted-foreground">
-          {message.deleted ? "Mensaje eliminado" : message.text}
+          {message.deleted ? (
+            "Mensaje eliminado"
+          ) : (
+            <MentionedText text={message.text} mentions={message.mentions} />
+          )}
         </p>
       </div>
     );
@@ -60,7 +97,7 @@ export function MessageBubble({
           {message.deleted ? (
             <span className="italic text-muted-foreground">Mensaje eliminado</span>
           ) : (
-            message.text
+            <MentionedText text={message.text} mentions={message.mentions} />
           )}
         </div>
         {showTime ? (
@@ -76,7 +113,7 @@ export function MessageBubble({
   const body = deleted ? (
     <span className="italic text-muted-foreground">Mensaje eliminado</span>
   ) : (
-    message.text
+    <MentionedText text={message.text} mentions={message.mentions} />
   );
 
   if (isMine) {

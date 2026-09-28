@@ -11,12 +11,18 @@ import { EmptyState } from "@/components/ui/empty-state";
 import {
   useChats,
   useMarkChatRead,
+  useMembers,
   useMessages,
   useNotifyTyping,
   useSendMessage,
   useTyping,
 } from "@/hooks/use-chat";
-import { newMessageId } from "@/lib/data/chat";
+import { membersToCandidates, newMessageId } from "@/lib/data/chat";
+import {
+  buildLokiDisabledMessage,
+  isAiEnabled,
+  mentionsLoki,
+} from "@/lib/chat/mentions";
 import { useMessageStatusStore } from "@/lib/chat/message-status";
 import { LOKI_IA_MESSAGES } from "@/lib/data/chats";
 import { useProfileStore } from "@/stores/profile-store";
@@ -105,6 +111,12 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   const wsForLive = isLoki ? null : currentWorkspaceId;
   const chatForLive = isLoki ? null : chatId;
   const typingNames = useTyping(wsForLive, chatForLive, currentUid);
+  // T15: miembros del espacio para el menú @ del composer.
+  const membersQuery = useMembers(wsForLive);
+  const mentionMembers = React.useMemo(
+    () => membersToCandidates(membersQuery.data ?? []),
+    [membersQuery.data],
+  );
   const { notify: notifyTyping } = useNotifyTyping(
     wsForLive,
     chatForLive,
@@ -221,32 +233,51 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   }, [hasMore, isLoadingOlder, loadOlder, isLoki, messages.length]);
 
   const handleSend = React.useCallback(
-    (text: string) => {
+    (text: string, mentions: string[]) => {
       setSendError(null);
       if (isLoki) {
         const now = Timestamp.now();
         const uid = currentUid ?? "me";
-        setLokiMessages((prev) => [
-          ...(prev ?? []),
-          {
-            id: `local-${now.toMillis()}`,
-            authorId: uid,
-            authorName: "Tú",
-            text,
-            mentions: [],
-            replyTo: null,
-            threadParentId: null,
-            threadCount: 0,
-            lastReplyAt: null,
-            attachments: [],
-            reactions: {},
-            lastReaction: null,
-            createdAt: now,
-            editedAt: null,
-            deleted: false,
-            type: "user",
-          },
-        ]);
+        const userMessage: MessageDoc = {
+          id: `local-${now.toMillis()}`,
+          authorId: uid,
+          authorName: "Tú",
+          text,
+          mentions,
+          replyTo: null,
+          threadParentId: null,
+          threadCount: 0,
+          lastReplyAt: null,
+          attachments: [],
+          reactions: {},
+          lastReaction: null,
+          createdAt: now,
+          editedAt: null,
+          deleted: false,
+          type: "user",
+        };
+        // Mock local (T18 lo conecta a Firestore): si nombra a Loki y la IA
+        // está desactivada, se avisa con un mensaje de sistema local.
+        const extras: MessageDoc[] =
+          !isAiEnabled() && mentionsLoki(text, mentions)
+            ? [
+                {
+                  ...buildLokiDisabledMessage("loki", "Loki"),
+                  id: `local-${now.toMillis()}-loki-off`,
+                  replyTo: null,
+                  threadParentId: null,
+                  threadCount: 0,
+                  lastReplyAt: null,
+                  attachments: [],
+                  reactions: {},
+                  lastReaction: null,
+                  createdAt: now,
+                  editedAt: null,
+                  deleted: false,
+                },
+              ]
+            : [];
+        setLokiMessages((prev) => [...(prev ?? []), userMessage, ...extras]);
         requestAnimationFrame(() => {
           const el = scrollRef.current;
           if (el !== null) scrollToBottom(el, false);
@@ -268,7 +299,7 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           authorId: currentUid,
           authorName,
           text,
-          mentions: [],
+          mentions,
           type: "user",
           messageId,
         },
@@ -278,6 +309,29 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
               const el = scrollRef.current;
               if (el !== null) scrollToBottom(el, false);
             });
+            // T15: si nombra a Loki ("loki"/"ai") y la IA está desactivada
+            // (NEXT_PUBLIC_AI_ENABLED !== "true"), se avisa seguido con un
+            // mensaje type "system" del propio usuario: las reglas prohíben
+            // type "ai" desde el cliente y exigen authorId == uid, así que
+            // el cliente nunca escribe type "ai".
+            // TODO(T18): con Cloud Functions + Admin SDK el backend
+            // escribirá la respuesta real con type "ai"; si
+            // NEXT_PUBLIC_AI_ENABLED=true el cliente no inventa nada.
+            if (mentionsLoki(text, mentions) && !isAiEnabled()) {
+              const disabled = buildLokiDisabledMessage(currentUid, authorName);
+              sendMutation.mutate(
+                {
+                  authorId: disabled.authorId,
+                  authorName: disabled.authorName,
+                  text: disabled.text,
+                  mentions: disabled.mentions,
+                  type: disabled.type,
+                },
+                {
+                  onError: (error) => setSendError(error.message),
+                },
+              );
+            }
           },
           onError: (error) => setSendError(error.message),
         },
@@ -383,6 +437,7 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           chatName={chatName}
           isLoki={isLoki}
           sending={sendMutation.isPending}
+          members={mentionMembers}
           onSend={handleSend}
           onValueChange={notifyTyping}
         />

@@ -1,4 +1,4 @@
-# Chat (T13)
+# Chat (T13–T15)
 
 Pantalla de conversación estilo Grok con datos reales de Firestore.
 
@@ -25,6 +25,14 @@ Pantalla de conversación estilo Grok con datos reales de Firestore.
 ## Utilidades (`src/lib/chat/format.ts`)
 
 `formatHour`, `formatDayLabel`, `formatChatTime`, `dayKey`, `groupMessages` (ventana 5 min).
+
+## Menciones (T15)
+
+- **Utilidades puras** en `src/lib/chat/mentions.ts` (sin firebase; unitario en `tests/mentions.test.mjs` con `node` + `assert`, sin runner): `getMentionQuery`, `filterMentionCandidates`, `resolveMentionIds`, `parseMentionSegments`, `mentionsLoki`, `isAiEnabled`, `buildLokiDisabledMessage`.
+- **Composer**: `@` abre un `MenuCard` flotante con la entrada fija `@Loki`/`@ai` (id `loki`) + miembros del espacio (`useMembers` → `listMembers`/`listenMembers` en `src/lib/data/chat.ts`). Filtra por el texto tras `@` (sin tildes, insensible a mayúsculas). Flechas + Enter / click insertan `@Nombre` (el uid se resuelve en `mentions[]` al enviar con `resolveMentionIds`). Escape cierra; sin resultados se cierra.
+- **MessageBubble**: `parseMentionSegments` resalta menciones conocidas (match `@Nombre` o lookup por `mentions[]`) con `text-mention` (#1D9BF0), `font-semibold`, sin subrayado. El texto plano sigue igual.
+- **Flag `NEXT_PUBLIC_AI_ENABLED`** (default `false` en `.env.example`): si el mensaje menciona `loki`/`ai` y el flag no es `"true"`, tras el mensaje del usuario se escribe seguido un aviso type `system` con el `authorId` del propio usuario, texto `Loki: Loki esta desactivada hasta activar el plan Blaze.` y `mentions: ["loki-disabled"]`. Es lo único compatible con las reglas actuales (prohíben type `ai` desde el cliente y exigen `authorId == uid`) y con export sin Admin SDK.
+- **TODO(T18)**: con Cloud Functions + Admin SDK el backend escribirá la respuesta real con type `ai`. Si el flag es `"true"`, el cliente no inventa ninguna respuesta.
 
 ## Movimiento
 

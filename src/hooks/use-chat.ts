@@ -15,9 +15,11 @@ import {
   listenAiMessages,
   listenChats,
   listenLatestMessages,
+  listenMembers,
   listenMyRead,
   listenThread,
   listenTyping,
+  listMembers,
   markChatRead,
   MESSAGES_PAGE_SIZE,
   newMessageId,
@@ -34,6 +36,7 @@ import type {
   ReadReceiptDoc,
   TypingDoc,
 } from "@/types/chat";
+import type { WorkspaceMember } from "@/types/models";
 import type {
   DocumentData,
   QueryDocumentSnapshot,
@@ -123,6 +126,37 @@ export type UseMessagesResult = {
   isPending: boolean;
   error: Error | null;
 };
+
+/**
+ * Miembros del espacio en vivo (T15: candidatos del menú @).
+ * Query inicial + suscripción que refresca la caché de TanStack Query.
+ */
+export function useMembers(
+  wsId: string | null,
+): UseQueryResult<WorkspaceMember[], Error> {
+  const queryClient = useQueryClient();
+  const query = useQuery<WorkspaceMember[], Error>({
+    queryKey: ["members", wsId],
+    queryFn: () => listMembers(wsId ?? ""),
+    enabled: wsId !== null && wsId !== "",
+  });
+
+  React.useEffect(() => {
+    if (wsId === null || wsId === "") return;
+    const activeWsId: string = wsId;
+    const unsubscribe = listenMembers(activeWsId, (members) => {
+      queryClient.setQueryData<WorkspaceMember[]>(
+        ["members", activeWsId],
+        members,
+      );
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [wsId, queryClient]);
+
+  return query;
+}
 
 export function useMessages(
   wsId: string | null,

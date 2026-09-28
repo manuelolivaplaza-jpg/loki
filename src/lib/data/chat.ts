@@ -25,6 +25,10 @@ import {
   type UpdateData,
 } from "firebase/firestore";
 import { getDb } from "@/lib/firebase/firestore";
+import {
+  LOKI_CANDIDATE,
+  type MentionCandidate,
+} from "@/lib/chat/mentions";
 import type {
   ChatDoc,
   MessageAttachment,
@@ -33,6 +37,7 @@ import type {
   ReadReceiptDoc,
   TypingDoc,
 } from "@/types/chat";
+import type { WorkspaceMember } from "@/types/models";
 
 export const MESSAGES_PAGE_SIZE = 30;
 
@@ -152,6 +157,71 @@ function latestMessagesQuery(wsId: string, chatId: string, pageSize = MESSAGES_P
     orderBy("createdAt", "desc"),
     limit(pageSize),
   );
+}
+
+// --- Miembros (T15: candidatos de mención) -----------------------------------
+
+function membersCollection(wsId: string) {
+  return collection(getDb(), "workspaces", wsId, "members");
+}
+
+function toMemberDoc(data: DocumentData): WorkspaceMember {
+  return data as WorkspaceMember;
+}
+
+/** Miembros del espacio ordenados por nombre (tope 100 para el menú @). */
+export async function listMembers(wsId: string): Promise<WorkspaceMember[]> {
+  const snapshot = await getDocs(
+    query(membersCollection(wsId), orderBy("displayName", "asc"), limit(100)),
+  );
+  return snapshot.docs.map((item) =>
+    toMemberDoc(item.data({ serverTimestamps: "estimate" })),
+  );
+}
+
+/** Suscripción en vivo a los miembros del espacio. */
+export function listenMembers(
+  wsId: string,
+  cb: (members: WorkspaceMember[]) => void,
+): Unsubscribe {
+  const q = query(
+    membersCollection(wsId),
+    orderBy("displayName", "asc"),
+    limit(100),
+  );
+  return onSnapshot(q, (snapshot) => {
+    cb(
+      snapshot.docs.map((item) =>
+        toMemberDoc(item.data({ serverTimestamps: "estimate" })),
+      ),
+    );
+  });
+}
+
+/** Miembros -> candidatos de mención ordenados (sin duplicar uid). */
+export function membersToCandidates(
+  members: readonly WorkspaceMember[],
+): MentionCandidate[] {
+  const seen = new Set<string>();
+  const out: MentionCandidate[] = [];
+  for (const member of members) {
+    if (seen.has(member.uid)) continue;
+    seen.add(member.uid);
+    const name = member.displayName.trim();
+    out.push({
+      id: member.uid,
+      displayName: name === "" ? "Miembro" : name,
+    });
+  }
+  out.sort((a, b) => a.displayName.localeCompare(b.displayName, "es"));
+  return out;
+}
+
+/** Candidatos del menú @: entrada fija de Loki primero + miembros. */
+export function mentionCandidatesWithLoki(
+  members: readonly WorkspaceMember[],
+): MentionCandidate[] {
+  return [LOKI_CANDIDATE, ...membersToCandidates(members)];
 }
 
 /**

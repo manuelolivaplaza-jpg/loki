@@ -7,6 +7,7 @@ import type { SectionMeta } from "@/components/shell/sections";
 import { Card, CardDivider, CardRow } from "@/components/ui/card";
 import { SectionLabel } from "@/components/ui/section-label";
 import { cn } from "@/lib/utils";
+import { HOME_MOCK } from "@/lib/mock/home";
 import { useUiStore } from "@/stores/ui-store";
 
 type RightPanelProps = {
@@ -15,6 +16,26 @@ type RightPanelProps = {
 
 export function RightPanel({ section }: RightPanelProps): React.JSX.Element {
   const rightPanelOpen = useUiStore((state) => state.rightPanelOpen);
+
+  const contextItems = React.useMemo(() => {
+    if (section.key !== "inicio") return section.contextItems;
+    const openTasks = HOME_MOCK.todayTasks.filter((task) => !task.done).length;
+    const nextEvent = HOME_MOCK.upcomingEvents[0];
+    return [
+      { title: "Resumen", meta: "Tu día de un vistazo" },
+      {
+        title: "Pendientes",
+        meta: `${openTasks} ${openTasks === 1 ? "tarea abierta" : "tareas abiertas"}`,
+      },
+      {
+        title: "Próximo evento",
+        meta:
+          nextEvent === undefined
+            ? "Nada programado"
+            : `${nextEvent.title} · ${nextEvent.when}`,
+      },
+    ];
+  }, [section]);
 
   return (
     <div
@@ -36,7 +57,7 @@ export function RightPanel({ section }: RightPanelProps): React.JSX.Element {
           >
             <SectionLabel>{section.contextTitle}</SectionLabel>
             <Card>
-              {section.contextItems.map((item, index) => (
+              {contextItems.map((item, index) => (
                 <React.Fragment key={item.title}>
                   {index > 0 ? <CardDivider /> : null}
                   <CardRow>

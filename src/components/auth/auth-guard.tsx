@@ -52,7 +52,7 @@ export function AuthGuard({ children }: AuthGuardProps): React.JSX.Element {
 
   React.useEffect(() => {
     if (status === "unauthenticated") {
-      const next = pathname ?? "/chat";
+      const next = pathname ?? "/inicio";
       router.replace(`/login?next=${encodeURIComponent(next)}`);
     }
   }, [status, pathname, router]);
@@ -116,7 +116,7 @@ export function AuthGuard({ children }: AuthGuardProps): React.JSX.Element {
     if (!profile.onboardingCompleted && !onOnboarding) {
       router.replace("/onboarding");
     } else if (profile.onboardingCompleted && onOnboarding) {
-      router.replace("/chat");
+      router.replace("/inicio");
     }
   }, [status, profileStatus, profile, pathname, router]);
 

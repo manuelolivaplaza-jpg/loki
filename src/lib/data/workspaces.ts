@@ -5,6 +5,7 @@ import {
   doc,
   getDocs,
   serverTimestamp,
+  Timestamp,
   writeBatch,
 } from "firebase/firestore";
 import { getDb } from "@/lib/firebase/firestore";
@@ -78,4 +79,24 @@ export async function listMyWorkspaces(
     collection(getDb(), "users", uid, "memberships"),
   );
   return snapshot.docs.map((item) => item.data() as WorkspaceMembership);
+}
+
+/**
+ * Entrada optimista para la caché local tras crear un espacio.
+ * El batch de `createWorkspace` ya hizo `await`: úsala con
+ * `queryClient.setQueryData(["workspaces", uid], ...)` antes de navegar
+ * para que los selectores muestren el espacio nuevo sin esperar al refetch.
+ */
+export function toLocalMembership(
+  wsId: string,
+  input: CreateWorkspaceInput,
+): WorkspaceMembership {
+  return {
+    wsId,
+    name: input.name.trim(),
+    emoji: input.emoji,
+    kind: input.kind,
+    role: "owner",
+    joinedAt: Timestamp.now(),
+  };
 }

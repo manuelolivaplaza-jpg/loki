@@ -8,11 +8,11 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { EmojiPicker } from "@/components/workspaces/emoji-picker";
 import { KindPicker } from "@/components/workspaces/kind-picker";
 import { EMOJI_OPTIONS } from "@/components/workspaces/workspace-options";
-import { createWorkspace } from "@/lib/data/workspaces";
+import { createWorkspace, toLocalMembership } from "@/lib/data/workspaces";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import { DEFAULT_AVATAR_COLOR, type WorkspaceKind } from "@/types/models";
+import { DEFAULT_AVATAR_COLOR, type WorkspaceKind, type WorkspaceMembership } from "@/types/models";
 
 type CreateWorkspaceDialogProps = {
   open: boolean;
@@ -71,11 +71,18 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: CreateWorkspaceDia
         { name, emoji, kind },
         { uid: user.uid, displayName, avatarColor },
       );
+      // El batch ya terminó (await): se siembra la caché con el espacio
+      // nuevo antes de invalidar para que los selectores lo muestren al
+      // instante.
+      queryClient.setQueryData<WorkspaceMembership[]>(
+        ["workspaces", user.uid],
+        (old) => [...(old ?? []), toLocalMembership(wsId, { name, emoji, kind })],
+      );
       setCurrentWorkspaceId(wsId);
       if (profile !== null) {
         setProfile({ ...profile, currentWorkspaceId: wsId });
       }
-      await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      await queryClient.invalidateQueries({ queryKey: ["workspaces", user.uid] });
       onOpenChange(false);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "No se pudo crear tu espacio. Inténtalo de nuevo.");

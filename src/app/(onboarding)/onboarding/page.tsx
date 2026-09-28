@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -13,10 +14,12 @@ import { KindPicker } from "@/components/workspaces/kind-picker";
 import { EMOJI_OPTIONS } from "@/components/workspaces/workspace-options";
 import { getFirebaseAuth } from "@/lib/firebase/auth";
 import { updateUserProfile } from "@/lib/data/users";
-import { createWorkspace } from "@/lib/data/workspaces";
+import { createWorkspace, toLocalMembership } from "@/lib/data/workspaces";
 import { cn } from "@/lib/utils";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import type { WorkspaceMembership } from "@/types/models";
 import {
   AVATAR_COLORS,
   DEFAULT_AVATAR_COLOR,
@@ -52,9 +55,13 @@ function StepIndicator({ step }: { step: 1 | 2 }): React.JSX.Element {
 
 export default function OnboardingPage(): React.JSX.Element {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const user = useSessionStore((state) => state.user);
   const profile = useProfileStore((state) => state.profile);
   const setProfile = useProfileStore((state) => state.setProfile);
+  const setCurrentWorkspaceId = useWorkspaceStore(
+    (state) => state.setCurrentWorkspaceId,
+  );
 
   const [step, setStep] = React.useState<1 | 2>(1);
   const [displayName, setDisplayName] = React.useState("");
@@ -165,6 +172,17 @@ export default function OnboardingPage(): React.JSX.Element {
         { name: spaceName, emoji, kind },
         { uid: user.uid, displayName: name, avatarColor },
       );
+      // El batch ya terminó (await): se siembra la caché con el espacio
+      // nuevo antes de navegar para que ningún selector lea una lista
+      // vacía obsoleta.
+      queryClient.setQueryData<WorkspaceMembership[]>(
+        ["workspaces", user.uid],
+        (old) => [
+          ...(old ?? []),
+          toLocalMembership(wsId, { name: spaceName, emoji, kind }),
+        ],
+      );
+      setCurrentWorkspaceId(wsId);
       if (profile !== null) {
         setProfile({
           ...profile,
@@ -175,7 +193,10 @@ export default function OnboardingPage(): React.JSX.Element {
           currentWorkspaceId: wsId,
         });
       }
-      router.replace("/chat");
+      await queryClient.invalidateQueries({
+        queryKey: ["workspaces", user.uid],
+      });
+      router.replace("/inicio");
     } catch (error: unknown) {
       setStepError(
         error instanceof Error

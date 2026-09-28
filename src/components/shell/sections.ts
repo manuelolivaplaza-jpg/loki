@@ -1,13 +1,12 @@
 import {
   CalendarDays,
   FolderKanban,
-  Lightbulb,
+  House,
   MessageCircle,
-  Newspaper,
   type LucideIcon,
 } from "lucide-react";
 
-export type SectionKey = "chat" | "feed" | "calendario" | "proyectos" | "ideas";
+export type SectionKey = "inicio" | "chat" | "calendario" | "proyectos";
 
 export type ContextItem = {
   title: string;
@@ -27,6 +26,20 @@ export type SectionMeta = {
 
 export const NAV_ITEMS: SectionMeta[] = [
   {
+    key: "inicio",
+    href: "/inicio",
+    label: "Inicio",
+    icon: House,
+    emptyTitle: "Sin actividad todavía",
+    emptyDescription: "Tu resumen aparecerá aquí.",
+    contextTitle: "Contexto",
+    contextItems: [
+      { title: "Resumen", meta: "Tu día de un vistazo" },
+      { title: "Pendientes", meta: "0 tareas abiertas" },
+      { title: "Próximo evento", meta: "Nada programado" },
+    ],
+  },
+  {
     key: "chat",
     href: "/chat",
     label: "Chat",
@@ -35,23 +48,9 @@ export const NAV_ITEMS: SectionMeta[] = [
     emptyDescription: "Inicia un chat nuevo para empezar.",
     contextTitle: "Contexto",
     contextItems: [
-      { title: "Hilos fijados", meta: "0 fijados" },
+      { title: "Hilos fijados", meta: "1 fijado" },
       { title: "Actividad reciente", meta: "Sin actividad hoy" },
       { title: "Atajos", meta: "Nuevo chat con N" },
-    ],
-  },
-  {
-    key: "feed",
-    href: "/feed",
-    label: "Feed",
-    icon: Newspaper,
-    emptyTitle: "Tu feed está vacío",
-    emptyDescription: "Todavía no hay publicaciones para mostrar.",
-    contextTitle: "Contexto",
-    contextItems: [
-      { title: "Tendencias", meta: "Sin tendencias por ahora" },
-      { title: "Fuentes", meta: "0 fuentes seguidas" },
-      { title: "Guardados", meta: "0 elementos" },
     ],
   },
   {
@@ -82,41 +81,34 @@ export const NAV_ITEMS: SectionMeta[] = [
       { title: "Tareas abiertas", meta: "0 tareas" },
     ],
   },
-  {
-    key: "ideas",
-    href: "/ideas",
-    label: "Ideas",
-    icon: Lightbulb,
-    emptyTitle: "Sin ideas guardadas",
-    emptyDescription: "Anota tu primera idea cuando aparezca.",
-    contextTitle: "Contexto",
-    contextItems: [
-      { title: "Recientes", meta: "0 ideas" },
-      { title: "Favoritas", meta: "0 favoritas" },
-      { title: "Etiquetas", meta: "Sin etiquetas" },
-    ],
-  },
 ];
 
 export const SECTIONS: Record<SectionKey, SectionMeta> = {
-  chat: NAV_ITEMS[0],
-  feed: NAV_ITEMS[1],
-  calendario: NAV_ITEMS[2],
-  proyectos: NAV_ITEMS[3],
-  ideas: NAV_ITEMS[4],
+  inicio: NAV_ITEMS[0] as SectionMeta,
+  chat: NAV_ITEMS[1] as SectionMeta,
+  calendario: NAV_ITEMS[2] as SectionMeta,
+  proyectos: NAV_ITEMS[3] as SectionMeta,
 };
 
 export function getSectionByPath(pathname: string | null): SectionMeta {
-  if (!pathname) return SECTIONS.chat;
+  if (!pathname) return SECTIONS.inicio;
   const found = NAV_ITEMS.find(
     (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
   );
-  return found ?? SECTIONS.chat;
+  // Rutas heredadas: el feed vive dentro del chat e ideas dentro de proyectos.
+  if (pathname === "/feed" || pathname.startsWith("/feed/")) {
+    return SECTIONS.chat;
+  }
+  if (pathname === "/ideas" || pathname.startsWith("/ideas/")) {
+    return SECTIONS.proyectos;
+  }
+  return found ?? SECTIONS.inicio;
 }
 
 /**
  * Rutas de pantalla completa en móvil: sin barra inferior ni padding extra
  * (conversación de chat, perfil y configuración).
+ * `/chat/publicaciones` es una lista (no una conversación) y conserva la barra.
  */
 export function isFullscreenRoute(pathname: string | null): boolean {
   if (!pathname) return false;
@@ -124,6 +116,7 @@ export function isFullscreenRoute(pathname: string | null): boolean {
   if (pathname === "/configuracion" || pathname.startsWith("/configuracion/")) {
     return true;
   }
+  if (pathname === "/chat/publicaciones") return false;
   if (pathname.startsWith("/chat/") && pathname !== "/chat/") return true;
   return false;
 }

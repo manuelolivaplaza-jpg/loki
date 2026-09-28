@@ -69,6 +69,28 @@ export function useWorkspaces(): UseWorkspacesResult {
     }
   }, [query.data, setWorkspaces]);
 
+  // Si la consulta resolvió vacía (p. ej. corrió antes de que terminara el
+  // batch de createWorkspace) pero el perfil ya apunta a un espacio, la
+  // lista cacheada está obsoleta: se reintenta una vez en vez de
+  // conservar el vacío para siempre con staleTime Infinity.
+  const profileWorkspaceId = profile?.currentWorkspaceId ?? null;
+  const retriedKey = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (
+      query.data !== undefined &&
+      query.data.length === 0 &&
+      profileWorkspaceId !== null &&
+      uid !== null &&
+      !query.isFetching
+    ) {
+      const key = `${uid}:${profileWorkspaceId}`;
+      if (retriedKey.current !== key) {
+        retriedKey.current = key;
+        void query.refetch();
+      }
+    }
+  }, [query, uid, profileWorkspaceId]);
+
   React.useEffect(() => {
     if (currentWorkspaceId !== null || data.length === 0) {
       return;

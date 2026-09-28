@@ -33,7 +33,7 @@ export const QUICK_ACTIONS: readonly QuickAction[] = [
   { key: "idea", title: "Nueva idea", description: "Anota algo antes de olvidarlo", icon: Lightbulb },
   { key: "evento", title: "Nuevo evento o fecha", description: "Agenda en el calendario", icon: CalendarPlus },
   { key: "proyecto", title: "Nuevo proyecto", description: "Organiza tareas en un espacio", icon: FolderPlus },
-  { key: "post", title: "Compartir algo", description: "Publica un post en el feed", icon: Send },
+  { key: "post", title: "Compartir algo", description: "Publica un post en el espacio", icon: Send },
   { key: "invitar", title: "Invitar miembro", description: "Suma a alguien a tu espacio", icon: UserPlus },
 ];
 

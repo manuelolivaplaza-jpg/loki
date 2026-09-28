@@ -18,7 +18,7 @@ function RegistroForm(): React.JSX.Element {
   const router = useRouter();
   const searchParams = useSearchParams();
   const status = useSessionStore((state) => state.status);
-  const next = searchParams.get("next") ?? "/chat";
+  const next = searchParams.get("next") ?? "/inicio";
 
   const [displayName, setDisplayName] = React.useState("");
   const [email, setEmail] = React.useState("");
@@ -67,7 +67,7 @@ function RegistroForm(): React.JSX.Element {
   }
 
   const loginHref =
-    next === "/chat" ? "/login" : `/login?next=${encodeURIComponent(next)}`;
+    next === "/inicio" ? "/login" : `/login?next=${encodeURIComponent(next)}`;
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">

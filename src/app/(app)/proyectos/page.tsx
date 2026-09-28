@@ -1,13 +1,11 @@
-import { EmptyState } from "@/components/ui/empty-state";
-import { SECTIONS } from "@/components/shell/sections";
+import { ProyectosTabs, type ProyectosTab } from "@/app/(app)/proyectos/proyectos-tabs";
 
-export default function ProyectosPage(): React.JSX.Element {
-  const section = SECTIONS.proyectos;
-  return (
-    <EmptyState
-      icon={section.icon}
-      title={section.emptyTitle}
-      description={section.emptyDescription}
-    />
-  );
+export default async function ProyectosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}): Promise<React.JSX.Element> {
+  const params = await searchParams;
+  const tab: ProyectosTab = params.tab === "ideas" ? "ideas" : "proyectos";
+  return <ProyectosTabs key={tab} defaultTab={tab} />;
 }

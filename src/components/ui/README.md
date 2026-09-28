@@ -74,6 +74,9 @@ sola vez en `Icon`. No importar iconos lucide directamente en pantallas.
 | `ListRow` | `list-row.tsx` | Avatar 52 + título `text-body` semibold + subtítulo `text-body-sm` + meta + punto `mention`; sin separadores |
 | `MenuCard`/`menuCardClass`, `MenuItem` | `menu-card.tsx` | Tarjeta flotante `rounded-lg` `shadow-float`; items 48px con Icon 22 + `text-body` (`danger` rojo) |
 | `Toggle` (`Switch` re-export) | `toggle.tsx` (`switch.tsx`) | Switch iOS negro, `role=switch` + `aria-checked` |
+| `Checkbox` | `checkbox.tsx` | Checkbox redondo 24px, negro al marcar, `role=checkbox` + `aria-checked` |
+| `ProgressRing` | `progress-ring.tsx` | Anillo de progreso SVG propio: fondo `surface`, arco `accent`, valor al centro |
+| `WeekStrip` | `week-strip.tsx` | Mini calendario semanal L–D: hoy con pastilla foreground, puntos de eventos |
 | `Avatar` | `avatar.tsx` | 32/40/44/52/64; inicial + color de paleta, o emoji |
 | `Button` | `button.tsx` | `primary` negro pill / `secondary` gris pill / `destructive` texto rojo |
 | `EmptyState` | `empty-state.tsx` | Re-export en `shell/empty-state.tsx` por compatibilidad |

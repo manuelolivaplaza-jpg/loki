@@ -13,11 +13,13 @@ import { CreateWorkspaceDialog } from "@/components/workspaces/create-workspace-
 import { kindLabel } from "@/components/workspaces/workspace-options";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceStore, useWorkspaces } from "@/stores/workspace-store";
+import { useProfileStore } from "@/stores/profile-store";
 import { cn } from "@/lib/utils";
 
 export function MobileWorkspaceSwitcher(): React.JSX.Element {
   const user = useSessionStore((state) => state.user);
-  const { workspaces, currentWorkspace, isLoading } = useWorkspaces();
+  const profile = useProfileStore((state) => state.profile);
+  const { workspaces, currentWorkspace, currentWorkspaceId, isLoading } = useWorkspaces();
   const setCurrent = useWorkspaceStore((state) => state.setCurrent);
   const [open, setOpen] = React.useState(false);
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -29,9 +31,14 @@ export function MobileWorkspaceSwitcher(): React.JSX.Element {
   }, []);
 
   const display = currentWorkspace ?? workspaces[0] ?? null;
-  // Mientras carga nunca se muestra "Espacios": skeleton sobrio con el nombre
-  // real en cuanto llega.
-  const loading = isLoading && display === null;
+  // Mientras carga (o mientras el perfil ya apunta a un espacio que la
+  // lista aún no trae) nunca se muestra el genérico "Espacios": skeleton
+  // con el nombre real en cuanto llega.
+  const hasCurrent =
+    currentWorkspaceId ?? profile?.currentWorkspaceId ?? null;
+  const loading =
+    (isLoading && display === null) ||
+    (display === null && hasCurrent !== null);
 
   async function handleSelect(wsId: string): Promise<void> {
     if (user === null || wsId === display?.wsId) {

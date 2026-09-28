@@ -6,7 +6,9 @@ import { usePathname, useRouter } from "next/navigation";
 import { NAV_ITEMS } from "@/components/shell/sections";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOutUser } from "@/lib/auth/actions";
+import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
+import { avatarTextColor } from "@/types/models";
 import { cn } from "@/lib/utils";
 
 function getInitial(displayName: string | null, email: string | null): string {
@@ -21,6 +23,10 @@ export function Sidebar(): React.JSX.Element {
   const pathname = usePathname();
   const router = useRouter();
   const user = useSessionStore((state) => state.user);
+  const profile = useProfileStore((state) => state.profile);
+  const avatarInitial =
+    profile?.avatarInitial ?? getInitial(user?.displayName ?? null, user?.email ?? null);
+  const avatarColor = profile?.avatarColor ?? null;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [signingOut, setSigningOut] = React.useState(false);
 
@@ -109,9 +115,18 @@ export function Sidebar(): React.JSX.Element {
           aria-label="Abrir menú de sesión"
           aria-expanded={menuOpen}
           aria-haspopup="menu"
+          style={
+            avatarColor !== null
+              ? {
+                  backgroundColor: avatarColor,
+                  borderColor: avatarColor,
+                  color: avatarTextColor(avatarColor),
+                }
+              : undefined
+          }
           className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface-2 text-meta font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
-          <span aria-hidden>{getInitial(user?.displayName ?? null, user?.email ?? null)}</span>
+          <span aria-hidden>{avatarInitial}</span>
         </button>
         {menuOpen ? (
           <div

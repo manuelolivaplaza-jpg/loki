@@ -2,8 +2,36 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Perfil y espejo de membresías: solo el propio usuario.
     match /users/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
+
+      match /memberships/{wsId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
+    }
+
+    match /workspaces/{wsId} {
+      allow create: if request.auth != null
+        && request.resource.data.ownerId == request.auth.uid;
+      allow read, update: if request.auth != null
+        && exists(/databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid));
+      allow delete: if request.auth != null
+        && resource.data.ownerId == request.auth.uid;
+
+      match /members/{memberId} {
+        allow read: if request.auth != null
+          && exists(/databases/$(database)/documents/workspaces/$(wsId)/members/$(request.auth.uid));
+        // El owner se crea a sí mismo como owner dentro del mismo batch
+        // que crea el workspace (se lee el workspace con getAfter).
+        allow create: if request.auth != null
+          && request.auth.uid == memberId
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.role == 'owner'
+          && getAfter(/databases/$(database)/documents/workspaces/$(wsId)).data.ownerId == request.auth.uid;
+        // T8 endurecerá altas, roles y bajas.
+        allow update, delete: if false;
+      }
     }
 
     match /{document=**} {

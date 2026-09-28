@@ -4,7 +4,9 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOutUser } from "@/lib/auth/actions";
+import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
+import { avatarTextColor } from "@/types/models";
 
 type MobileHeaderProps = {
   title: string;
@@ -21,6 +23,10 @@ function getInitial(displayName: string | null, email: string | null): string {
 export function MobileHeader({ title }: MobileHeaderProps): React.JSX.Element {
   const router = useRouter();
   const user = useSessionStore((state) => state.user);
+  const profile = useProfileStore((state) => state.profile);
+  const avatarInitial =
+    profile?.avatarInitial ?? getInitial(user?.displayName ?? null, user?.email ?? null);
+  const avatarColor = profile?.avatarColor ?? null;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [signingOut, setSigningOut] = React.useState(false);
 
@@ -48,9 +54,17 @@ export function MobileHeader({ title }: MobileHeaderProps): React.JSX.Element {
         >
           <span
             aria-hidden
+            style={
+              avatarColor !== null
+                ? {
+                    backgroundColor: avatarColor,
+                    color: avatarTextColor(avatarColor),
+                  }
+                : undefined
+            }
             className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-2 text-base font-semibold text-foreground"
           >
-            {getInitial(user?.displayName ?? null, user?.email ?? null)}
+            {avatarInitial}
           </span>
         </button>
         {menuOpen ? (

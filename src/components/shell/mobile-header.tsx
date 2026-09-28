@@ -13,7 +13,7 @@ import {
   PlaceholderDialog,
   QuickActionsMobileMenu,
 } from "@/components/shell/quick-actions";
-import { colorForChat } from "@/components/chat/chat-list";
+import { avatarColorFor } from "@/lib/avatar-color";
 import { spring } from "@/lib/motion";
 import { getConversationId } from "@/lib/data/chats";
 import { useChats } from "@/hooks/use-chat";
@@ -46,7 +46,7 @@ function ConversationHeader({ chatId }: { chatId: string }): React.JSX.Element {
   ) : (
     <Avatar
       initial={name.charAt(0).toUpperCase()}
-      color={chat ? colorForChat(chat.id) : AVATAR_FALLBACK_COLOR}
+      color={chat ? avatarColorFor(chat.id) : AVATAR_FALLBACK_COLOR}
       size={32}
     />
   );

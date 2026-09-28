@@ -10,14 +10,16 @@ import { Avatar } from "@/components/ui/avatar";
 import { Card, CardDivider, CardRow } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { SectionLabel } from "@/components/ui/section-label";
-import { colorForChat } from "@/components/chat/chat-list";
+import { avatarColorFor } from "@/lib/avatar-color";
 import { getConversationId } from "@/lib/data/chats";
-import { useChats } from "@/hooks/use-chat";
+import { useAuthorAvatarColor } from "@/hooks/use-avatar-color";
+import { useChats, useMembers } from "@/hooks/use-chat";
 import { useAppPathname } from "@/lib/navigation";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
 import { HOME_MOCK } from "@/lib/mock/home";
 import { useUiStore } from "@/stores/ui-store";
+import { getAvatarInitial, type WorkspaceMember } from "@/types/models";
 
 type RightPanelProps = {
   section: SectionMeta;
@@ -30,12 +32,33 @@ const CHAT_TYPE_LABEL: Record<string, string> = {
   ai: "Asistente",
 };
 
+/** Máximo de avatares de miembros en el panel contextual. */
+const MEMBERS_PREVIEW = 8;
+
+/** Avatar de un miembro con el color determinista por uid (T16). */
+function MemberAvatar({ member }: { member: WorkspaceMember }): React.JSX.Element {
+  const color = useAuthorAvatarColor(member.uid);
+  return (
+    <li>
+      <span title={member.displayName}>
+        <Avatar
+          initial={getAvatarInitial(member.displayName)}
+          color={color}
+          size={32}
+        />
+        <span className="sr-only">{member.displayName}</span>
+      </span>
+    </li>
+  );
+}
+
 function ChatDetails(): React.JSX.Element | null {
   const pathname = useAppPathname();
   const searchParams = useSearchParams();
   const chatId = getConversationId(pathname, searchParams.get("id"));
   const { currentWorkspaceId, currentWorkspace } = useWorkspaces();
   const chatsQuery = useChats(chatId === "loki-ia" ? null : currentWorkspaceId);
+  const membersQuery = useMembers(currentWorkspaceId);
   if (chatId === null) return null;
   if (chatId === "loki-ia") {
     return (
@@ -64,6 +87,7 @@ function ChatDetails(): React.JSX.Element | null {
   }
   const chat = (chatsQuery.data ?? []).find((item) => item.id === chatId) ?? null;
   if (chat === null) return null;
+  const members = membersQuery.data ?? [];
   const membersLabel =
     chat.memberIds.length === 0
       ? `Todo el espacio${currentWorkspace ? ` · ${currentWorkspace.name}` : ""}`
@@ -78,7 +102,7 @@ function ChatDetails(): React.JSX.Element | null {
           ) : (
             <Avatar
               initial={chat.name.charAt(0).toUpperCase()}
-              color={colorForChat(chat.id)}
+              color={avatarColorFor(chat.id)}
               size={44}
             />
           )}
@@ -102,6 +126,18 @@ function ChatDetails(): React.JSX.Element | null {
             </span>
           </span>
         </CardRow>
+        {members.length > 0 ? (
+          <ul className="flex flex-wrap gap-2 px-4 py-3">
+            {members.slice(0, MEMBERS_PREVIEW).map((member) => (
+              <MemberAvatar key={member.uid} member={member} />
+            ))}
+            {members.length > MEMBERS_PREVIEW ? (
+              <li className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-soft text-meta font-semibold text-muted-foreground">
+                +{members.length - MEMBERS_PREVIEW}
+              </li>
+            ) : null}
+          </ul>
+        ) : null}
       </Card>
     </div>
   );

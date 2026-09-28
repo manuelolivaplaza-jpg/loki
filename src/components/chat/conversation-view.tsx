@@ -6,6 +6,7 @@ import { MessageCircle } from "lucide-react";
 import { Composer } from "@/components/chat/composer";
 import { MessageList } from "@/components/chat/message-list";
 import { NewMessagesPill } from "@/components/chat/new-messages-pill";
+import { ThreadPanel } from "@/components/chat/thread-panel";
 import { TypingIndicator } from "@/components/chat/typing-indicator";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -17,10 +18,17 @@ import {
   useSendMessage,
   useTyping,
 } from "@/hooks/use-chat";
-import { membersToCandidates, newMessageId } from "@/lib/data/chat";
+import {
+  deleteMessage,
+  editMessage,
+  membersToCandidates,
+  newMessageId,
+  toggleReaction,
+} from "@/lib/data/chat";
 import {
   buildLokiDisabledMessage,
   isAiEnabled,
+  LOKI_CANDIDATE,
   mentionsLoki,
 } from "@/lib/chat/mentions";
 import { useMessageStatusStore } from "@/lib/chat/message-status";
@@ -28,7 +36,7 @@ import { LOKI_IA_MESSAGES } from "@/lib/data/chats";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
-import type { MessageDoc } from "@/types/chat";
+import type { MessageDoc, MessageReplyRef } from "@/types/chat";
 
 const NEAR_BOTTOM_PX = 120;
 
@@ -133,6 +141,29 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   const [animatedIds, setAnimatedIds] = React.useState<Set<string>>(new Set());
   const [showNewPill, setShowNewPill] = React.useState(false);
   const [sendError, setSendError] = React.useState<string | null>(null);
+  // T16: cita en el composer, edición en curso, hilo abierto y avisos
+  // efímeros (copiado) que no son errores.
+  const [replyTo, setReplyTo] = React.useState<MessageReplyRef | null>(null);
+  const [editing, setEditing] = React.useState<{ id: string; text: string } | null>(null);
+  const [threadParent, setThreadParent] = React.useState<MessageDoc | null>(null);
+  const [notice, setNotice] = React.useState<string | null>(null);
+  const noticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showNotice = React.useCallback((text: string) => {
+    if (noticeTimerRef.current !== null) clearTimeout(noticeTimerRef.current);
+    setNotice(text);
+    noticeTimerRef.current = setTimeout(() => {
+      noticeTimerRef.current = null;
+      setNotice(null);
+    }, 1800);
+  }, []);
+
+  React.useEffect(
+    () => () => {
+      if (noticeTimerRef.current !== null) clearTimeout(noticeTimerRef.current);
+    },
+    [],
+  );
 
   // Id del último mensaje: al abrir y al llegar al fondo se marca leído.
   const latestId =
@@ -150,6 +181,10 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
     primedRef.current = false;
     setAnimatedIds(new Set());
     setShowNewPill(false);
+    // T16: al cambiar de chat no queda cita, edición ni hilo abiertos.
+    setReplyTo(null);
+    setEditing(null);
+    setThreadParent(null);
   }, [chatId]);
 
   // Marca como animables los ids que llegan tras el primer pintado.
@@ -235,6 +270,9 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   const handleSend = React.useCallback(
     (text: string, mentions: string[]) => {
       setSendError(null);
+      // T16: la cita vive solo en el envío siguiente.
+      const quote = replyTo;
+      setReplyTo(null);
       if (isLoki) {
         const now = Timestamp.now();
         const uid = currentUid ?? "me";
@@ -300,6 +338,7 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           authorName,
           text,
           mentions,
+          replyTo: quote,
           type: "user",
           messageId,
         },
@@ -337,8 +376,127 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
         },
       );
     },
-    [isLoki, currentUid, authorName, sendMutation, wsForLive, chatForLive],
+    [isLoki, currentUid, authorName, sendMutation, wsForLive, chatForLive, replyTo],
   );
+
+  // --- T16: reacciones, citas, edición, borrado e hilos ----------------------
+
+  /** Contexto real de escritura; null en el mock de Loki o sin sesión. */
+  const liveContext = React.useMemo(
+    () =>
+      isLoki ||
+      currentUid === null ||
+      wsForLive === null ||
+      chatForLive === null
+        ? null
+        : { wsId: wsForLive, chatId: chatForLive, uid: currentUid },
+    [isLoki, currentUid, wsForLive, chatForLive],
+  );
+
+  /** Agrega o quita SOLO mi uid en ese emoji (lo que permiten las reglas). */
+  const handleToggleReaction = React.useCallback(
+    (message: MessageDoc, emoji: string, hasReacted: boolean) => {
+      const ctx = liveContext;
+      if (ctx === null) return;
+      setSendError(null);
+      void toggleReaction(
+        ctx.wsId,
+        ctx.chatId,
+        message.id,
+        emoji,
+        ctx.uid,
+        hasReacted,
+      ).catch((error: unknown) => {
+        setSendError(
+          error instanceof Error ? error.message : "No se pudo reaccionar.",
+        );
+      });
+    },
+    [liveContext],
+  );
+
+  const handleReply = React.useCallback((message: MessageDoc) => {
+    setEditing(null);
+    setReplyTo({
+      id: message.id,
+      authorName: message.authorName,
+      text: message.deleted ? "Mensaje eliminado" : message.text,
+    });
+  }, []);
+
+  const handleCancelReply = React.useCallback(() => setReplyTo(null), []);
+
+  const handleCopy = React.useCallback(
+    (message: MessageDoc) => {
+      const text = message.text;
+      if (typeof navigator === "undefined" || navigator.clipboard === undefined) {
+        setSendError("Este navegador no permite copiar.");
+        return;
+      }
+      void navigator.clipboard.writeText(text).then(
+        () => showNotice("Mensaje copiado"),
+        () => setSendError("No se pudo copiar."),
+      );
+    },
+    [showNotice],
+  );
+
+  const handleEdit = React.useCallback((message: MessageDoc) => {
+    setReplyTo(null);
+    setEditing({ id: message.id, text: message.text });
+  }, []);
+
+  const handleCancelEdit = React.useCallback(() => setEditing(null), []);
+
+  /** Enter en modo edición: `editMessage` con el texto y sus menciones. */
+  const handleSaveEdit = React.useCallback(
+    (text: string, mentions: string[]) => {
+      const ctx = liveContext;
+      if (ctx === null || editing === null) return;
+      setSendError(null);
+      void editMessage(ctx.wsId, ctx.chatId, editing.id, text, mentions).then(
+        () => {
+          setEditing(null);
+        },
+        (error: unknown) => {
+          setSendError(
+            error instanceof Error ? error.message : "No se pudo editar.",
+          );
+        },
+      );
+    },
+    [liveContext, editing],
+  );
+
+  /** Borrado suave: el doc queda `deleted` y la burbuja muestra el aviso. */
+  const handleDelete = React.useCallback(
+    (message: MessageDoc) => {
+      const ctx = liveContext;
+      if (ctx === null) return;
+      setSendError(null);
+      void deleteMessage(ctx.wsId, ctx.chatId, message.id).catch(
+        (error: unknown) => {
+          setSendError(
+            error instanceof Error ? error.message : "No se pudo eliminar.",
+          );
+        },
+      );
+    },
+    [liveContext],
+  );
+
+  const handleOpenThread = React.useCallback((message: MessageDoc) => {
+    setThreadParent(message);
+  }, []);
+
+  const handleCloseThread = React.useCallback(() => setThreadParent(null), []);
+
+  // El padre se resuelve contra la lista viva: si le llegan reacciones o
+  // respuestas mientras el hilo está abierto, el panel no queda viejo.
+  const threadParentLive = React.useMemo(() => {
+    if (threadParent === null) return null;
+    return messages.find((item) => item.id === threadParent.id) ?? threadParent;
+  }, [threadParent, messages]);
 
   // Reintenta un mensaje fallido con el mismo id de cliente.
   const handleRetry = React.useCallback(
@@ -418,6 +576,12 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
               hasMore={hasMore}
               sendStatus={sendStatus}
               onRetryMessage={handleRetry}
+              onToggleReaction={handleToggleReaction}
+              onReply={handleReply}
+              onOpenThread={handleOpenThread}
+              onCopy={handleCopy}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
             />
           </div>
         )}
@@ -433,6 +597,14 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
             {sendError}
           </p>
         ) : null}
+        {notice !== null ? (
+          <p
+            role="status"
+            className="px-4 pb-1 text-center text-body-sm text-muted-foreground"
+          >
+            {notice}
+          </p>
+        ) : null}
         <Composer
           chatName={chatName}
           isLoki={isLoki}
@@ -440,8 +612,25 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           members={mentionMembers}
           onSend={handleSend}
           onValueChange={notifyTyping}
+          edit={editing}
+          onSaveEdit={handleSaveEdit}
+          onCancelEdit={handleCancelEdit}
+          replyTo={replyTo}
+          onCancelReply={handleCancelReply}
         />
       </div>
+
+      {threadParentLive !== null && wsForLive !== null && chatForLive !== null ? (
+        <ThreadPanel
+          wsId={wsForLive}
+          chatId={chatForLive}
+          parent={threadParentLive}
+          currentUid={currentUid}
+          authorName={authorName}
+          members={[LOKI_CANDIDATE, ...mentionMembers]}
+          onClose={handleCloseThread}
+        />
+      ) : null}
     </div>
   );
 }

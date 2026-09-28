@@ -243,6 +243,16 @@
   background-color: rgba(15, 20, 25, 0.08);
 }
 
+/**
+ * Burbujas de chat: sin selección de texto ni callout de iOS al mantener
+ * pulsado, porque ese long-press (500ms) abre reacciones y el menú
+ * contextual. Copiar sigue estando en el menú como acción explícita.
+ */
+@utility long-press {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
 .dark .glass-bar {
   background-color: rgba(22, 24, 28, 0.6);
   border: 0.5px solid rgba(255, 255, 255, 0.08);

@@ -47,9 +47,24 @@ export function getAvatarInitial(
   return "L";
 }
 
+/**
+ * Fondos claros que necesitan texto oscuro. Cubre `AVATAR_COLORS` y los
+ * tonos claros de la paleta determinista de `src/lib/avatar-color.ts`
+ * (con blanco se quedan en 2.4:1-3.7:1; con #0F1419 suben a 4.8:1-7.5:1).
+ */
+const DARK_TEXT_BACKGROUNDS: ReadonlySet<string> = new Set([
+  "#ffad1f", // Ámbar (paleta del perfil)
+  "#5b8def", // Azul acero
+  "#e07a5f", // Terracota
+  "#3d9970", // Verde
+  "#9b72cf", // Violeta
+  "#d4a017", // Ocre
+  "#2a9d8f", // Verde azulado
+]);
+
 /** Color de texto legible sobre el fondo del avatar. */
 export function avatarTextColor(background: string): string {
-  return background.toLowerCase() === "#ffad1f" ? "#0f1419" : "#ffffff";
+  return DARK_TEXT_BACKGROUNDS.has(background.toLowerCase()) ? "#0f1419" : "#ffffff";
 }
 
 export interface UserProfile {

@@ -350,17 +350,23 @@ export async function sendMessage(
     deleted: false,
     type,
   });
-  batch.update(doc(db, "workspaces", wsId, "chats", chatId), {
-    lastMessage: {
-      text,
-      authorId: input.authorId,
-      authorName: input.authorName,
-      type,
-      createdAt: serverTimestamp(),
-    },
-    updatedAt: serverTimestamp(),
-  });
-  if (threadParentId !== null) {
+  if (threadParentId === null) {
+    batch.update(doc(db, "workspaces", wsId, "chats", chatId), {
+      lastMessage: {
+        text,
+        authorId: input.authorId,
+        authorName: input.authorName,
+        type,
+        createdAt: serverTimestamp(),
+      },
+      updatedAt: serverTimestamp(),
+    });
+  } else {
+    // Una respuesta de hilo NO toca el doc del chat: el preview de la
+    // lista (lastMessage/updatedAt) sigue siendo el del último mensaje del
+    // timeline. Solo sube el contador del padre. El batch sigue
+    // permitido por las reglas (create del mensaje + update del padre
+    // con threadCount +1 exacto), asi que firestore.rules no cambia.
     batch.update(doc(messagesCollection(wsId, chatId), threadParentId), {
       threadCount: increment(1),
       lastReplyAt: serverTimestamp(),

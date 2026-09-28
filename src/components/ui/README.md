@@ -41,8 +41,10 @@ Solo tokens: `background`, `surface`, `surface-2`, `surface-soft`,
 `foreground`, `muted-foreground`, `accent (+foreground)`, `mention`,
 `success`, `warning`, `danger`, `divider`. Sin hex en TSX: la paleta de
 avatares vive una sola vez en `src/types/models.ts` (`AVATAR_COLORS`,
-`DEFAULT_AVATAR_COLOR`, `AVATAR_FALLBACK_COLOR`); las pantallas importan
-esas constantes. Excepción justificada: `GoogleIcon` (logo de Google con
+`DEFAULT_AVATAR_COLOR`, `AVATAR_FALLBACK_COLOR`) y la paleta determinista
+en `src/lib/avatar-color.ts` (`AVATAR_COLOR_PALETTE`, `avatarColorFor`);
+las pantallas importan esas constantes o el hook `useAuthorAvatarColor`
+en vez de escribir hex. Excepción justificada: `GoogleIcon` (logo de Google con
 sus 4 colores de marca) y la página `/tokens` antes mostraba hex como
 documentación (reescrita sin hex: solo nombres + muestras).
 
@@ -57,6 +59,9 @@ exportado como `spring`, más variantes `fadeScale`, `slideUp`, `stagger` y
   transparentes, filas y menús.
 - `interactive-solid`: igual pero hover con opacidad (botones con fondo
   propio). Los componentes base ya las incluyen.
+- `long-press`: `user-select: none` + `-webkit-touch-callout: none` para las
+  burbujas de chat, donde mantener pulsado 500ms abre reacciones y menú
+  (copiar sigue siendo una acción explícita del menú).
 
 ## Iconos (`src/components/ui/icon.tsx`)
 Solo `lucide-react`, `strokeWidth` 1.75 constante, tamaños 20/22/24 vía

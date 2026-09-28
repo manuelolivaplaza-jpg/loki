@@ -3,7 +3,7 @@
 import * as React from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { DaySeparator } from "@/components/chat/day-separator";
-import { MessageBubble } from "@/components/chat/message-bubble";
+import { MessageItem } from "@/components/chat/message-item";
 import { dayKey, formatDayLabel, groupMessages, toDateSafe } from "@/lib/chat/format";
 import { spring } from "@/lib/motion";
 import type { MessageDoc, MessageSendStatus } from "@/types/chat";
@@ -21,6 +21,13 @@ type MessageListProps = {
   sendStatus?: Record<string, MessageSendStatus>;
   /** Reintenta un mensaje fallido con el mismo id de cliente. */
   onRetryMessage?: (message: MessageDoc) => void;
+  /** T16: reacciones, citas, hilos, copiar, editar, eliminar. */
+  onToggleReaction: (message: MessageDoc, emoji: string, hasReacted: boolean) => void;
+  onReply: (message: MessageDoc) => void;
+  onOpenThread: (message: MessageDoc) => void;
+  onCopy: (message: MessageDoc) => void;
+  onEdit: (message: MessageDoc) => void;
+  onDelete: (message: MessageDoc) => void;
 };
 
 /**
@@ -36,6 +43,12 @@ export function MessageList({
   hasMore,
   sendStatus,
   onRetryMessage,
+  onToggleReaction,
+  onReply,
+  onOpenThread,
+  onCopy,
+  onEdit,
+  onDelete,
 }: MessageListProps): React.JSX.Element {
   const reduceMotion = useReducedMotion();
   const groups = React.useMemo(
@@ -77,19 +90,31 @@ export function MessageList({
           {group.messages.map((message, index) => {
             const animate = animatedIds.has(message.id) && !reduceMotion;
             const bubble = (
-              <MessageBubble
+              <MessageItem
                 message={message}
                 isMine={group.isMine}
                 showAuthor={index === 0}
                 showTime={index === group.messages.length - 1}
+                currentUid={currentUid}
                 sendStatus={group.isMine ? sendStatus?.[message.id] : undefined}
                 onRetry={onRetryMessage}
+                onToggleReaction={onToggleReaction}
+                onReply={onReply}
+                onOpenThread={onOpenThread}
+                onCopy={onCopy}
+                onEdit={onEdit}
+                onDelete={onDelete}
               />
             );
-            if (!animate) return <div key={message.id}>{bubble}</div>;
+            // w-full en el wrapper: sin él, con items-end del grupo se
+            // encoge al contenido y el max-w-[78%] de la burbuja se
+            // resuelve contra ese ancho intrínseco (mensajes cortos
+            // partidos a la mitad en 1440px).
+            if (!animate) return <div key={message.id} className="w-full">{bubble}</div>;
             return (
               <motion.div
                 key={message.id}
+                className="w-full"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={spring}

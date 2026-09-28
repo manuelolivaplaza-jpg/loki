@@ -9,20 +9,11 @@ import { Icon } from "@/components/ui/icon";
 import { SectionLabel } from "@/components/ui/section-label";
 import { LOKI_IA_CHAT } from "@/lib/data/chats";
 import { formatChatTime } from "@/lib/chat/format";
+import { avatarColorFor } from "@/lib/avatar-color";
 import { useChats, useUnread } from "@/hooks/use-chat";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
-import { DEFAULT_AVATAR_COLOR } from "@/types/models";
 import type { ChatDoc } from "@/types/chat";
-
-export function colorForChat(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i += 1) {
-    hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  }
-  const palette = ["#00b4d8", "#1d9bf0", "#00ba7c", "#ffad1f", "#f4212e", "#6d5fc0", "#536471"];
-  return palette[hash % palette.length] ?? DEFAULT_AVATAR_COLOR;
-}
 
 /**
  * Fila de conversación con no leídos (T14): punto azul + contador cuando
@@ -48,7 +39,7 @@ function ChatRow({ wsId, uid, chat }: { wsId: string; uid: string | null; chat: 
       ) : (
         <Avatar
           initial={chat.name.charAt(0).toUpperCase()}
-          color={colorForChat(chat.id)}
+          color={avatarColorFor(chat.id)}
           size={52}
         />
       )}

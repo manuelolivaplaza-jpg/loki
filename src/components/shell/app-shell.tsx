@@ -9,6 +9,7 @@ import { RightPanel } from "@/components/shell/right-panel";
 import { getSectionByPath } from "@/components/shell/sections";
 import { Sidebar } from "@/components/shell/sidebar";
 import { useUiStore } from "@/stores/ui-store";
+import { useWorkspaces } from "@/stores/workspace-store";
 
 type AppShellProps = {
   children: React.ReactNode;
@@ -19,6 +20,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
   const section = getSectionByPath(pathname);
   const rightPanelOpen = useUiStore((state) => state.rightPanelOpen);
   const toggleRightPanel = useUiStore((state) => state.toggleRightPanel);
+  const { currentWorkspace } = useWorkspaces();
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
@@ -30,9 +32,16 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
         <div className="flex min-w-0 flex-1 items-start">
           <div className="flex min-w-0 flex-1 flex-col">
             <header className="sticky top-0 z-10 hidden h-[53px] items-center justify-between border-b border-border bg-background/80 px-3 backdrop-blur md:flex lg:px-4">
-              <h1 className="text-[20px] font-semibold text-foreground">
-                {section.label}
-              </h1>
+              <div className="flex min-w-0 flex-col justify-center">
+                <h1 className="truncate text-[20px] font-semibold leading-tight text-foreground">
+                  {section.label}
+                </h1>
+                {currentWorkspace !== null ? (
+                  <p className="truncate text-[13px] leading-tight text-muted-foreground">
+                    {currentWorkspace.emoji} {currentWorkspace.name}
+                  </p>
+                ) : null}
+              </div>
               <button
                 type="button"
                 onClick={toggleRightPanel}

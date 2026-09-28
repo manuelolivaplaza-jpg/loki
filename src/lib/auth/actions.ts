@@ -9,6 +9,7 @@ import {
   updateProfile,
 } from "firebase/auth";
 import { getFirebaseAuth } from "@/lib/firebase/auth";
+import { useSessionStore } from "@/stores/session-store";
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   "auth/email-already-in-use":
@@ -60,6 +61,25 @@ export async function signUpWithEmail(
     const name = displayName.trim();
     if (name !== "") {
       await updateProfile(credential.user, { displayName: name });
+      // onAuthStateChanged puede haber disparado antes de updateProfile con
+      // displayName null; recargamos y sincronizamos el store de sesión.
+      await credential.user.reload();
+      const refreshed = auth.currentUser;
+      if (refreshed !== null && refreshed.uid === credential.user.uid) {
+        useSessionStore.getState().setUser({
+          uid: refreshed.uid,
+          email: refreshed.email,
+          displayName: refreshed.displayName ?? name,
+          photoURL: refreshed.photoURL,
+        });
+      } else {
+        useSessionStore.getState().setUser({
+          uid: credential.user.uid,
+          email: credential.user.email,
+          displayName: name,
+          photoURL: credential.user.photoURL,
+        });
+      }
     }
   } catch (error: unknown) {
     throw new Error(getAuthErrorMessage(error));

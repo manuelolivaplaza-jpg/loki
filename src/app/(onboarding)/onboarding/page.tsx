@@ -4,10 +4,10 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { updateProfile } from "firebase/auth";
-import {
-  inputClassName,
-  labelClassName,
-} from "@/components/auth/auth-ui";
+import { inputClassName, labelClassName } from "@/components/auth/auth-ui";
+import { EmojiPicker } from "@/components/workspaces/emoji-picker";
+import { KindPicker } from "@/components/workspaces/kind-picker";
+import { EMOJI_OPTIONS } from "@/components/workspaces/workspace-options";
 import { getFirebaseAuth } from "@/lib/firebase/auth";
 import { updateUserProfile } from "@/lib/data/users";
 import { createWorkspace } from "@/lib/data/workspaces";
@@ -22,21 +22,6 @@ import {
   isAvatarColor,
   type WorkspaceKind,
 } from "@/types/models";
-
-const EMOJI_OPTIONS: ReadonlyArray<{ char: string; name: string }> = [
-  { char: "🏠", name: "Casa" },
-  { char: "👨‍👩‍👧", name: "Familia" },
-  { char: "💼", name: "Trabajo" },
-  { char: "🚀", name: "Cohete" },
-  { char: "🌱", name: "Planta" },
-  { char: "📚", name: "Libros" },
-  { char: "🎯", name: "Objetivo" },
-  { char: "⚽", name: "Fútbol" },
-  { char: "🎨", name: "Arte" },
-  { char: "🧪", name: "Ciencia" },
-  { char: "🛠️", name: "Herramientas" },
-  { char: "⭐", name: "Estrella" },
-];
 
 const pillButtonClassName =
   "flex h-11 w-full items-center justify-center rounded-full bg-foreground text-[15px] font-semibold text-background outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-60";
@@ -94,7 +79,13 @@ export default function OnboardingPage(): React.JSX.Element {
   const authEmail = user?.email ?? null;
 
   React.useEffect(() => {
-    if (prefilled || profile === null) {
+    if (profile === null) {
+      if (!nameTouched && displayName === "") {
+        const sessionBase = (authDisplayName ?? "").trim();
+        if (sessionBase !== "") {
+          setDisplayName(sessionBase);
+        }
+      }
       return;
     }
     if (isAvatarColor(profile.avatarColor)) {
@@ -102,13 +93,13 @@ export default function OnboardingPage(): React.JSX.Element {
     }
     if (!nameTouched) {
       const base =
-        profile.displayName !== "" ? profile.displayName : (authDisplayName ?? "");
-      if (base !== "") {
+        profile.displayName.trim() !== "" ? profile.displayName.trim() : (authDisplayName ?? "").trim();
+      if (base !== "" && displayName === "") {
         setDisplayName(base);
       }
     }
     setPrefilled(true);
-  }, [prefilled, profile, authDisplayName, nameTouched]);
+  }, [profile, authDisplayName, nameTouched, prefilled, displayName]);
 
   const initial = getAvatarInitial(
     displayName === "" ? null : displayName,
@@ -425,88 +416,14 @@ export default function OnboardingPage(): React.JSX.Element {
                     >
                       Emoji
                     </span>
-                    <div
-                      role="group"
-                      aria-labelledby="workspace-emoji-label"
-                      className="grid grid-cols-6 gap-2"
-                    >
-                      {EMOJI_OPTIONS.map((option) => {
-                        const selected = emoji === option.char;
-                        return (
-                          <button
-                            key={option.char}
-                            type="button"
-                            aria-label={option.name}
-                            aria-pressed={selected}
-                            onClick={() => setEmoji(option.char)}
-                            className={cn(
-                              "flex h-10 items-center justify-center rounded-xl border text-xl outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
-                              selected
-                                ? "border-accent bg-surface"
-                                : "border-border-strong bg-background hover:bg-surface",
-                            )}
-                          >
-                            <span aria-hidden="true">{option.char}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <EmojiPicker value={emoji} onChange={setEmoji} labelId="workspace-emoji-label" />
                   </div>
 
                   <div>
                     <span id="workspace-kind-label" className={labelClassName}>
                       Tipo de espacio
                     </span>
-                    <div
-                      role="radiogroup"
-                      aria-labelledby="workspace-kind-label"
-                      className="grid grid-cols-2 gap-1 rounded-full bg-surface-2 p-1"
-                    >
-                      <label className="cursor-pointer rounded-full outline-none focus-within:ring-2 focus-within:ring-accent">
-                        <input
-                          type="radio"
-                          name="workspaceKind"
-                          value="family"
-                          checked={kind === "family"}
-                          onChange={() => setKind("family")}
-                          aria-label="Familia"
-                          className="sr-only"
-                        />
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            "block rounded-full px-3 py-2 text-center text-[14px] font-medium transition-colors",
-                            kind === "family"
-                              ? "bg-background text-foreground shadow"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          Familia
-                        </span>
-                      </label>
-                      <label className="cursor-pointer rounded-full outline-none focus-within:ring-2 focus-within:ring-accent">
-                        <input
-                          type="radio"
-                          name="workspaceKind"
-                          value="team"
-                          checked={kind === "team"}
-                          onChange={() => setKind("team")}
-                          aria-label="Equipo"
-                          className="sr-only"
-                        />
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            "block rounded-full px-3 py-2 text-center text-[14px] font-medium transition-colors",
-                            kind === "team"
-                              ? "bg-background text-foreground shadow"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          Equipo
-                        </span>
-                      </label>
-                    </div>
+                    <KindPicker value={kind} onChange={setKind} labelId="workspace-kind-label" />
                   </div>
 
                   {stepError !== null ? (

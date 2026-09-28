@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { MobileWorkspaceSwitcher } from "@/components/workspaces/mobile-workspace-switcher";
 import { signOutUser } from "@/lib/auth/actions";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -91,7 +92,10 @@ export function MobileHeader({ title }: MobileHeaderProps): React.JSX.Element {
           </div>
         ) : null}
       </div>
-      <h1 className="text-[16px] font-semibold text-foreground">{title}</h1>
+      <div className="flex min-w-0 flex-1 justify-center">
+        <MobileWorkspaceSwitcher />
+      </div>
+      <span className="sr-only">{title}</span>
       <ThemeToggle />
     </header>
   );

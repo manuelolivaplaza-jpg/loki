@@ -9,9 +9,13 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "emulators": "firebase emulators:start --project demo-loki",
-    "emulators:export": "firebase emulators:start --project demo-loki --export-on-exit .emulator-data --import .emulator-data"
+    "emulators:export": "firebase emulators:start --project demo-loki --export-on-exit .emulator-data --import .emulator-data",
+    "test:rules:run": "node --test tests/firestore.rules.test.mjs",
+    "test:rules": "firebase emulators:exec --project demo-loki --only firestore \"npm run test:rules:run\""
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-popover": "^1.1.23",
     "@radix-ui/react-slot": "^1.3.3",
     "@tanstack/react-query": "^5.104.0",
     "class-variance-authority": "^0.7.1",
@@ -28,6 +32,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

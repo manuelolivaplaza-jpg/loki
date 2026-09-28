@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { NAV_ITEMS } from "@/components/shell/sections";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { WorkspaceSwitcher } from "@/components/workspaces/workspace-switcher";
 import { signOutUser } from "@/lib/auth/actions";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
@@ -43,26 +44,8 @@ export function Sidebar(): React.JSX.Element {
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-[68px] shrink-0 flex-col border-r border-border bg-background md:flex xl:w-[220px]">
-      <div className="flex h-[53px] items-center justify-center xl:justify-start xl:px-4">
-        <Link
-          href="/chat"
-          aria-label="Loki, ir a Chat"
-          className="rounded-full p-2 outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        >
-          <span
-            aria-hidden
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-2 text-base font-semibold text-foreground"
-          >
-            L
-          </span>
-          <span className="sr-only xl:hidden">Loki</span>
-        </Link>
-        <Link
-          href="/chat"
-          className="hidden rounded-full px-2 py-1 text-xl font-semibold tracking-tight text-foreground outline-none focus-visible:ring-2 focus-visible:ring-accent xl:block"
-        >
-          Loki
-        </Link>
+      <div className="flex h-[53px] items-center justify-center px-1 xl:justify-start xl:px-2">
+        <WorkspaceSwitcher />
       </div>
 
       <nav aria-label="Navegación principal" className="mt-2 flex-1 px-2 xl:px-3">

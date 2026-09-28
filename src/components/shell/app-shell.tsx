@@ -24,12 +24,12 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
     <div className="min-h-dvh bg-background text-foreground">
       <MobileHeader title={section.label} />
 
-      <div className="mx-auto flex w-full max-w-[1265px] justify-center">
+      <div className="flex w-full items-start">
         <Sidebar />
 
-        <div className="flex min-w-0 flex-1 justify-center">
-          <div className="w-full min-w-0 max-w-[680px] md:border-x md:border-border">
-            <header className="sticky top-[53px] z-10 hidden h-[53px] items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur md:flex md:top-0">
+        <div className="flex min-w-0 flex-1 items-start">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <header className="sticky top-0 z-10 hidden h-[53px] items-center justify-between border-b border-border bg-background/80 px-3 backdrop-blur md:flex lg:px-4">
               <h1 className="text-[20px] font-semibold text-foreground">
                 {section.label}
               </h1>
@@ -48,7 +48,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
               </button>
             </header>
 
-            <main className="min-h-[calc(100dvh-106px)] pb-[calc(88px+env(safe-area-inset-bottom))] md:min-h-dvh md:pb-10">
+            <main className="min-h-[calc(100dvh-53px)] pb-[calc(96px+env(safe-area-inset-bottom))] md:min-h-dvh md:pb-6">
               {children}
             </main>
           </div>

@@ -12,41 +12,38 @@ export function BottomNav(): React.JSX.Element {
   return (
     <nav
       aria-label="Navegación principal"
-      className="fixed inset-x-0 bottom-0 z-20 h-[calc(56px+env(safe-area-inset-bottom))] border-t border-border bg-background/75 backdrop-blur-md md:hidden"
+      className="fixed inset-x-3 bottom-[calc(12px+env(safe-area-inset-bottom))] z-20 md:hidden"
     >
-      <ul className="flex h-14 items-stretch justify-around px-2">
+      <ul className="glass-bar flex h-[60px] items-center justify-around rounded-full px-2">
         {NAV_ITEMS.map((item) => {
           const active =
             pathname === item.href || pathname?.startsWith(`${item.href}/`) === true;
           const Icon = item.icon;
           return (
-            <li key={item.key} className="flex flex-1 items-stretch">
+            <li key={item.key} className="flex flex-1 items-center justify-center">
               <Link
                 href={item.href}
                 aria-label={item.label}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "relative flex flex-1 flex-col items-center justify-center gap-0.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                  "relative flex h-11 w-16 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent",
                   active ? "text-foreground" : "text-muted-foreground",
                 )}
               >
+                {active ? (
+                  <motion.span
+                    layoutId="bottom-nav-active-pill"
+                    aria-hidden
+                    transition={{ type: "spring", stiffness: 500, damping: 35 }}
+                    className="glass-pill absolute inset-0 rounded-full"
+                  />
+                ) : null}
                 <Icon
                   aria-hidden
-                  className="h-6 w-6"
+                  className="relative z-10 h-6 w-6"
                   strokeWidth={active ? 2.5 : 1.75}
                   fill={active && item.key === "chat" ? "currentColor" : "none"}
                 />
-                <span className="text-[10px] font-medium leading-none">
-                  {item.label}
-                </span>
-                {active ? (
-                  <motion.span
-                    layoutId="bottom-nav-active"
-                    aria-hidden
-                    transition={{ duration: 0.18 }}
-                    className="absolute top-1 h-1 w-1 rounded-full bg-accent"
-                  />
-                ) : null}
               </Link>
             </li>
           );

@@ -10,8 +10,8 @@ export function Sidebar(): React.JSX.Element {
   const pathname = usePathname();
 
   return (
-    <aside className="sticky top-0 hidden h-dvh w-[72px] shrink-0 flex-col bg-background md:flex xl:w-[240px]">
-      <div className="flex h-[53px] items-center justify-center xl:justify-start xl:px-5">
+    <aside className="sticky top-0 hidden h-dvh w-[68px] shrink-0 flex-col border-r border-border bg-background md:flex xl:w-[220px]">
+      <div className="flex h-[53px] items-center justify-center xl:justify-start xl:px-4">
         <Link
           href="/chat"
           aria-label="Loki, ir a Chat"
@@ -33,7 +33,7 @@ export function Sidebar(): React.JSX.Element {
         </Link>
       </div>
 
-      <nav aria-label="Navegación principal" className="mt-2 flex-1 px-2 xl:px-4">
+      <nav aria-label="Navegación principal" className="mt-2 flex-1 px-2 xl:px-3">
         <ul className="flex flex-col items-center gap-1 xl:items-stretch">
           {NAV_ITEMS.map((item) => {
             const active =
@@ -47,7 +47,7 @@ export function Sidebar(): React.JSX.Element {
                   title={item.label}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "group relative flex items-center justify-center rounded-full p-3 outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent xl:justify-start xl:gap-3 xl:px-4",
+                    "group relative flex h-10 items-center justify-center rounded-full px-3 py-2 outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent xl:justify-start xl:gap-3",
                     active
                       ? "font-semibold text-foreground"
                       : "font-normal text-foreground",
@@ -75,7 +75,7 @@ export function Sidebar(): React.JSX.Element {
         </ul>
       </nav>
 
-      <div className="flex flex-col items-center gap-3 px-2 py-4 xl:flex-row xl:justify-between xl:px-4">
+      <div className="flex flex-col items-center gap-3 px-2 py-3 xl:flex-row xl:justify-between xl:px-3">
         <ThemeToggle />
         <span
           aria-hidden

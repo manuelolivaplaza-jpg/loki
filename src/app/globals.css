@@ -9,26 +9,30 @@
   --border: #eff3f4;
   --border-strong: #cfd9de;
   --accent: #00b4d8;
-  --accent-foreground: #ffffff;
+  /* Contraste: #0F1419 sobre #00B4D8 = 7.51:1 (AA >= 4.5). Blanco daba 2.46:1, no apto. */
+  --accent-foreground: #0f1419;
   --mention: #1d9bf0;
+  /* Contraste: #0F1419 sobre #00BA7C = 7.33:1 (AA). Blanco daba 2.53:1. */
   --success: #00ba7c;
-  --success-foreground: #ffffff;
+  --success-foreground: #0f1419;
+  /* Contraste: #0F1419 sobre #FFAD1F = 9.92:1 (AA). Se mantiene. */
   --warning: #ffad1f;
   --warning-foreground: #0f1419;
+  /* Contraste: #000000 sobre #F4212E = 5.10:1 (AA). Blanco daba 4.11:1; #0F1419 daba 4.50 redondeado (4.499 exacto). */
   --danger: #f4212e;
-  --danger-foreground: #ffffff;
+  --danger-foreground: #000000;
 
   --card: #f7f9f9;
   --card-foreground: #0f1419;
   --popover: #ffffff;
   --popover-foreground: #0f1419;
   --primary: #00b4d8;
-  --primary-foreground: #ffffff;
+  --primary-foreground: #0f1419;
   --secondary: #eff3f4;
   --secondary-foreground: #0f1419;
   --muted: #eff3f4;
   --destructive: #f4212e;
-  --destructive-foreground: #ffffff;
+  --destructive-foreground: #000000;
   --input: #cfd9de;
   --ring: #00b4d8;
   --radius: 0.5rem;
@@ -43,26 +47,27 @@
   --border: #2f3336;
   --border-strong: #3e4247;
   --accent: #00b4d8;
-  --accent-foreground: #ffffff;
+  /* Mismo ratio que en claro: #0F1419 sobre #00B4D8 = 7.51:1 (AA). */
+  --accent-foreground: #0f1419;
   --mention: #1d9bf0;
   --success: #00ba7c;
-  --success-foreground: #ffffff;
+  --success-foreground: #0f1419;
   --warning: #ffad1f;
   --warning-foreground: #0f1419;
   --danger: #f4212e;
-  --danger-foreground: #ffffff;
+  --danger-foreground: #000000;
 
   --card: #0a0a0a;
   --card-foreground: #e7e9ea;
   --popover: #0a0a0a;
   --popover-foreground: #e7e9ea;
   --primary: #00b4d8;
-  --primary-foreground: #ffffff;
+  --primary-foreground: #0f1419;
   --secondary: #111111;
   --secondary-foreground: #e7e9ea;
   --muted: #111111;
   --destructive: #f4212e;
-  --destructive-foreground: #ffffff;
+  --destructive-foreground: #000000;
   --input: #2f3336;
   --ring: #00b4d8;
 }
@@ -110,6 +115,33 @@
 @utility text-meta {
   font-size: 13px;
   line-height: 1.25rem;
+}
+
+@utility glass-bar {
+  border-radius: 28px;
+  background-color: rgba(255, 255, 255, 0.65);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 8px 32px rgba(15, 20, 25, 0.12);
+}
+
+@utility glass-pill {
+  background-color: rgba(15, 20, 25, 0.08);
+}
+
+.dark .glass-bar {
+  background-color: rgba(18, 18, 20, 0.58);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.dark .glass-pill {
+  background-color: rgba(255, 255, 255, 0.12);
 }
 
 body {

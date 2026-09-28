@@ -10,8 +10,11 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Loki",
-  description: "Loki — design tokens estilo X/Grok",
+  title: {
+    default: "Loki",
+    template: "%s · Loki",
+  },
+  description: "Loki, gestión colaborativa para familias y equipos pequeños.",
 };
 
 export default function RootLayout({

@@ -1,6 +1,8 @@
 "use client";
 
+import * as React from "react";
 import { motion } from "framer-motion";
+import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 
@@ -21,10 +23,14 @@ const TOKENS: TokenSwatch[] = [
   { name: "border", light: "#EFF3F4", dark: "#2F3336", swatchClass: "bg-border border-border-strong" },
   { name: "border-strong", light: "#CFD9DE", dark: "#3E4247", swatchClass: "bg-border-strong" },
   { name: "accent", light: "#00B4D8", dark: "#00B4D8", swatchClass: "bg-accent" },
+  { name: "accent-foreground", light: "#0F1419", dark: "#0F1419", swatchClass: "bg-accent-foreground" },
   { name: "mention", light: "#1D9BF0", dark: "#1D9BF0", swatchClass: "bg-mention" },
   { name: "success", light: "#00BA7C", dark: "#00BA7C", swatchClass: "bg-success" },
+  { name: "success-foreground", light: "#0F1419", dark: "#0F1419", swatchClass: "bg-success-foreground" },
   { name: "warning", light: "#FFAD1F", dark: "#FFAD1F", swatchClass: "bg-warning" },
+  { name: "warning-foreground", light: "#0F1419", dark: "#0F1419", swatchClass: "bg-warning-foreground" },
   { name: "danger", light: "#F4212E", dark: "#F4212E", swatchClass: "bg-danger" },
+  { name: "danger-foreground", light: "#000000", dark: "#000000", swatchClass: "bg-danger-foreground border-border-strong" },
 ];
 
 const TYPE_WEIGHTS = [
@@ -34,6 +40,13 @@ const TYPE_WEIGHTS = [
 ] as const;
 
 export default function Home(): React.JSX.Element {
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
   return (
     <motion.main
       initial={{ opacity: 0 }}
@@ -58,28 +71,32 @@ export default function Home(): React.JSX.Element {
             Claro por defecto · oscuro true black con .dark
           </p>
           <ul className="mt-4 divide-y divide-border rounded-xl border border-border">
-            {TOKENS.map((token) => (
-              <li
-                key={token.name}
-                className="flex items-center gap-3 bg-background px-3 py-2.5"
-              >
-                <span
-                  aria-hidden
-                  className={`h-8 w-8 shrink-0 rounded-md border ${token.swatchClass}`}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">
-                    {token.name}
+            {TOKENS.map((token) => {
+              const activeHex =
+                mounted && resolvedTheme === "dark" ? token.dark : token.light;
+              return (
+                <li
+                  key={token.name}
+                  className="flex items-center gap-3 bg-background px-3 py-2.5"
+                >
+                  <span
+                    aria-hidden
+                    className={`h-8 w-8 shrink-0 rounded-md border ${token.swatchClass}`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">
+                      {token.name}
+                    </span>
+                    <span className="text-meta block text-muted-foreground">
+                      light {token.light} · dark {token.dark}
+                    </span>
                   </span>
-                  <span className="text-meta block text-muted-foreground">
-                    light {token.light} · dark {token.dark}
-                  </span>
-                </span>
-                <code className="text-meta shrink-0 text-muted-foreground">
-                  {token.light}
-                </code>
-              </li>
-            ))}
+                  <code className="text-meta shrink-0 text-muted-foreground">
+                    {activeHex}
+                  </code>
+                </li>
+              );
+            })}
           </ul>
         </section>
 

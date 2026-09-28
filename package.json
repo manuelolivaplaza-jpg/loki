@@ -7,13 +7,16 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "emulators": "firebase emulators:start --project demo-loki",
+    "emulators:export": "firebase emulators:start --project demo-loki --export-on-exit .emulator-data --import .emulator-data"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.3.3",
     "@tanstack/react-query": "^5.104.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "firebase": "^12.19.0",
     "framer-motion": "^13.4.4",
     "lucide-react": "^1.48.0",
     "next": "15.5.26",
@@ -31,6 +34,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.5.26",
+    "firebase-tools": "^15.31.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

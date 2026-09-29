@@ -1,0 +1,14 @@
+-- Loki: datos iniciales del stack local.
+--
+-- Vacio a proposito. El esquema completo (tablas, RLS, triggers, vistas,
+-- buckets) vive en supabase/migrations/20260929000000_init.sql y los datos de
+-- prueba los crea tests/rls/*.test.mjs con usuarios reales del Auth local.
+--
+-- Si alguna vez hace falta un usuario de demostracion para desarrollo manual,
+-- se anade aqui (este archivo se ejecuta en cada `supabase db reset`):
+--
+--   insert into auth.users (instance_id, id, email, encrypted_password, ...)
+--   ...
+--
+-- Mejor: registrarse desde la app (T20) y crear el espacio con la RPC
+-- `create_workspace`, que es el camino real de onboarding.

@@ -25,6 +25,7 @@ import {
   markChatRead,
   MESSAGES_PAGE_SIZE,
   newMessageId,
+  sendAiAssistantMessage,
   sendAiUserMessage,
   sendMessage,
   setTyping,
@@ -670,6 +671,7 @@ export function useAiMessages(
   return query;
 }
 
+/** Mi mensaje (`type: "user"`) en el chat privado con Loki. */
 export function useSendAiMessage(
   uid: string | null,
   chatId: string | null,
@@ -684,6 +686,28 @@ export function useSendAiMessage(
         authorName: input.authorName,
         text: input.text,
       });
+    },
+  });
+}
+
+/**
+ * T18: respuesta de Loki (`type: "ai"`) en el chat privado.
+ *
+ * Solo la usa el streaming SIMULADO de la fase 1-2: escribe el texto mock
+ * ("[Simulado] …") que la UI revela palabra a palabra. Con el flag
+ * `NEXT_PUBLIC_AI_ENABLED=true` la respuesta real la escribe el backend con
+ * Admin SDK (`functions/`), nunca el cliente, y esta mutación no se llama.
+ */
+export function useSendAiAssistantMessage(
+  uid: string | null,
+  chatId: string | null,
+): UseMutationResult<string, Error, { text: string; mentions?: string[] }, unknown> {
+  return useMutation({
+    mutationFn: (input) => {
+      if (uid === null || uid === "" || chatId === null || chatId === "") {
+        throw new Error("Falta el usuario o el chat de IA.");
+      }
+      return sendAiAssistantMessage(uid, chatId, input);
     },
   });
 }

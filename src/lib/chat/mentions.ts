@@ -38,9 +38,13 @@ export const LOKI_ALIASES: readonly string[] = ["loki", "ai"];
  */
 export const LOKI_DISABLED_MENTION = "loki-disabled";
 
-/** Texto exacto del aviso cuando la IA está desactivada (type "system"). */
+/**
+ * Texto EXACTO del aviso cuando la IA está desactivada (type "system").
+ * Se muestra como mensaje de sistema SUTIL y CENTRADO en el timeline
+ * (sin burbuja, texto pequeño gris), no como toast ni banner.
+ */
 export const LOKI_DISABLED_TEXT =
-  "Loki: Loki esta desactivada hasta activar el plan Blaze.";
+  "Loki está desactivada. Actívala en Configuración → Loki IA.";
 
 /** Color de resaltado de menciones (#1D9BF0, token `mention`). */
 export const MENTION_COLOR = "#1D9BF0";
@@ -224,7 +228,13 @@ export function parseMentionSegments(
     known.add(normalizeMention(name));
     known.add(normalizeMention(name.replace(/\s+/g, "")));
   }
-  const hasMentions = (mentions ?? []).length > 0;
+  // La marca del aviso "Loki está desactivada" (LOKI_DISABLED_MENTION) no es
+  // una mención real: si se usara para resaltar, bastaría con ella para que
+  // CUALQUIER "@palabra" del mensaje saliera en azul. El aviso no lleva "@"
+  // en su texto, así que se ve igual de muted, pero el caso queda cerrado.
+  const hasMentions = (mentions ?? []).some(
+    (item) => item !== LOKI_DISABLED_MENTION,
+  );
   const segments: MentionSegment[] = [];
   const re = new RegExp(TOKEN_SOURCE, "gu");
   let last = 0;
@@ -283,10 +293,13 @@ export function isAiEnabled(value?: string): boolean {
 /**
  * Payload del aviso de IA desactivada, compatible con las reglas actuales:
  * type "system" + authorId del propio usuario (las reglas prohíben type
- * "ai" desde el cliente y exigen authorId == uid).
+ * "ai" desde el cliente en los chats de espacio y exigen authorId == uid).
  *
- * TODO(T18): cuando haya Cloud Functions con Admin SDK, el backend
- * escribirá la respuesta real con type "ai" y este aviso dejará de usarse.
+ * T18: en el chat privado con Loki (`users/{uid}/aiChats/...`) las reglas sí
+ * permiten type "ai" al propio usuario, y por eso ahí la respuesta simulada
+ * se escribe como "ai". En los chats de espacio el aviso de sistema es lo
+ * único que el cliente puede escribir; el backend (`functions/`, apagado en
+ * fase 1-2) escribirá la respuesta real con Admin SDK cuando se despliegue.
  */
 export function buildLokiDisabledMessage(
   authorId: string,

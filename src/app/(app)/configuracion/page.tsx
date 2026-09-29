@@ -10,6 +10,8 @@ import { SectionLabel } from "@/components/ui/section-label";
 import { ThemeSegmented } from "@/components/shell/theme-segmented";
 import { Toggle } from "@/components/ui/toggle";
 import { signOutUser } from "@/lib/auth/actions";
+import { isAiEnabled } from "@/lib/chat/mentions";
+import { cn } from "@/lib/utils";
 
 export default function ConfiguracionPage(): React.JSX.Element {
   const router = useRouter();
@@ -19,6 +21,11 @@ export default function ConfiguracionPage(): React.JSX.Element {
   const [pushEnabled, setPushEnabled] = React.useState(true);
   const [digestEnabled, setDigestEnabled] = React.useState(false);
   const [signingOut, setSigningOut] = React.useState(false);
+  // T18: el estado de Loki sale del flag de build NEXT_PUBLIC_AI_ENABLED
+  // (inlined en el bundle, sin hydration mismatch). Es de solo lectura: la
+  // clave y el proveedor viven en el backend (`functions/`, apagado en fase
+  // 1-2), no en el cliente.
+  const aiEnabled = isAiEnabled();
 
   React.useEffect(() => {
     setMounted(true);
@@ -93,6 +100,44 @@ export default function ConfiguracionPage(): React.JSX.Element {
               label="Resumen diario"
             />
           </CardRow>
+        </Card>
+      </section>
+
+      <section aria-label="Loki IA">
+        <SectionLabel>Loki IA</SectionLabel>
+        <Card>
+          <CardRow>
+            <span className="min-w-0 flex-1">
+              <span className="block text-body leading-6 text-foreground">
+                Asistente personal
+              </span>
+              <span className="block text-body-sm leading-5 text-muted-foreground">
+                Pregúntale a Loki por tus días, tu semana o un recordatorio
+              </span>
+            </span>
+            <span
+              className={cn(
+                "shrink-0 rounded-full px-2.5 py-1 text-meta leading-4",
+                aiEnabled
+                  ? "bg-success/15 text-success"
+                  : "bg-surface text-muted-foreground",
+              )}
+            >
+              {aiEnabled ? "Activada" : "Desactivada"}
+            </span>
+          </CardRow>
+          {!aiEnabled ? (
+            <>
+              <CardDivider />
+              <CardRow minHeight="12">
+                <span className="text-body-sm leading-5 text-muted-foreground">
+                  Mientras Loki esté desactivada responde con un mensaje
+                  simulado y avisa en el chat cuando la mencionas con
+                  @loki.
+                </span>
+              </CardRow>
+            </>
+          ) : null}
         </Card>
       </section>
 

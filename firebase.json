@@ -6,6 +6,13 @@
   "storage": {
     "rules": "storage.rules"
   },
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs22",
+    "predeploy": [
+      "node \"$RESOURCE_DIR/scripts/no-deploy.cjs\""
+    ]
+  },
   "emulators": {
     "auth": {
       "port": 9099

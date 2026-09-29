@@ -1,17 +1,17 @@
-# Chat (T13–T17)
+# Chat (T13–T18)
 
 Pantalla de conversación estilo Grok con datos reales de Firestore, más el
-feed de Publicaciones unido al chat.
+feed de Publicaciones unido al chat y el chat privado con Loki IA.
 
 ## Componentes (`src/components/chat/`)
 
 | Componente | Archivo | Uso |
 |---|---|---|
 | `ChatList` | `chat-list.tsx` | Loki IA fijado + tarjeta Publicaciones + conversaciones reales de `useChats` (preview `Autor: texto`, hora corta). `EmptyState` si no hay chats. El color del avatar del chat sale de `avatarColorFor(chat.id)`. Desde T17 la tarjeta Publicaciones muestra el preview real del `lastMessage` del chat `posts` (y su hora) cuando existe. |
-| `ConversationView` | `conversation-view.tsx` | `useMessages` + `useSendMessage` (o mocks locales en `loki-ia`). Scroll al final sin animación, auto-scroll <120px, pastilla de nuevos, paginación con `IntersectionObserver` conservando posición. Desde T16 es también el dueño del estado de interacción: cita (`replyTo`), edición en curso, hilo abierto y avisos de "Mensaje copiado". |
+| `ConversationView` | `conversation-view.tsx` | `useMessages` + `useSendMessage` (en `loki-ia`, `useAiMessages` + `useSendAiMessage`/`useSendAiAssistantMessage`, ver T18). Scroll al final sin animación, auto-scroll <120px, pastilla de nuevos, paginación con `IntersectionObserver` conservando posición. Desde T16 es también el dueño del estado de interacción: cita (`replyTo`), edición en curso, hilo abierto y avisos de "Mensaje copiado". |
 | `MessageList` | `message-list.tsx` | `role=log` + `aria-live=polite`. Agrupa por autor (<5 min), separa por día, anima solo ids nuevos con el spring único. Pasa a cada `MessageItem` los seis callbacks de T16 (reacción, respuesta, hilo, copiar, editar, eliminar). |
 | `MessageItem` | `message-item.tsx` | Burbuja interactiva: long-press 500ms (táctil) o hover (ratón) → `ReactionBar`; botón `...` en hover y click derecho → `MessageContextMenu`. Debajo: cita `replyTo`, chips de reacciones y botón `N respuestas`. Exporta desde aquí las clases de ancho (`MESSAGE_ROW_CLASS`, `MESSAGE_BUBBLE_FIT_CLASS`). |
-| `MessageBubble` | `message-bubble.tsx` | Propios `#0F0F0F`/`#2A2A2A`, otros `#F0F0F0`/`#16181C`, radio 22px, 15px/1.45, `break-words`. IA sin burbuja (`Loki` + Sparkles), system centrado, eliminado en itálica. Avatar 28px en el último del grupo, hora `HH:mm` bajo el grupo y `· (editado)` si `editedAt`. Color de avatar por `useAuthorAvatarColor`. Desde T17 acepta `variant="post"`: fila plana del feed (avatar 40 + nombre + tiempo relativo), sin burbuja. |
+| `MessageBubble` | `message-bubble.tsx` | Propios `#0F0F0F`/`#2A2A2A`, otros `#F0F0F0`/`#16181C`, radio 22px, 15px/1.45, `break-words`. IA sin burbuja (`Loki` + Sparkles, en `AiReply` con el streaming de T18), system centrado, eliminado en itálica. Avatar 28px en el último del grupo, hora `HH:mm` bajo el grupo y `· (editado)` si `editedAt`. Color de avatar por `useAuthorAvatarColor`. Desde T17 acepta `variant="post"`: fila plana del feed (avatar 40 + nombre + tiempo relativo), sin burbuja. |
 | `ReactionBar` | `reaction-bar.tsx` | `MenuCard` flotante con 6 emojis rápidos + `+` que abre el grid de 24 (`EXTENDED_REACTIONS`). `role=toolbar`, `aria-label="Reaccionar con X"` por emoji, Escape/click afuera cierran. |
 | `ReactionChips` | `reaction-chips.tsx` | Chips bajo la burbuja (emoji + contador, ordenados por cantidad). El propio lleva `aria-pressed` y borde accent; tocarlo alterna el uid propio. |
 | `MessageContextMenu` | `message-context-menu.tsx` | `role=menu` con Responder, Responder en hilo, Copiar, Editar y Eliminar (las dos últimas solo del autor). Eliminar pide confirmación en línea "Eliminar mensaje?" (Cancelar/Eliminar). |
@@ -80,13 +80,40 @@ El orden importa: si el contenedor de la burbuja encoge al contenido (`items-end
 - `posts.ts` (T17): id/nombre/emoji del chat `posts`, `POST_LIKE_EMOJI`, textos de la pantalla, `formatPostTime` y los helpers de like/comentarios.
 - `reactions.ts`: `QUICK_REACTIONS` (6) y `EXTENDED_REACTIONS` (24) como {emoji, nombre accesible, codepoints} construidos con `String.fromCodePoint` (sin emojis pegados a mano en el código).
 - `mentions.ts`: `getMentionQuery`, `filterMentionCandidates`, `resolveMentionIds`, `parseMentionSegments`, `mentionsLoki`, `isAiEnabled`, `buildLokiDisabledMessage` (puras, testeables con Node sin runner).
+- `preview.ts` (T18): `updatesChatPreview(type)` — qué mensajes pueden tocar `lastMessage`/`updatedAt` del chat (los del preview de la lista). `type "system"` NO.
+- `ai-mock.ts` (T18): `AI_CHAT_ID`/`AI_CHAT_NAME`/`AI_AUTHOR_ID`, `AI_SUGGESTIONS` (los tres chips), `AI_PLACEHOLDER`, `AI_EMPTY_TITLE`/`AI_EMPTY_DESCRIPTION`, `AI_CONNECTING_TEXT`, `AI_MOCK_PREFIX`, `AI_STREAM_INTERVAL_MS`, `streamChunks` y `buildMockAiReply`. Sin React ni firebase: solo literales de UI y la respuesta MOCK.
 
 ## Menciones (T15)
 
 - **Composer**: `@` abre un `MenuCard` flotante con la entrada fija `@Loki`/`@ai` (id `loki`) + miembros del espacio (`useMembers` → `listMembers`/`listenMembers` en `src/lib/data/chat.ts`). Filtra por el texto tras `@` (sin tildes, insensible a mayúsculas). Flechas + Enter / click insertan `@Nombre` (el uid se resuelve en `mentions[]` al enviar con `resolveMentionIds`). Escape cierra; sin resultados se cierra.
 - **MessageBubble**: `parseMentionSegments` resalta menciones conocidas (match `@Nombre` o lookup por `mentions[]`) con `text-mention` (#1D9BF0), `font-semibold`, sin subrayado. El texto plano sigue igual.
-- **Flag `NEXT_PUBLIC_AI_ENABLED`** (default `false` en `.env.example`): si el mensaje menciona `loki`/`ai` y el flag no es `"true"`, tras el mensaje del usuario se escribe seguido un aviso type `system` con el `authorId` del propio usuario, texto `Loki: Loki esta desactivada hasta activar el plan Blaze.` y `mentions: ["loki-disabled"]`. Es lo único compatible con las reglas actuales (prohíben type `ai` desde el cliente y exigen `authorId == uid`) y con export sin Admin SDK.
-- **TODO(T18)**: con Cloud Functions + Admin SDK el backend escribirá la respuesta real con type `ai`. Si el flag es `"true"`, el cliente no inventa ninguna respuesta.
+- **Flag `NEXT_PUBLIC_AI_ENABLED`** (default `false` en `.env.example`): si el mensaje menciona `loki`/`ai` y el flag no es `"true"`, tras el mensaje del usuario se escribe seguido un aviso type `system` con el `authorId` del propio usuario, texto `Loki está desactivada. Actívala en Configuración → Loki IA.` y `mentions: ["loki-disabled"]`. Es lo único escribible por el cliente en los chats de espacio (las reglas prohíben type `ai` ahí y exigen `authorId == uid`).
+- **El aviso es SUTIL y CENTRADO**: `MessageBubble` lo pinta como mensaje de sistema (texto 13px muted, centrado, sin burbuja) en medio del timeline. No hay toast ni banner. La marca `loki-disabled` no cuenta como mención real en `parseMentionSegments`, así que el aviso no arrastra a resaltar nada.
+- **El aviso NO toca el doc del chat** (T18): `sendMessage` solo actualiza `lastMessage`/`updatedAt` si `updatesChatPreview(type)` (`src/lib/chat/preview.ts`), y `type "system"` queda fuera. El batch es entonces solo el `set` del mensaje, así que la lista de chats sigue enseñando el último mensaje real del usuario ("Manu Oliva: oye @Loki ¿Qué tengo hoy?") en vez de "Loki está desactivada…". No hace falta tocar `firestore.rules`: crear el mensaje `system` con `authorId == uid` ya estaba permitido sin actualizar el chat.
+- **T18**: con Cloud Functions + Admin SDK (`functions/`, apagado en fase 1-2) el backend escribirá la respuesta real con type `ai`. Si el flag es `"true"`, el cliente no inventa ninguna respuesta.
+
+## Loki IA (T18)
+
+`/chat/loki-ia` es un chat real contra `users/{uid}/aiChats/loki-ia/messages` (no hay mocks en memoria desde T18). `ConversationView` detecta el chat con `AI_CHAT_ID` y cambia de origen de datos: `useAiMessages` en vez de `useMessages`, y sin typing, paging, reacciones ni hilos (todo eso es de los chats de espacio).
+
+- **Estilo**: la respuesta de la IA va **sin burbuja** y a ancho completo, con `Loki` + icono `Sparkles` (ya estaba desde T13); los mensajes del usuario conservan su burbuja de T13/T16. `MessageBubble` la delega en `AiReply`.
+- **Estado vacío + chips**: sin mensajes, `EmptyState` (`Sparkles`, "Habla con Loki") y debajo los tres chips de `AI_SUGGESTIONS` — `¿Qué tengo hoy?`, `Resume mi semana`, `Crea un recordatorio`. Al tocar uno, `AiSuggestions` llama a `onPick` y el texto se envía **como mensaje del usuario** por el mismo camino que escribirlo y pulsar Enter (`handleSend(text, [])`).
+- **IA apagada** (`NEXT_PUBLIC_AI_ENABLED !== "true"`, el default): tras el mensaje del usuario, `sendAiReply` escribe una respuesta MOCK con `sendAiAssistantMessage` (`type: "ai"` en `users/{uid}/aiChats/...`, que las reglas ya permiten al propio usuario). El texto empieza por `[Simulado] ` y es contextual pero **no inventa datos** (`buildMockAiReply`): si le pides la agenda, dice que no lee tu calendario.
+- **Streaming simulado**: `useAiReveal` (`src/hooks/`) revela el texto palabra a palabra cada `AI_STREAM_INTERVAL_MS` (30 ms), con un cursor `accent` mientras corre. El documento de Firestore siempre guarda el texto completo; lo parcial es solo lo que se ve. Los ids ya revelados se recuerdan a nivel de módulo, así que al volver a la pantalla el texto sale entero.
+- **IA encendida**: la UI muestra `Conectando con Loki…` (`AiConnecting`, con Sparkles) y **no inventa nada**; queda el `TODO(T18-siguiente)` en `conversation-view.tsx` para invocar la callable `aiChat` de `functions/`, que todavía no se llama desde el cliente.
+- **Móvil**: `ConversationView` y `MobileHeader` usan `AI_CHAT_ID`/`AI_CHAT_NAME` en vez de literales sueltos, así que la cabecera y la lista de chats no se desincronizan del id de Firestore.
+- `Configuración → Loki IA` muestra el estado real del flag ("Activada" / "Desactivada") con una nota de qué pasa mientras está apagada. Es de solo lectura: la clave y el proveedor viven en el backend, no en el cliente.
+
+| Componente | Archivo | Uso |
+|---|---|---|
+| `AiSuggestions` | `ai-suggestions.tsx` | Los tres chips de arranque, solo con el chat vacío. `onPick(text)` envía el texto como mensaje del usuario. |
+| `AiConnecting` | `ai-connecting.tsx` | Línea "Conectando con Loki…" (Sparkles + muted) con `NEXT_PUBLIC_AI_ENABLED=true`. |
+
+### Unitarios (T18)
+
+`tests/ai-mock.test.mjs` (`npm run test:ai-mock`) cubre `ai-mock.ts` sin runner ni firebase: los tres chips con su texto exacto, `Conectando con Loki…`, el prefijo `[Simulado] ` en las seis variantes del mock, que el texto no invente datos ("tienes N tareas"), que las partes del streaming rearmen el original y el aviso de `mentions.ts` con su texto exacto.
+
+`tests/preview.test.mjs` (`npm run test:preview`) cubre `preview.ts`: que `user`/`post`/`ai` (y el default sin `type`) actualicen el preview del chat y que **`system` no** lo haga, aplicado al aviso real de `buildLokiDisabledMessage`. Los tres corren en `npm run test:unit`.
 
 ## Movimiento
 

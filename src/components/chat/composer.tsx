@@ -24,6 +24,7 @@ import {
   type MentionCandidate,
 } from "@/lib/chat/mentions";
 import { useAuthorAvatarColor } from "@/hooks/use-avatar-color";
+import { AI_PLACEHOLDER } from "@/lib/chat/ai-mock";
 import { spring } from "@/lib/motion";
 import type { MessageReplyRef } from "@/types/chat";
 import { cn } from "@/lib/utils";
@@ -176,7 +177,7 @@ export function Composer({
       : replyTo !== null
         ? `Responder a ${replyTo.authorName}`
         : isLoki
-          ? "Pregunta a Loki"
+          ? AI_PLACEHOLDER
           : `Mensaje para ${chatName}`);
 
   // Al entrar en modo edición el input se llena con el texto original.

@@ -20,6 +20,22 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Loki IA (T18)
+
+- **App**: `/chat/loki-ia` habla con el asistente sobre
+  `users/{uid}/aiChats/loki-ia/messages`. Con la IA apagada (fase 1-2) la
+  respuesta es un mensaje MOCK `[Simulado] …` que la UI revela palabra a
+  palabra; al mencionar `@loki` en un chat de espacio sale el aviso *"Loki
+  está desactivada. Actívala en Configuración → Loki IA."*
+  Detalle: [`src/components/chat/README.md`](src/components/chat/README.md).
+- **Backend**: [`functions/`](functions/README.md) tiene la callable `aiChat`,
+  el trigger `onMention` y la rutina `smartReminders`. **Compila, pero no se
+  despliega** (el deploy está bloqueado a propósito en las fases 1-2):
+
+  ```bash
+  cd functions && npm install && npm run build
+  ```
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

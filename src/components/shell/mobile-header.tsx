@@ -14,6 +14,7 @@ import {
   QuickActionsMobileMenu,
 } from "@/components/shell/quick-actions";
 import { avatarColorFor } from "@/lib/avatar-color";
+import { AI_CHAT_ID, AI_CHAT_NAME } from "@/lib/chat/ai-mock";
 import { POSTS_CHAT_EMOJI, POSTS_CHAT_NAME } from "@/lib/chat/posts";
 import { spring } from "@/lib/motion";
 import { getConversationId } from "@/lib/data/chats";
@@ -30,11 +31,11 @@ type MobileHeaderProps = {
 function ConversationHeader({ chatId }: { chatId: string }): React.JSX.Element {
   const router = useRouter();
   const { currentWorkspaceId } = useWorkspaces();
-  const chatsQuery = useChats(chatId === "loki-ia" ? null : currentWorkspaceId);
+  const chatsQuery = useChats(chatId === AI_CHAT_ID ? null : currentWorkspaceId);
   const chat =
     (chatsQuery.data ?? []).find((item) => item.id === chatId) ?? null;
-  const isLoki = chatId === "loki-ia";
-  const name = isLoki ? "Loki IA" : (chat?.name ?? "Chat");
+  const isLoki = chatId === AI_CHAT_ID;
+  const name = isLoki ? AI_CHAT_NAME : (chat?.name ?? "Chat");
   const leading = isLoki ? (
     <span
       aria-hidden="true"

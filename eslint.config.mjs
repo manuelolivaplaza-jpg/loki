@@ -19,6 +19,9 @@ const eslintConfig = [
       "build/**",
       "next-env.d.ts",
       ".forja/**",
+      // functions/ es un proyecto aparte (su propio package.json, tsconfig
+      // y .eslintrc); el eslint de la app no debe revisarlo.
+      "functions/**",
     ],
   },
 ];

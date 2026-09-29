@@ -25,8 +25,10 @@ import {
   type UpdateData,
 } from "firebase/firestore";
 import { getDb } from "@/lib/firebase/firestore";
+import { AI_AUTHOR_ID } from "@/lib/chat/ai-mock";
 import {
   LOKI_CANDIDATE,
+  LOKI_DISPLAY_NAME,
   type MentionCandidate,
 } from "@/lib/chat/mentions";
 import {
@@ -36,6 +38,7 @@ import {
   POSTS_CHAT_NAME,
   POSTS_PAGE_SIZE,
 } from "@/lib/chat/posts";
+import { updatesChatPreview } from "@/lib/chat/preview";
 import type {
   ChatDoc,
   MessageAttachment,
@@ -440,7 +443,7 @@ export async function sendMessage(
     deleted: false,
     type,
   });
-  if (threadParentId === null) {
+  if (threadParentId === null && updatesChatPreview(type)) {
     batch.update(doc(db, "workspaces", wsId, "chats", chatId), {
       lastMessage: {
         text,
@@ -451,6 +454,14 @@ export async function sendMessage(
       },
       updatedAt: serverTimestamp(),
     });
+  } else if (threadParentId === null) {
+    // Un mensaje de SISTEMA (T18: el aviso "Loki está desactivada…",
+    // mentions ["loki-disabled"]) NO toca el doc del chat: el batch es solo
+    // el `set` del mensaje, así que `lastMessage`/`updatedAt` —y con ellos el
+    // preview y el orden de la lista— siguen siendo los del último mensaje
+    // real. El aviso se ve igual en el timeline (optimista + snapshot).
+    // No hace falta tocar firestore.rules: crear el mensaje ya se permite
+    // sin actualizar el chat (type "system" con authorId == uid).
   } else {
     // Una respuesta de hilo NO toca el doc del chat: el preview de la
     // lista (lastMessage/updatedAt) sigue siendo el del último mensaje del
@@ -559,6 +570,13 @@ export async function createDm(
   return chatRef.id;
 }
 
+// --- Loki IA (T18: chat privado `users/{uid}/aiChats/{chatId}`) -------------
+
+/**
+ * Suscripción en vivo a los mensajes del chat privado con Loki (los últimos
+ * 100, de más antiguo a más nuevo). `threadParentId == null` no hace falta
+ * filtrar: el chat con la IA no tiene hilos.
+ */
 export function listenAiMessages(
   uid: string,
   chatId: string,
@@ -574,6 +592,7 @@ export function listenAiMessages(
   });
 }
 
+/** Escribe mi mensaje (`type: "user"`) en el chat privado con Loki. */
 export async function sendAiUserMessage(
   uid: string,
   chatId: string,
@@ -605,6 +624,63 @@ export async function sendAiUserMessage(
     editedAt: null,
     deleted: false,
     type: "user",
+  });
+  batch.set(
+    doc(db, "users", uid, "aiChats", chatId),
+    { updatedAt: serverTimestamp() },
+    { merge: true },
+  );
+  await batch.commit();
+  return messageRef.id;
+}
+
+/**
+ * T18: escribe la RESPUESTA de Loki (`type: "ai"`) en el chat privado
+ * `users/{uid}/aiChats/{chatId}/messages`.
+ *
+ * En fase 1-2 (`NEXT_PUBLIC_AI_ENABLED !== "true"`) la usa el streaming
+ * SIMULADO: el texto es el mock de `buildMockAiReply` (empieza por
+ * "[Simulado] ") y la UI lo revela palabra a palabra. Las reglas de
+ * `firestore.rules` permiten al propio usuario leer y escribir en su
+ * `aiChats`, así que este write es válido.
+ *
+ * OJO: en los chats de ESPACIO (`workspaces/{ws}/chats/{chat}/messages`) el
+ * type "ai" está PROHIBIDO al cliente; ahí solo puede escribirlo el backend
+ * con Admin SDK (`functions/src/index.ts` y `functions/src/onMention.ts`).
+ */
+export async function sendAiAssistantMessage(
+  uid: string,
+  chatId: string,
+  input: { text: string; mentions?: string[] },
+): Promise<string> {
+  const text = input.text.trim();
+  if (text === "") {
+    throw new Error("La respuesta de Loki no puede quedar vacía.");
+  }
+  if (text.length > 4000) {
+    throw new Error("La respuesta no puede superar los 4000 caracteres.");
+  }
+  const db = getDb();
+  const messageRef = doc(aiMessagesCollection(uid, chatId));
+  const batch = writeBatch(db);
+  batch.set(messageRef, {
+    // authorId "loki" (no el uid): así la fila se alinea a la izquierda y
+    // se pinta sin burbuja, con el nombre "Loki" + icono Sparkles.
+    authorId: AI_AUTHOR_ID,
+    authorName: LOKI_DISPLAY_NAME,
+    text,
+    mentions: input.mentions ?? [],
+    replyTo: null,
+    threadParentId: null,
+    threadCount: 0,
+    lastReplyAt: null,
+    attachments: [],
+    reactions: {},
+    lastReaction: null,
+    createdAt: serverTimestamp(),
+    editedAt: null,
+    deleted: false,
+    type: "ai",
   });
   batch.set(
     doc(db, "users", uid, "aiChats", chatId),

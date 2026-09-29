@@ -5,6 +5,7 @@ import { Sparkles } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
 import { useAuthorAvatarColor } from "@/hooks/use-avatar-color";
+import { useAiReveal } from "@/hooks/use-ai-reveal";
 import { avatarColorFor } from "@/lib/avatar-color";
 import { formatHour } from "@/lib/chat/format";
 import { formatPostTime } from "@/lib/chat/posts";
@@ -113,6 +114,55 @@ function MessageMeta({ message }: { message: MessageDoc }): React.JSX.Element {
   );
 }
 
+/**
+ * T18: respuesta de Loki (`type: "ai"`).
+ *
+ * Sin burbuja y a ancho completo, con el nombre "Loki" + icono Sparkles solo
+ * en el primer mensaje del grupo (como el resto de autores). El texto se
+ * revela palabra a palabra (30 ms) con `useAiReveal`; el documento siempre
+ * tiene el texto completo, esto solo es lo que se ve.
+ */
+function AiReply({
+  message,
+  showAuthor,
+  showTime,
+}: {
+  message: MessageDoc;
+  showAuthor: boolean;
+  showTime: boolean;
+}): React.JSX.Element {
+  const full = message.deleted ? "" : message.text;
+  const shown = useAiReveal(message.id, full);
+  const streaming = !message.deleted && shown.length < full.length;
+  return (
+    <div className="w-full px-1">
+      {showAuthor ? (
+        <p className="flex items-center gap-1 text-meta font-semibold leading-5 text-muted-foreground">
+          <Icon icon={Sparkles} size={20} />
+          Loki
+        </p>
+      ) : null}
+      <div className="mt-1 w-full text-body-sm leading-6 text-foreground">
+        {message.deleted ? (
+          <span className="italic text-muted-foreground">Mensaje eliminado</span>
+        ) : (
+          <>
+            <MentionedText text={shown} mentions={message.mentions} />
+            {/* Cursor de escritura: solo mientras llega el texto. */}
+            {streaming ? (
+              <span
+                aria-hidden="true"
+                className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[3px] bg-accent"
+              />
+            ) : null}
+          </>
+        )}
+      </div>
+      {showTime ? <MessageMeta message={message} /> : null}
+    </div>
+  );
+}
+
 export function MessageBubble({
   message,
   isMine,
@@ -168,24 +218,7 @@ export function MessageBubble({
   }
 
   if (message.type === "ai") {
-    return (
-      <div className="w-full px-1">
-        {showAuthor ? (
-          <p className="flex items-center gap-1 text-meta font-semibold leading-5 text-muted-foreground">
-            <Icon icon={Sparkles} size={20} />
-            Loki
-          </p>
-        ) : null}
-        <div className="mt-1 w-full text-body-sm leading-6 text-foreground">
-          {message.deleted ? (
-            <span className="italic text-muted-foreground">Mensaje eliminado</span>
-          ) : (
-            <MentionedText text={message.text} mentions={message.mentions} />
-          )}
-        </div>
-        {showTime ? <MessageMeta message={message} /> : null}
-      </div>
-    );
+    return <AiReply message={message} showAuthor={showAuthor} showTime={showTime} />;
   }
 
   const deleted = message.deleted;

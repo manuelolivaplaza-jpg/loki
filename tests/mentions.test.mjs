@@ -199,11 +199,28 @@ ok(mentionsLoki("hola", ["loki"]), "id loki en mentions[]");
 ok(!mentionsLoki("hola mundo"), "texto neutro no menciona");
 ok(!mentionsLoki("hay pan"), "'hay' no es 'ai'");
 
+// --- T18: el aviso no resaltada sus propias "@palabras" ------------------------
+{
+  // Con nombres conocidos (como los miembros del espacio) y solo la marca del
+  // aviso, un "@Nombre" desconocido NO se resalta: la marca no arrastra.
+  const segments = parseMentionSegments("hola @Zzz", ["Ana"], [LOKI_DISABLED_MENTION]);
+  equal(
+    segments[1]?.isMention,
+    false,
+    'la marca "loki-disabled" no hace resaltar un "@nombre" (el aviso es sutil)',
+  );
+  deep(
+    parseMentionSegments("@loki ayuda", undefined, [LOKI_DISABLED_MENTION]),
+    [{ text: "@loki", isMention: true }, { text: " ayuda", isMention: false }],
+    "con la marca del aviso, @loki/@ai sigue resaltando (es token de Loki)",
+  );
+}
+
 // --- flag + aviso ------------------------------------------------------------
 equal(isAiEnabled("true"), true, "flag true habilita");
 equal(isAiEnabled("false"), false, "flag false deshabilita");
 equal(isAiEnabled(undefined), false, "sin flag deshabilita (default)");
-equal(LOKI_DISABLED_TEXT, "Loki: Loki esta desactivada hasta activar el plan Blaze.", "texto exacto del aviso");
+equal(LOKI_DISABLED_TEXT, "Loki está desactivada. Actívala en Configuración → Loki IA.", "texto exacto del aviso");
 equal(LOKI_DISABLED_MENTION, "loki-disabled", "marca del aviso");
 equal(MENTION_COLOR, "#1D9BF0", "color de resaltado");
 equal(LOKI_DISPLAY_NAME, "Loki", "nombre visible de la IA");

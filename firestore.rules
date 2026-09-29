@@ -97,8 +97,14 @@ service cloud.firestore {
         allow read, write: if isSelf(uid);
 
         match /messages/{mid} {
-          // TODO(backend): mover la escritura 'ai' al backend con Admin SDK;
-          // permitido aqui solo para el mock de UI.
+          // T18: aquí SÍ se permite type 'ai' al propio usuario, a
+          // diferencia de los chats de espacio (abajo, donde el cliente no
+          // puede). Es lo que usa la respuesta MOCK "[Simulado] ..." del
+          // streaming de la fase 1-2 (NEXT_PUBLIC_AI_ENABLED != "true"),
+          // porque las reglas no distinguen el texto: es un documento normal
+          // de su chat privado. Cuando el backend (functions/) esté
+          // desplegado, la respuesta real la escribe el Admin SDK y este
+          // permiso deja de usarse.
           allow read, write: if isSelf(uid);
         }
       }

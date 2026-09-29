@@ -52,3 +52,10 @@ ui-debug.log
 database-debug.log
 pubsub-debug.log
 .emulator-data/
+
+# cloud functions (T18): dependencias y salida de tsc, nunca se commitean
+functions/node_modules/
+functions/lib/
+functions/.env
+functions/.env.*
+functions/*.local

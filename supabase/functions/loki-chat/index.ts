@@ -72,8 +72,7 @@ const rateBuckets = new Map<string, number[]>();
 function rateLimitKey(req: Request): string {
   const forwarded = req.headers.get("x-forwarded-for") ?? "";
   const ip = forwarded.split(",")[0]?.trim() ||
-    req.headers.get("cf-connecting-ip") ??
-    "sin-ip";
+    (req.headers.get("cf-connecting-ip") ?? "sin-ip");
   const auth = req.headers.get("authorization") ?? "";
   return `${ip}|${auth.slice(0, 32)}`;
 }

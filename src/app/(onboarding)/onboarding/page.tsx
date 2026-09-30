@@ -7,12 +7,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { fadeScale } from "@/lib/motion";
-import { updateProfile } from "firebase/auth";
 import { inputClassName, labelClassName } from "@/components/auth/auth-ui";
 import { EmojiPicker } from "@/components/workspaces/emoji-picker";
 import { KindPicker } from "@/components/workspaces/kind-picker";
 import { EMOJI_OPTIONS } from "@/components/workspaces/workspace-options";
-import { getFirebaseAuth } from "@/lib/firebase/auth";
+import { getSupabaseClient } from "@/lib/supabase/client";
 import { updateUserProfile } from "@/lib/data/users";
 import { createWorkspace, toLocalMembership } from "@/lib/data/workspaces";
 import { cn } from "@/lib/utils";
@@ -29,7 +28,7 @@ import {
   type WorkspaceKind,
 } from "@/types/models";
 
-function StepIndicator({ step }: { step: 1 | 2 }): React.JSX.Element {
+function StepIndicator({ step }: { step: 1 | 2 | 3 }): React.JSX.Element {
   return (
     <div className="mt-6">
       <div aria-hidden="true" className="flex gap-2">
@@ -45,9 +44,15 @@ function StepIndicator({ step }: { step: 1 | 2 }): React.JSX.Element {
             step >= 2 ? "bg-foreground" : "bg-divider",
           )}
         />
+        <span
+          className={cn(
+            "h-1 flex-1 rounded-full",
+            step >= 3 ? "bg-foreground" : "bg-divider",
+          )}
+        />
       </div>
       <p className="sr-only" aria-live="polite">
-        Paso {step} de 2
+        Paso {step} de 3
       </p>
     </div>
   );
@@ -63,7 +68,7 @@ export default function OnboardingPage(): React.JSX.Element {
     (state) => state.setCurrentWorkspaceId,
   );
 
-  const [step, setStep] = React.useState<1 | 2>(1);
+  const [step, setStep] = React.useState<1 | 2 | 3>(1);
   const [displayName, setDisplayName] = React.useState("");
   const [nameTouched, setNameTouched] = React.useState(false);
   const [avatarColor, setAvatarColor] =
@@ -124,7 +129,7 @@ export default function OnboardingPage(): React.JSX.Element {
       return;
     }
     setStepError(null);
-    setStep(2);
+    setStep(3);
   }
 
   async function handleWorkspaceSubmit(
@@ -158,15 +163,14 @@ export default function OnboardingPage(): React.JSX.Element {
         onboardingCompleted: true,
       });
       try {
-        const auth = getFirebaseAuth();
-        if (
-          auth.currentUser !== null &&
-          auth.currentUser.uid === user.uid
-        ) {
-          await updateProfile(auth.currentUser, { displayName: name });
-        }
+        // El displayName de Auth es secundario: la UI lo lee del perfil, que
+        // ya quedó guardado. Se sincroniza igualmente para que el metadata
+        // del usuario de Supabase no se quede con el nombre del registro.
+        await getSupabaseClient().auth.updateUser({
+          data: { display_name: name },
+        });
       } catch {
-        // El displayName de Auth es secundario; el perfil ya quedó guardado.
+        // Si falla, el onboarding sigue: el perfil de Postgres es la fuente.
       }
       const wsId = await createWorkspace(
         { name: spaceName, emoji, kind },
@@ -220,6 +224,58 @@ export default function OnboardingPage(): React.JSX.Element {
 
         <AnimatePresence mode="wait" initial={false}>
           {step === 1 ? (
+            <motion.div
+              key="step-welcome"
+              variants={fadeScale}
+              initial="hidden"
+              animate="show"
+              exit="exit"
+            >
+              <div aria-hidden="true" className="mt-6 flex justify-center">
+                <span className="flex h-20 w-20 items-center justify-center rounded-xl bg-foreground text-display font-bold text-background dark:bg-white dark:text-black">
+                  L
+                </span>
+              </div>
+              <h1 className="mt-6 text-center text-display font-semibold leading-tight text-foreground">
+                Bienvenido a Loki
+              </h1>
+              <p className="mt-2 text-center text-body-sm text-muted-foreground">
+                Tu espacio familiar: chats, calendario y tareas en un solo lugar.
+              </p>
+              <ul className="mt-6 flex flex-col gap-3">
+                {[
+                  { emoji: "💬", title: "Chats en vivo", detail: "Conversaciones e hilos con tu gente." },
+                  { emoji: "📅", title: "Calendario y tareas", detail: "Eventos, proyectos y recordatorios." },
+                  { emoji: "✨", title: "Loki IA", detail: "Tu asistente para el día a día." },
+                ].map((item) => (
+                  <li
+                    key={item.title}
+                    className="flex items-center gap-3 rounded-lg bg-surface-soft p-4"
+                  >
+                    <span aria-hidden="true" className="text-title">{item.emoji}</span>
+                    <span className="min-w-0">
+                      <span className="block text-body-sm font-semibold text-foreground">
+                        {item.title}
+                      </span>
+                      <span className="block text-meta text-muted-foreground">
+                        {item.detail}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <Button
+                type="button"
+                onClick={() => {
+                  setStepError(null);
+                  setStep(2);
+                }}
+                className="mt-6 w-full"
+              >
+                Empezar
+              </Button>
+            </motion.div>
+          ) : step === 2 ? (
             <motion.div
               key="step-profile"
               variants={fadeScale}
@@ -319,6 +375,17 @@ export default function OnboardingPage(): React.JSX.Element {
 
                 <Button type="submit" className="w-full">
                   Continuar
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setStep(1);
+                    setStepError(null);
+                  }}
+                  className="w-full"
+                >
+                  Atrás
                 </Button>
               </form>
             </motion.div>
@@ -443,7 +510,7 @@ export default function OnboardingPage(): React.JSX.Element {
                     type="button"
                     variant="secondary"
                     onClick={() => {
-                      setStep(1);
+                      setStep(2);
                       setStepError(null);
                     }}
                     disabled={saving}
@@ -466,28 +533,40 @@ export default function OnboardingPage(): React.JSX.Element {
                       name="inviteCode"
                       type="text"
                       autoComplete="off"
+                      maxLength={8}
                       value={inviteCode}
-                      onChange={(event) => setInviteCode(event.target.value)}
+                      onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
                       placeholder="Pega tu código"
-                      className={inputClassName}
+                      className={`${inputClassName} uppercase`}
                     />
                   </div>
+                  {stepError !== null ? (
+                    <p role="alert" className="text-meta text-danger">
+                      {stepError}
+                    </p>
+                  ) : null}
                   <Button
                     type="button"
-                    disabled
-                    title="Disponible próximamente"
+                    onClick={() => {
+                      const code = inviteCode.trim().toUpperCase();
+                      if (code === "") {
+                        setStepError("Pega el código que te compartieron.");
+                        return;
+                      }
+                      router.push(`/invite?code=${encodeURIComponent(code)}`);
+                    }}
                     className="w-full"
                   >
-                    Próximamente
+                    Unirme al espacio
                   </Button>
                   <p className="text-meta text-muted-foreground">
-                    Los códigos de invitación llegan en T8.
+                    Te llevamos a la pantalla de invitación para unirte.
                   </p>
                   <Button
                     type="button"
                     variant="secondary"
                     onClick={() => {
-                      setStep(1);
+                      setStep(2);
                       setStepError(null);
                     }}
                     className="w-full"

@@ -1,4 +1,4 @@
-import { AI_CHAT_ID, AI_CHAT_NAME } from "@/lib/chat/ai-mock";
+import { AI_CHAT_ID, AI_CHAT_NAME } from "@/lib/ai/constants";
 import { normalizePathname } from "@/lib/navigation";
 
 export type ChatPreview = {

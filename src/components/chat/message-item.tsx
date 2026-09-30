@@ -39,13 +39,14 @@ type MessageItemProps = {
 };
 
 /**
- * Mensaje interactivo (T16).
+ * Mensaje interactivo (T16, menú unificado T34).
  *
- * Gestos: long-press 500ms en táctil (o hover con ratón) para las
- * reacciones, botón "..." en hover y click derecho para el menú
- * contextual. La barra y el menú cuelgan de la burbuja (no de la fila)
- * y se alinean al borde exterior, así que nunca se salen de pantalla.
- * Debajo: cita `replyTo`, chips de reacciones y "N respuestas".
+ * Gestos: long-press 500ms en táctil, click derecho en escritorio o botón
+ * "…" abren EL MISMO menú unificado: emojis de `ReactionBar` arriba y
+ * acciones de `MessageContextMenu` abajo (Responder, Responder en hilo,
+ * Copiar, Editar, Eliminar). La barra y el menú cuelgan de la burbuja (no
+ * de la fila) y se alinean al borde exterior, así que nunca se salen de
+ * pantalla. Debajo: cita `replyTo`, chips de reacciones y "N respuestas".
  */
 export function MessageItem({
   message,
@@ -83,10 +84,14 @@ export function MessageItem({
     }
   }, []);
 
-  const openFromLongPress = React.useCallback(() => {
+  const openUnified = React.useCallback(() => {
     setReactionsOpen(true);
     setMenuOpen(true);
   }, []);
+
+  const openFromLongPress = React.useCallback(() => {
+    openUnified();
+  }, [openUnified]);
 
   const startTimer = React.useCallback(() => {
     if (!interactive) return;
@@ -96,7 +101,7 @@ export function MessageItem({
 
   React.useEffect(() => cancelTimer, [cancelTimer]);
 
-  const closeAll = React.useCallback(() => {
+  const closeUnified = React.useCallback(() => {
     cancelTimer();
     setReactionsOpen(false);
     setMenuOpen(false);
@@ -126,14 +131,14 @@ export function MessageItem({
 
   const handleAction = React.useCallback(
     (action: MessageMenuAction) => {
-      closeAll();
+      closeUnified();
       if (action === "reply") onReply(message);
       else if (action === "thread") onOpenThread(message);
       else if (action === "copy") onCopy(message);
       else if (action === "edit") onEdit(message);
       else if (action === "delete") onDelete(message);
     },
-    [closeAll, message, onReply, onOpenThread, onCopy, onEdit, onDelete],
+    [closeUnified, message, onReply, onOpenThread, onCopy, onEdit, onDelete],
   );
 
   const selectReaction = React.useCallback(
@@ -144,9 +149,9 @@ export function MessageItem({
         emoji,
         currentUid !== null && uids.includes(currentUid),
       );
-      closeAll();
+      closeUnified();
     },
-    [message, currentUid, onToggleReaction, closeAll],
+    [message, currentUid, onToggleReaction, closeUnified],
   );
 
   const quote = message.replyTo;
@@ -187,8 +192,9 @@ export function MessageItem({
           interactive
             ? (event) => {
                 event.preventDefault();
-                closeReactions();
-                setMenuOpen(true);
+                // Click derecho abre EL MISMO menú unificado que el
+                // long-press: emojis arriba + acciones abajo.
+                openUnified();
               }
             : undefined
         }
@@ -254,13 +260,17 @@ export function MessageItem({
           {interactive ? (
             <button
               type="button"
-              aria-label="Más acciones del mensaje"
+              aria-label="Abrir menú del mensaje"
               aria-haspopup="menu"
-              aria-expanded={menuOpen}
+              aria-expanded={menuOpen || reactionsOpen}
               onClick={(event) => {
                 event.stopPropagation();
-                closeReactions();
-                setMenuOpen((open) => !open);
+                // El botón "…" abre el mismo menú unificado.
+                if (menuOpen || reactionsOpen) {
+                  closeUnified();
+                } else {
+                  openUnified();
+                }
               }}
               onPointerDown={(event) => event.stopPropagation()}
               className={cn(

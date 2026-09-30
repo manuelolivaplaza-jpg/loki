@@ -2,16 +2,23 @@
 
 import * as React from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Camera, Folder, ImagePlus } from "lucide-react";
+import { Camera, Folder, ImagePlus, Mic } from "lucide-react";
 import { MenuCard, MenuItem } from "@/components/ui/menu-card";
 import { spring } from "@/lib/motion";
 
+export type AttachOption = "photo" | "camera" | "file" | "voice";
+
 /**
- * Menú flotante de adjuntos. En T13 las tres opciones están
- * deshabilitadas con el aviso "Los adjuntos llegan pronto".
+ * Menú flotante de adjuntos: foto/video, cámara, archivo y nota de voz.
  * Cierra con click afuera o Escape (lo gestiona el padre vía onClose).
  */
-export function AttachMenu({ onClose }: { onClose: () => void }): React.JSX.Element {
+export function AttachMenu({
+  onClose,
+  onSelect,
+}: {
+  onClose: () => void;
+  onSelect: (option: AttachOption) => void;
+}): React.JSX.Element {
   const ref = React.useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotion();
 
@@ -32,6 +39,11 @@ export function AttachMenu({ onClose }: { onClose: () => void }): React.JSX.Elem
     };
   }, [onClose]);
 
+  const pick = (option: AttachOption): void => {
+    onSelect(option);
+    onClose();
+  };
+
   return (
     <motion.div
       ref={ref}
@@ -44,18 +56,18 @@ export function AttachMenu({ onClose }: { onClose: () => void }): React.JSX.Elem
       className="absolute bottom-full left-0 z-30 mb-2 w-64"
     >
       <MenuCard>
-        <MenuItem icon={Folder} disabled aria-disabled="true" title="Próximamente">
-          Elegir archivo
+        <MenuItem icon={ImagePlus} onClick={() => pick("photo")}>
+          Foto o video
         </MenuItem>
-        <MenuItem icon={Camera} disabled aria-disabled="true" title="Próximamente">
-          Hacer una foto
+        <MenuItem icon={Camera} onClick={() => pick("camera")}>
+          Cámara
         </MenuItem>
-        <MenuItem icon={ImagePlus} disabled aria-disabled="true" title="Próximamente">
-          Adjuntar imagen
+        <MenuItem icon={Folder} onClick={() => pick("file")}>
+          Archivo
         </MenuItem>
-        <p className="px-3 py-2 text-meta leading-5 text-muted-foreground">
-          Los adjuntos llegan pronto
-        </p>
+        <MenuItem icon={Mic} onClick={() => pick("voice")}>
+          Nota de voz
+        </MenuItem>
       </MenuCard>
     </motion.div>
   );

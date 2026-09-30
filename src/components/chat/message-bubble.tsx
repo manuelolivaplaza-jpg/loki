@@ -4,8 +4,9 @@ import * as React from "react";
 import { Sparkles } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
+import { MessageAttachments } from "@/components/media/message-attachments";
+import { SafeText } from "@/components/chat/safe-text";
 import { useAuthorAvatarColor } from "@/hooks/use-avatar-color";
-import { useAiReveal } from "@/hooks/use-ai-reveal";
 import { avatarColorFor } from "@/lib/avatar-color";
 import { formatHour } from "@/lib/chat/format";
 import { formatPostTime } from "@/lib/chat/posts";
@@ -33,6 +34,11 @@ type MessageBubbleProps = {
   variant?: "bubble" | "post";
   /** Reloj para el tiempo relativo de la fila de post. */
   now?: Date;
+  /**
+   * Cursor de escritura visible (streaming en vivo de la Edge Function).
+   * El texto ya viene completo en `message`; esto solo fuerza el cursor.
+   */
+  streaming?: boolean;
 };
 
 /**
@@ -96,7 +102,7 @@ function MentionedText({
             {segment.text}
           </span>
         ) : (
-          <React.Fragment key={index}>{segment.text}</React.Fragment>
+          <SafeText key={index} text={segment.text} />
         ),
       )}
     </>
@@ -115,25 +121,26 @@ function MessageMeta({ message }: { message: MessageDoc }): React.JSX.Element {
 }
 
 /**
- * T18: respuesta de Loki (`type: "ai"`).
+ * Respuesta de Loki (`type: "ai"`).
  *
  * Sin burbuja y a ancho completo, con el nombre "Loki" + icono Sparkles solo
- * en el primer mensaje del grupo (como el resto de autores). El texto se
- * revela palabra a palabra (30 ms) con `useAiReveal`; el documento siempre
- * tiene el texto completo, esto solo es lo que se ve.
+ * en el primer mensaje del grupo (como el resto de autores). El texto llega
+ * completo (por realtime o por el stream en vivo); `streaming` muestra el
+ * cursor mientras la Edge Function sigue generando.
  */
 function AiReply({
   message,
   showAuthor,
   showTime,
+  streaming = false,
 }: {
   message: MessageDoc;
   showAuthor: boolean;
   showTime: boolean;
+  streaming?: boolean;
 }): React.JSX.Element {
   const full = message.deleted ? "" : message.text;
-  const shown = useAiReveal(message.id, full);
-  const streaming = !message.deleted && shown.length < full.length;
+  const typing = !message.deleted && (streaming || full === "");
   return (
     <div className="w-full px-1">
       {showAuthor ? (
@@ -147,9 +154,9 @@ function AiReply({
           <span className="italic text-muted-foreground">Mensaje eliminado</span>
         ) : (
           <>
-            <MentionedText text={shown} mentions={message.mentions} />
+            <MentionedText text={full} mentions={message.mentions} />
             {/* Cursor de escritura: solo mientras llega el texto. */}
-            {streaming ? (
+            {typing ? (
               <span
                 aria-hidden="true"
                 className="ml-0.5 inline-block h-[1.05em] w-[2px] translate-y-[3px] bg-accent"
@@ -172,6 +179,7 @@ export function MessageBubble({
   onRetry,
   variant = "bubble",
   now,
+  streaming = false,
 }: MessageBubbleProps): React.JSX.Element {
   // Color determinista por autor (el mío sale del perfil).
   const avatarColor = useAuthorAvatarColor(message.authorId);
@@ -198,6 +206,11 @@ export function MessageBubble({
           <p className="mt-0.5 whitespace-pre-wrap break-words text-body-sm leading-5 text-foreground">
             <MentionedText text={message.text} mentions={message.mentions} />
           </p>
+          {message.deleted ? null : (
+            <div className="mt-2">
+              <MessageAttachments attachments={message.attachments} tone="flat" />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -218,7 +231,14 @@ export function MessageBubble({
   }
 
   if (message.type === "ai") {
-    return <AiReply message={message} showAuthor={showAuthor} showTime={showTime} />;
+    return (
+      <AiReply
+        message={message}
+        showAuthor={showAuthor}
+        showTime={showTime}
+        streaming={streaming}
+      />
+    );
   }
 
   const deleted = message.deleted;
@@ -229,17 +249,30 @@ export function MessageBubble({
   );
 
   if (isMine) {
+    const hasAttachments = !deleted && message.attachments.length > 0;
     return (
       <div className="flex w-fit max-w-full flex-col items-center">
-        <p
+        <div
           className={cn(
-            "max-w-full",
-            USER_BUBBLE_CLASS,
-            deleted ? DELETED_BUBBLE_CLASS : "bg-bubble-mine text-white",
+            "flex w-full flex-col items-end gap-1.5",
+            hasAttachments && "min-w-44",
           )}
         >
-          {body}
-        </p>
+          <p
+            className={cn(
+              "max-w-full",
+              USER_BUBBLE_CLASS,
+              deleted ? DELETED_BUBBLE_CLASS : "bg-bubble-mine text-white",
+            )}
+          >
+            {body}
+          </p>
+          {hasAttachments ? (
+            <div className="w-full">
+              <MessageAttachments attachments={message.attachments} tone="mine" />
+            </div>
+          ) : null}
+        </div>
         {showTime ? <MessageMeta message={message} /> : null}
         {sendStatus === "error" ? (
           <p className="mt-1 text-center text-meta leading-4 text-danger">
@@ -276,15 +309,20 @@ export function MessageBubble({
             <span className="block h-7 w-7" />
           )}
         </span>
-        <p
-          className={cn(
-            "min-w-0 max-w-full",
-            USER_BUBBLE_CLASS,
-            deleted ? DELETED_BUBBLE_CLASS : "bg-bubble-other text-foreground",
+        <div className="flex min-w-0 max-w-full flex-col gap-1.5">
+          <p
+            className={cn(
+              "w-fit max-w-full",
+              USER_BUBBLE_CLASS,
+              deleted ? DELETED_BUBBLE_CLASS : "bg-bubble-other text-foreground",
+            )}
+          >
+            {body}
+          </p>
+          {deleted ? null : (
+            <MessageAttachments attachments={message.attachments} tone="other" />
           )}
-        >
-          {body}
-        </p>
+        </div>
       </div>
       {showTime ? <MessageMeta message={message} /> : null}
     </div>

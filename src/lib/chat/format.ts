@@ -1,4 +1,4 @@
-import type { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "@/lib/timestamp";
 import type { MessageDoc } from "@/types/chat";
 
 export type MessageDateInput = Timestamp | Date | null | undefined;

@@ -1,23 +1,37 @@
 "use client";
 
 import * as React from "react";
-import { PanelRight } from "lucide-react";
+import dynamic from "next/dynamic";
+import { PanelRight, Search } from "lucide-react";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { MobileHeader } from "@/components/shell/mobile-header";
+import { NotificationsBell } from "@/components/notifications/notifications-bell";
+import { NotificationsToast } from "@/components/notifications/notifications-toast";
 import { RightPanel } from "@/components/shell/right-panel";
 import { getSectionByPath, isFullscreenRoute } from "@/components/shell/sections";
 import { Sidebar } from "@/components/shell/sidebar";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { WorkspaceBootstrap } from "@/components/workspaces/workspace-bootstrap";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { normalizePathname, useAppPathname } from "@/lib/navigation";
 import { useUiStore } from "@/stores/ui-store";
+import { useSearchStore } from "@/stores/search-store";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
 
 type AppShellProps = {
   children: React.ReactNode;
 };
+
+/**
+ * Paleta de búsqueda por code splitting: solo se descarga cuando se abre
+ * (el atajo Cmd/Ctrl+K vive aquí, la paleta debajo con `ssr: false`).
+ */
+const SearchPalette = dynamic(
+  () => import("@/components/search/search-palette").then((mod) => mod.SearchPalette),
+  { ssr: false },
+);
 
 function getHeaderTitle(pathname: string | null): string {
   const normalized = normalizePathname(pathname);
@@ -40,8 +54,26 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
   const hideBottomNav = isFullscreenRoute(pathname);
   const rightPanelOpen = useUiStore((state) => state.rightPanelOpen);
   const toggleRightPanel = useUiStore((state) => state.toggleRightPanel);
-  const { currentWorkspace, workspaces, isLoading: workspacesLoading } = useWorkspaces();
+  const setSearchOpen = useSearchStore((state) => state.setOpen);
+  const {
+    currentWorkspace,
+    currentWorkspaceId,
+    workspaces,
+    isLoading: workspacesLoading,
+  } = useWorkspaces();
   const showWorkspaceSkeleton = workspacesLoading && workspaces.length === 0;
+
+  // Atajo global: Cmd/Ctrl+K abre la búsqueda desde cualquier pantalla.
+  React.useEffect(() => {
+    function handleKey(event: KeyboardEvent): void {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [setSearchOpen]);
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
@@ -71,6 +103,14 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
               </div>
               <IconButton
                 variant="ghost"
+                onClick={() => setSearchOpen(true)}
+                aria-label="Buscar"
+                title="Buscar (Ctrl+K)"
+              >
+                <Icon icon={Search} size={20} />
+              </IconButton>
+              <IconButton
+                variant="ghost"
                 onClick={toggleRightPanel}
                 aria-label={
                   rightPanelOpen
@@ -82,6 +122,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
               >
                 <Icon icon={PanelRight} size={20} />
               </IconButton>
+              <NotificationsBell />
             </header>
 
             <main
@@ -92,15 +133,21 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
                   : "pb-[calc(96px+env(safe-area-inset-bottom))]",
               )}
             >
-              {children}
+              <ErrorBoundary section="el contenido">{children}</ErrorBoundary>
             </main>
           </div>
 
-          <RightPanel section={section} />
+          <ErrorBoundary section="el panel contextual">
+            <RightPanel section={section} />
+          </ErrorBoundary>
         </div>
       </div>
 
       <BottomNav />
+      <NotificationsToast />
+      <ErrorBoundary section="la búsqueda">
+        <SearchPalette wsId={currentWorkspaceId} />
+      </ErrorBoundary>
     </div>
   );
 }

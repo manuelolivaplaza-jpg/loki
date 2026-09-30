@@ -69,7 +69,7 @@ export function MessageContextMenu({
       {confirmDelete ? (
         <MenuCard aria-label="Eliminar mensaje" className="p-1">
           <p className="px-3 py-2 text-body-sm font-medium text-foreground">
-            Eliminar mensaje?
+            ¿Eliminar mensaje?
           </p>
           <p className="px-3 pb-1 text-meta leading-4 text-muted-foreground">
             Deja de verse, pero sigue en el historial.

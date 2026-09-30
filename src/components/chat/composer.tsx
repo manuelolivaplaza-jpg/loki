@@ -2,8 +2,10 @@
 
 import * as React from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ArrowUp, ImageIcon, Mic, Plus, Sparkles, X } from "lucide-react";
-import { AttachMenu } from "@/components/chat/attach-menu";
+import { ArrowUp, FileAudio, File as FileIcon, ImageIcon, Mic, Plus, Sparkles, X } from "lucide-react";
+import { AttachMenu, type AttachOption } from "@/components/chat/attach-menu";
+import { UploadProgress } from "@/components/media/upload-progress";
+import { VoiceRecorder } from "@/components/media/voice-recorder";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -11,7 +13,6 @@ import { IconButton } from "@/components/ui/icon-button";
 import { MenuCard } from "@/components/ui/menu-card";
 import {
   POSTS_MEDIA_LABEL,
-  POSTS_MEDIA_SOON,
   POSTS_PLACEHOLDER,
   POSTS_PUBLISH_LABEL,
 } from "@/lib/chat/posts";
@@ -23,10 +24,23 @@ import {
   resolveMentionIds,
   type MentionCandidate,
 } from "@/lib/chat/mentions";
+import { compressImage } from "@/lib/media/compress-image";
+import {
+  formatDuration,
+  voiceExtension,
+} from "@/lib/media/audio";
+import {
+  kindFromFile,
+  uploadAttachment,
+  validateFileSize,
+  type MediaBucket,
+  type UploadedAttachment,
+} from "@/lib/media/upload";
 import { useAuthorAvatarColor } from "@/hooks/use-avatar-color";
-import { AI_PLACEHOLDER } from "@/lib/chat/ai-mock";
+import { AI_PLACEHOLDER } from "@/lib/ai/constants";
 import { spring } from "@/lib/motion";
-import type { MessageReplyRef } from "@/types/chat";
+import { validMessageText } from "@/lib/validators";
+import type { AttachmentKind, MessageAttachment, MessageReplyRef } from "@/types/chat";
 import { cn } from "@/lib/utils";
 
 type ComposerProps = {
@@ -35,8 +49,12 @@ type ComposerProps = {
   sending: boolean;
   /** Miembros del espacio como candidatos (la entrada fija @Loki se agrega aquí). */
   members: MentionCandidate[];
-  /** Texto + uids mencionados (tokens "@Nombre" que siguen visibles). */
-  onSend: (text: string, mentions: string[]) => void;
+  /** Texto + uids mencionados + adjuntos ya subidos a Storage. */
+  onSend: (text: string, mentions: string[], attachments?: MessageAttachment[]) => void;
+  /** Espacio donde se suben los adjuntos (ruta `{wsId}/…`). Sin él, adjuntar avisa. */
+  wsId?: string | null;
+  /** Bucket de Storage (chat en `chat-media`, publicaciones en `post-media`). */
+  mediaBucket?: MediaBucket;
   /** Avisa cada cambio del input (para typing T14). */
   onValueChange?: (value: string) => void;
   /** Texto a editar (T16): el composer entra en modo edición con Enter = guardar. */
@@ -49,12 +67,13 @@ type ComposerProps = {
   onCancelReply?: () => void;
   /** Placeholder propio (el hilo usa "Responder en el hilo"). */
   placeholder?: string;
+  /** Deshabilita escritura y envío (Loki IA sin configurar). */
+  disabled?: boolean;
   /**
    * T17: `post` convierte la barra en el composer superior de Publicaciones
-   * (botón de imagen deshabilitado "Próximamente" en vez de `+` adjuntos,
-   * botón "Publicar" en vez de la flecha, sin menú de menciones ni pastilla
-   * de mic). El resto (autogrow 1–6 líneas, Enter con puntero fino,
-   * `visualViewport`) es el mismo.
+   * (botón de imagen en vez de `+` adjuntos, botón "Publicar" en vez de la
+   * flecha, sin menú de menciones ni pastilla de mic). El resto (autogrow
+   * 1–6 líneas, Enter con puntero fino, `visualViewport`) es el mismo.
    */
   mode?: "chat" | "post";
 };
@@ -66,6 +85,19 @@ type MentionState = {
   caret: number;
   query: string;
   active: number;
+};
+
+type PendingAttachment = {
+  id: string;
+  name: string;
+  kind: AttachmentKind;
+  /** Vista previa local (solo imagen/video), se libera al enviar o quitar. */
+  previewUrl: string | null;
+  duration?: number;
+  status: "uploading" | "ready" | "error";
+  progress: number;
+  result: UploadedAttachment | null;
+  error: string | null;
 };
 
 /** Texto de una cita en una línea (hasta 80 caracteres). */
@@ -141,6 +173,9 @@ function MentionOption({
  * - La barra se mantiene sobre el teclado con window.visualViewport.
  * - T16: si recibe `edit` precarga el texto y Enter guarda la edición;
  *   si recibe `replyTo` muestra la barra de cita con su X.
+ * - Adjuntos: el menú + ofrece foto/video, cámara, archivo y nota de voz.
+ *   Cada archivo se comprime (si es imagen), se sube a Storage con progreso
+ *   real y cancelación, y viaja en `attachments` al enviar.
  */
 export function Composer({
   chatName,
@@ -148,6 +183,8 @@ export function Composer({
   sending,
   members,
   onSend,
+  wsId = null,
+  mediaBucket,
   onValueChange,
   edit = null,
   onSaveEdit,
@@ -156,19 +193,28 @@ export function Composer({
   onCancelReply,
   placeholder: placeholderOverride,
   mode = "chat",
+  disabled = false,
 }: ComposerProps): React.JSX.Element {
   const [value, setValue] = React.useState("");
   const [attachOpen, setAttachOpen] = React.useState(false);
   const [mention, setMention] = React.useState<MentionState | null>(null);
+  const [pendings, setPendings] = React.useState<PendingAttachment[]>([]);
+  const [recording, setRecording] = React.useState(false);
+  const [notice, setNotice] = React.useState<string | null>(null);
   const reduceMotion = useReducedMotion();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const wrapRef = React.useRef<HTMLDivElement>(null);
+  const photoRef = React.useRef<HTMLInputElement>(null);
+  const cameraRef = React.useRef<HTMLInputElement>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const controllers = React.useRef(new Map<string, AbortController>());
   const hasText = value.trim() !== "";
   const editingId = edit?.id ?? null;
   const editingText = edit?.text ?? "";
   // T17: en el feed de Publicaciones el composer va arriba, no es una barra
   // pegada abajo, y no lleva menciones (no hay menú @ ni @Loki).
   const isPost = mode === "post";
+  const bucket: MediaBucket = mediaBucket ?? (isPost ? "post-media" : "chat-media");
 
   const placeholder =
     placeholderOverride ??
@@ -191,6 +237,142 @@ export function Composer({
     });
   }, [editingId, editingText, onValueChange]);
 
+  // Al desmontar se cancelan las subidas en curso (evita fugas de red).
+  React.useEffect(() => {
+    const live = controllers.current;
+    return () => {
+      live.forEach((controller) => controller.abort());
+      live.clear();
+    };
+  }, []);
+
+  const removePending = React.useCallback((id: string) => {
+    controllers.current.get(id)?.abort();
+    controllers.current.delete(id);
+    setPendings((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target?.previewUrl !== null && target?.previewUrl !== undefined) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((item) => item.id !== id);
+    });
+  }, []);
+
+  /** Comprueba tamaño, comprime (si es imagen) y sube cada archivo. */
+  const addFiles = React.useCallback(
+    (files: File[]) => {
+      if (files.length === 0) return;
+      if (wsId === null || wsId.trim() === "") {
+        setNotice("Elige un espacio para adjuntar archivos.");
+        return;
+      }
+      const spaceId: string = wsId;
+      setNotice(null);
+      for (const original of files) {
+        const tooBig = validateFileSize(original);
+        if (tooBig !== null) {
+          setNotice(tooBig);
+          continue;
+        }
+        const id = crypto.randomUUID();
+        const controller = new AbortController();
+        controllers.current.set(id, controller);
+        const kind = kindFromFile(original);
+        const previewUrl =
+          kind === "image" || kind === "video" ? URL.createObjectURL(original) : null;
+        setPendings((prev) => [
+          ...prev,
+          {
+            id,
+            name: original.name !== "" ? original.name : "archivo",
+            kind,
+            previewUrl,
+            status: "uploading",
+            progress: 0,
+            result: null,
+            error: null,
+          },
+        ]);
+        void (async () => {
+          try {
+            const file = kind === "image" ? await compressImage(original) : original;
+            if (controller.signal.aborted) return;
+            const uploaded = await uploadAttachment(spaceId, file, {
+              bucket,
+              signal: controller.signal,
+              onProgress: (percent) => {
+                setPendings((prev) =>
+                  prev.map((item) =>
+                    item.id === id ? { ...item, progress: percent } : item,
+                  ),
+                );
+              },
+            });
+            setPendings((prev) =>
+              prev.map((item) =>
+                item.id === id
+                  ? {
+                      ...item,
+                      name: uploaded.name,
+                      kind: uploaded.kind,
+                      duration: uploaded.duration,
+                      status: "ready",
+                      progress: 100,
+                      result: uploaded,
+                    }
+                  : item,
+              ),
+            );
+          } catch (error: unknown) {
+            // Cancelar quita la fila en silencio; el error real se muestra.
+            if (error instanceof DOMException && error.name === "AbortError") {
+              setPendings((prev) => prev.filter((item) => item.id !== id));
+            } else {
+              setPendings((prev) =>
+                prev.map((item) =>
+                  item.id === id
+                    ? {
+                        ...item,
+                        status: "error",
+                        error:
+                          error instanceof Error ? error.message : "No se pudo subir.",
+                      }
+                    : item,
+                ),
+              );
+            }
+          } finally {
+            controllers.current.delete(id);
+          }
+        })();
+      }
+    },
+    [wsId, bucket],
+  );
+
+  const handleAttachOption = React.useCallback(
+    (option: AttachOption) => {
+      if (option === "photo") photoRef.current?.click();
+      else if (option === "camera") cameraRef.current?.click();
+      else if (option === "file") fileRef.current?.click();
+      else setRecording(true);
+    },
+    [],
+  );
+
+  const handleVoiceSend = React.useCallback(
+    (blob: Blob) => {
+      setRecording(false);
+      if (blob.size === 0) return;
+      const ext = voiceExtension(blob.type);
+      const file = new File([blob], `nota-de-voz.${ext}`, {
+        type: blob.type !== "" ? blob.type : "audio/webm",
+      });
+      addFiles([file]);
+    },
+    [addFiles],
+  );
+
   const allCandidates = React.useMemo<MentionCandidate[]>(
     () => [LOKI_CANDIDATE, ...members],
     [members],
@@ -207,6 +389,24 @@ export function Composer({
     mention === null
       ? 0
       : Math.min(mention.active, Math.max(0, filtered.length - 1));
+
+  const readyAttachments = React.useMemo(
+    () =>
+      pendings.filter(
+        (item): item is PendingAttachment & { result: UploadedAttachment } =>
+          item.status === "ready" && item.result !== null,
+      ),
+    [pendings],
+  );
+  const uploading = pendings.some((item) => item.status === "uploading");
+  // Se puede enviar con texto, con adjuntos ya subidos, o con ambos. Mientras
+  // algo sube o se graba, el envío espera (evita mandar el texto sin su foto).
+  const canSend =
+    (hasText || readyAttachments.length > 0) &&
+    !sending &&
+    !disabled &&
+    !uploading &&
+    !recording;
 
   const autoGrow = React.useCallback(() => {
     const el = textareaRef.current;
@@ -275,22 +475,51 @@ export function Composer({
     },
     [mention, value, onValueChange],
   );
-
   const send = React.useCallback(() => {
-    const text = value.trim();
-    if (text === "" || sending) return;
+    if (disabled || sending) return;
+    // Límites estrictos espejo de la Edge (`src/lib/validators.ts`).
+    const text = validMessageText(value) ?? (value.trim() === "" ? "" : null);
+    const ready = readyAttachments;
+    if (text === "" && ready.length === 0) {
+      // Solo espacios: se limpia sin enviar.
+      setValue("");
+      return;
+    }
+    if (text === null) {
+      setNotice("El mensaje no puede superar los 4000 caracteres.");
+      return;
+    }
     // T17: sin menciones en el feed de posts.
     const mentions = isPost ? [] : resolveMentionIds(value, allCandidates);
-    // En modo edición el mismo Enter guarda con editMessage.
+    // En modo edición se guarda solo el texto (los adjuntos no se editan y
+    // se quedan pendientes para el próximo envío).
+    const attachments: MessageAttachment[] | undefined =
+      editingId === null && ready.length > 0
+        ? ready.map((item) => item.result)
+        : undefined;
+    // En modo edición el mismo Enter guarda con editMessage (sin adjuntos).
     if (editingId !== null) onSaveEdit?.(text, mentions);
-    else onSend(text, mentions);
+    else onSend(text, mentions, attachments);
     setValue("");
     setMention(null);
+    setNotice(null);
+    // Los enviados liberan su vista previa; los que fallaron se quedan.
+    // En edición no se toca nada (los pendientes siguen suyos).
+    if (editingId === null) {
+      setPendings((prev) => {
+        for (const item of prev) {
+          if (item.status === "ready" && item.previewUrl !== null) {
+            URL.revokeObjectURL(item.previewUrl);
+          }
+        }
+        return prev.filter((item) => item.status !== "ready");
+      });
+    }
     onValueChange?.("");
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
-  }, [value, sending, editingId, isPost, onSaveEdit, onSend, allCandidates, onValueChange]);
+  }, [value, sending, editingId, isPost, onSaveEdit, onSend, readyAttachments, allCandidates, onValueChange, disabled]);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (open && mention !== null) {
@@ -392,22 +621,154 @@ export function Composer({
             </button>
           </div>
         ) : null}
+        {/* Adjuntos en curso + grabadora, sobre la pastilla de texto. */}
+        {pendings.length > 0 || recording ? (
+          <div className="mb-2 flex flex-col gap-2" aria-label="Adjuntos">
+            {pendings.map((item) =>
+              item.status === "uploading" ? (
+                <UploadProgress
+                  key={item.id}
+                  fileName={item.name}
+                  progress={item.progress}
+                  onCancel={() => removePending(item.id)}
+                />
+              ) : item.status === "error" ? (
+                <div
+                  key={item.id}
+                  role="alert"
+                  className="flex items-center gap-2 rounded-2xl border border-danger/40 bg-surface-soft px-3 py-2"
+                >
+                  <p className="min-w-0 flex-1 truncate text-body-sm text-danger">
+                    {item.error ?? "No se pudo subir."}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => removePending(item.id)}
+                    aria-label={`Quitar ${item.name}`}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none interactive active:bg-surface"
+                  >
+                    <Icon icon={X} size={20} />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-2 rounded-2xl border border-divider bg-surface-soft px-2 py-1.5"
+                >
+                  {item.previewUrl !== null ? (
+                    item.kind === "video" ? (
+                      <video
+                        src={item.previewUrl}
+                        preload="metadata"
+                        playsInline
+                        className="h-11 w-11 shrink-0 rounded-xl bg-black object-cover"
+                      />
+                    ) : (
+                      <img
+                        src={item.previewUrl}
+                        alt={item.name}
+                        className="h-11 w-11 shrink-0 rounded-xl bg-surface object-cover"
+                      />
+                    )
+                  ) : (
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface text-muted-foreground">
+                      <Icon icon={item.kind === "audio" ? FileAudio : FileIcon} size={22} />
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-body-sm font-medium leading-5 text-foreground">
+                      {item.name}
+                    </span>
+                    <span className="block text-meta leading-4 text-accent">
+                      {item.duration !== undefined
+                        ? `Listo · ${formatDuration(item.duration)}`
+                        : "Listo para enviar"}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removePending(item.id)}
+                    aria-label={`Quitar ${item.name}`}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none interactive active:bg-surface"
+                  >
+                    <Icon icon={X} size={20} />
+                  </button>
+                </div>
+              ),
+            )}
+            {recording ? (
+              <VoiceRecorder
+                onCancel={() => setRecording(false)}
+                onSend={handleVoiceSend}
+              />
+            ) : null}
+          </div>
+        ) : null}
+        {notice !== null ? (
+          <p role="alert" className="mb-2 text-center text-body-sm text-danger">
+            {notice}
+          </p>
+        ) : null}
+        {/* Inputs ocultos: galería, cámara y archivo genérico. */}
+        <input
+          ref={photoRef}
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          className="hidden"
+          aria-hidden="true"
+          tabIndex={-1}
+          onChange={(event) => {
+            addFiles(Array.from(event.target.files ?? []));
+            event.target.value = "";
+          }}
+        />
+        <input
+          ref={cameraRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          aria-hidden="true"
+          tabIndex={-1}
+          onChange={(event) => {
+            addFiles(Array.from(event.target.files ?? []));
+            event.target.value = "";
+          }}
+        />
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          className="hidden"
+          aria-hidden="true"
+          tabIndex={-1}
+          onChange={(event) => {
+            addFiles(Array.from(event.target.files ?? []));
+            event.target.value = "";
+          }}
+        />
         <div className="flex items-end gap-2">
           {isPost ? (
-            // T17: la imagen llega pronto; el botón queda visible y deshabilitado.
+            // Publicaciones: el botón de imagen abre la galería (mismo flujo).
             <button
               type="button"
-              disabled
-              title={POSTS_MEDIA_SOON}
+              onClick={() => photoRef.current?.click()}
+              title={POSTS_MEDIA_LABEL}
               aria-label={POSTS_MEDIA_LABEL}
-              className="flex h-11 w-11 shrink-0 cursor-not-allowed items-center justify-center rounded-full text-muted-foreground outline-none"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-foreground outline-none interactive active:bg-surface-soft"
             >
               <Icon icon={ImageIcon} size={22} />
             </button>
           ) : (
             <div className="relative shrink-0">
               <AnimatePresence>
-                {attachOpen ? <AttachMenu onClose={() => setAttachOpen(false)} /> : null}
+                {attachOpen ? (
+                  <AttachMenu
+                    onClose={() => setAttachOpen(false)}
+                    onSelect={handleAttachOption}
+                  />
+                ) : null}
               </AnimatePresence>
               <IconButton
                 variant="floating"
@@ -464,6 +825,7 @@ export function Composer({
               ref={textareaRef}
               rows={1}
               value={value}
+              disabled={disabled}
               onChange={(event) => {
                 const next = event.target.value;
                 setValue(next);
@@ -479,24 +841,25 @@ export function Composer({
               )}
               style={{ maxHeight: 120 }}
             />
-            {!hasText && !isPost ? (
+            {!hasText && !isPost && readyAttachments.length === 0 ? (
               <button
                 type="button"
-                disabled
-                title="Próximamente"
-                aria-label="Dictar por voz"
-                className="flex h-9 w-9 shrink-0 cursor-not-allowed items-center justify-center rounded-full text-muted-foreground outline-none"
+                onClick={() => setRecording((active) => !active)}
+                title="Nota de voz"
+                aria-label={recording ? "Cerrar grabadora" : "Grabar nota de voz"}
+                aria-expanded={recording}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none interactive active:bg-surface"
               >
                 <Icon icon={Mic} size={20} />
               </button>
             ) : null}
             {isPost ? (
-              // Botón "Publicar": siempre visible, deshabilitado sin texto.
+              // Botón "Publicar": siempre visible, deshabilitado sin texto ni imagen.
               <Button
                 type="button"
                 size="sm"
                 onClick={send}
-                disabled={!hasText || sending}
+                disabled={!canSend}
                 aria-label={POSTS_PUBLISH_LABEL}
                 className="shrink-0"
               >
@@ -504,12 +867,12 @@ export function Composer({
               </Button>
             ) : (
               <AnimatePresence initial={false}>
-                {hasText ? (
+                {hasText || readyAttachments.length > 0 ? (
                   <motion.button
                     key="send"
                     type="button"
                     onClick={send}
-                    disabled={sending}
+                    disabled={!canSend}
                     aria-label={editingId !== null ? "Guardar cambios" : "Enviar mensaje"}
                     initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.8 }}
                     animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
@@ -518,6 +881,7 @@ export function Composer({
                     className={cn(
                       "flex h-9 w-9 shrink-0 items-center justify-center rounded-full outline-none interactive-solid",
                       "bg-foreground text-background dark:bg-white dark:text-black",
+                      !canSend && "opacity-40",
                     )}
                   >
                     <Icon icon={ArrowUp} size={20} />

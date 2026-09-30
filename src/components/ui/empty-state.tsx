@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import type { LucideIcon } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
@@ -6,6 +7,8 @@ type EmptyStateProps = {
   icon: LucideIcon;
   title: string;
   description: string;
+  /** Acción útil del estado vacío (todas las pantallas la ofrecen). */
+  action?: { label: string; onClick: () => void };
   /** Ajustes de layout (p. ej. Loki IA, que añade chips debajo). */
   className?: string;
 };
@@ -15,6 +18,7 @@ export function EmptyState({
   icon,
   title,
   description,
+  action,
   className,
 }: EmptyStateProps): React.JSX.Element {
   return (
@@ -31,6 +35,11 @@ export function EmptyState({
       <p className="mt-1 max-w-xs text-body-sm leading-5 text-muted-foreground">
         {description}
       </p>
+      {action !== undefined ? (
+        <Button type="button" variant="secondary" onClick={action.onClick} className="mt-4">
+          {action.label}
+        </Button>
+      ) : null}
     </div>
   );
 }

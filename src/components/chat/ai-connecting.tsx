@@ -2,15 +2,14 @@
 
 import { Sparkles } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
-import { AI_CONNECTING_TEXT } from "@/lib/chat/ai-mock";
+import { AI_CONNECTING_TEXT } from "@/lib/ai/constants";
 
 /**
- * T18: "Conectando con Loki…".
+ * "Conectando con Loki…".
  *
- * Aparece SOLO con `NEXT_PUBLIC_AI_ENABLED === "true"`, mientras se espera
- * la respuesta de la callable `aiChat` (que todavía no se llama desde el
- * cliente). Con la IA apagada no se muestra: la respuesta simulada aparece
- * directamente con su prefijo "[Simulado] " (ver `conversation-view.tsx`).
+ * Aparece en `/chat/loki-ia` mientras la Edge Function genera la respuesta
+ * (streaming real). Sin proveedor configurado no se muestra: en su lugar va
+ * el aviso "Loki IA sin configurar" (ver `conversation-view.tsx`).
  */
 export function AiConnecting(): React.JSX.Element {
   return (

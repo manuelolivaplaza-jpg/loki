@@ -64,3 +64,8 @@ functions/*.local
 supabase/.temp/
 supabase/functions/.env
 supabase/functions/.env.*
+
+# capacitor android (T4): FCM sin claves en el repo
+android/app/google-services.json
+*.jks
+*.keystore

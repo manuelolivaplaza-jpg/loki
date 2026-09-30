@@ -7,6 +7,7 @@ import { Card, CardDivider, CardRow } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { SectionLabel } from "@/components/ui/section-label";
 import { kindLabel } from "@/components/workspaces/workspace-options";
+import { StatusEditor } from "@/components/presence/status-editor";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceStore, useWorkspaces } from "@/stores/workspace-store";
@@ -73,6 +74,13 @@ export default function PerfilPage(): React.JSX.Element {
           </CardRow>
         </Card>
       </section>
+
+      <div className="mt-6">
+        <StatusEditor
+          wsId={currentWorkspace?.wsId ?? null}
+          uid={user?.uid ?? null}
+        />
+      </div>
 
       <section aria-label="Espacios" className="mt-6">
         <SectionLabel>Espacios</SectionLabel>

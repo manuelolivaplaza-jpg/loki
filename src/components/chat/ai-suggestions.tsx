@@ -1,6 +1,6 @@
 "use client";
 
-import { AI_SUGGESTIONS } from "@/lib/chat/ai-mock";
+import { AI_SUGGESTIONS } from "@/lib/ai/constants";
 
 type AiSuggestionsProps = {
   /**

@@ -1,35 +1,276 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Lightbulb } from "lucide-react";
-import { SECTIONS } from "@/components/shell/sections";
+import { Lightbulb, Plus, X } from "lucide-react";
 import { Card, CardDivider, CardRow } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/ui/icon";
+import { IconButton } from "@/components/ui/icon-button";
 import { SectionLabel } from "@/components/ui/section-label";
+import { inputClassName, labelClassName } from "@/components/auth/auth-ui";
+import { Button } from "@/components/ui/button";
+import { QueryRetry } from "@/components/ui/query-retry";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ProjectDetail } from "@/components/projects/project-detail";
+/** Diálogo de proyecto por code splitting: solo se descarga al crear/editar. */
+const ProjectDialog = dynamic(
+  () => import("@/components/projects/project-dialog").then((mod) => mod.ProjectDialog),
+  { ssr: false },
+);
+import { ProjectsList } from "@/components/projects/projects-list";
+import {
+  useConvertIdea,
+  useCreateIdea,
+  useDeleteIdea,
+  useIdeas,
+  useProjects,
+} from "@/hooks/use-organizer";
+import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaces } from "@/stores/workspace-store";
+import type { IdeaItem, ProjectItem } from "@/types/organizer";
 import { cn } from "@/lib/utils";
 
 export type ProyectosTab = "proyectos" | "ideas";
-
-type IdeaItem = {
-  id: string;
-  title: string;
-  detail: string;
-  tag: string;
-};
-
-// TODO(fase-2): ideas de ejemplo; traer ideas reales de Firestore.
-const IDEAS_MOCK: readonly IdeaItem[] = [
-  { id: "i1", title: "Huerto en el balcón", detail: "Empezar con albahaca y tomates cherry", tag: "Casa" },
-  { id: "i2", title: "Viaje a la costa", detail: "Escapada de fin de semana en primavera", tag: "Viajes" },
-  { id: "i3", title: "App de recetas familiares", detail: "Recopilar las recetas de la abuela", tag: "Proyecto" },
-];
 
 const TABS: readonly { key: ProyectosTab; label: string }[] = [
   { key: "proyectos", label: "Proyectos" },
   { key: "ideas", label: "Ideas" },
 ];
+
+function IdeasTab({ wsId }: { wsId: string | null }): React.JSX.Element {
+  const user = useSessionStore((state) => state.user);
+  const ideasQuery = useIdeas(wsId);
+  const createIdea = useCreateIdea(wsId);
+  const deleteIdea = useDeleteIdea();
+  const convertIdea = useConvertIdea();
+  const projectsQuery = useProjects(wsId);
+
+  const [formOpen, setFormOpen] = React.useState(false);
+  const [title, setTitle] = React.useState("");
+  const [detail, setDetail] = React.useState("");
+  const [tag, setTag] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+  const [convertFor, setConvertFor] = React.useState<string | null>(null);
+  const [convertProject, setConvertProject] = React.useState("");
+
+  const ideas = ideasQuery.data ?? [];
+  const projects = (projectsQuery.data ?? []).filter((item) => item.status === "active");
+
+  async function handleCreate(formEvent: React.FormEvent<HTMLFormElement>): Promise<void> {
+    formEvent.preventDefault();
+    if (user === null) {
+      setError("Tu sesión expiró. Vuelve a iniciar sesión.");
+      return;
+    }
+    setError(null);
+    try {
+      await createIdea.mutateAsync({ uid: user.uid, title, detail, tag });
+      setTitle("");
+      setDetail("");
+      setTag("");
+      setFormOpen(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "No se pudo crear la idea.");
+    }
+  }
+
+  async function handleConvert(idea: IdeaItem): Promise<void> {
+    if (user === null || convertProject === "") return;
+    setError(null);
+    try {
+      await convertIdea.mutateAsync({ idea, projectId: convertProject, uid: user.uid });
+      setConvertFor(null);
+      setConvertProject("");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "No se pudo convertir la idea.");
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between px-2">
+        <SectionLabel>Ideas del espacio</SectionLabel>
+        <IconButton variant="solid" aria-label="Nueva idea" onClick={() => setFormOpen(true)}>
+          <Icon icon={Plus} size={20} />
+        </IconButton>
+      </div>
+      {ideasQuery.isPending && ideas.length === 0 ? (
+        <div aria-label="Cargando ideas" className="flex flex-col gap-2">
+          {[0, 1].map((index) => (
+            <span
+              key={index}
+              aria-hidden="true"
+              className="block h-16 animate-pulse rounded-lg bg-surface-soft"
+            />
+          ))}
+        </div>
+      ) : ideasQuery.isError && ideas.length === 0 ? (
+        <QueryRetry
+          message="No se pudieron cargar las ideas."
+          onRetry={() => void ideasQuery.refetch()}
+        />
+      ) : ideas.length === 0 ? (
+        <Card>
+          <p className="px-4 py-6 text-center text-body-sm text-muted-foreground">
+            Sin ideas. Crea la primera con +.
+          </p>
+        </Card>
+      ) : (
+        <Card>
+          {ideas.map((idea, index) => (
+            <React.Fragment key={idea.id}>
+              {index > 0 ? <CardDivider /> : null}
+              <CardRow minHeight="15">
+                <span
+                  aria-hidden="true"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-background text-foreground dark:bg-surface-2"
+                >
+                  <Icon icon={Lightbulb} size={22} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-body font-semibold leading-6 text-foreground">
+                    {idea.title}
+                  </span>
+                  {idea.detail !== "" ? (
+                    <span className="block truncate text-body-sm leading-5 text-muted-foreground">
+                      {idea.detail}
+                    </span>
+                  ) : null}
+                  {idea.convertedTaskId !== null ? (
+                    <span className="block text-meta leading-5 text-success">
+                      Convertida en tarea
+                    </span>
+                  ) : convertFor === idea.id ? (
+                    <span className="mt-1 flex items-center gap-2">
+                      <select
+                        aria-label="Proyecto destino"
+                        value={convertProject}
+                        onChange={(formEvent) => setConvertProject(formEvent.target.value)}
+                        className="h-9 min-w-0 flex-1 rounded-sm bg-background px-2 text-body-sm text-foreground outline-none dark:bg-surface-2"
+                      >
+                        <option value="">Elige proyecto…</option>
+                        {projects.map((project) => (
+                          <option key={project.id} value={project.id}>
+                            {project.emoji} {project.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={convertProject === "" || convertIdea.isPending}
+                        onClick={() => void handleConvert(idea)}
+                        className="shrink-0 text-body-sm font-semibold text-mention outline-none disabled:opacity-60"
+                      >
+                        Convertir
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConvertFor(idea.id);
+                        setConvertProject("");
+                        setError(null);
+                      }}
+                      className="mt-0.5 text-body-sm font-medium text-mention outline-none [@media(hover:hover)]:underline"
+                    >
+                      Convertir en tarea
+                    </button>
+                  )}
+                </span>
+                {idea.tag !== "" ? (
+                  <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-meta leading-4 text-muted-foreground dark:bg-surface-2">
+                    {idea.tag}
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label={`Eliminar idea ${idea.title}`}
+                  onClick={() => {
+                    setError(null);
+                    deleteIdea.mutate(idea.id, {
+                      onError: (err) => setError(err.message),
+                    });
+                  }}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none interactive"
+                >
+                  <Icon icon={X} size={20} />
+                </button>
+              </CardRow>
+            </React.Fragment>
+          ))}
+        </Card>
+      )}
+      {error !== null ? (
+        <p role="alert" className="mt-2 text-meta text-danger">
+          {error}
+        </p>
+      ) : null}
+      <Dialog open={formOpen} onOpenChange={(next) => { if (!next) setFormOpen(false); }}>
+        <DialogContent aria-label="Nueva idea">
+          <DialogTitle>Nueva idea</DialogTitle>
+          <DialogDescription>Se guarda en el espacio actual.</DialogDescription>
+          <form onSubmit={(formEvent) => void handleCreate(formEvent)} className="flex flex-col gap-4">
+            <div>
+              <label htmlFor="idea-title" className={labelClassName}>
+                Título
+              </label>
+              <input
+                id="idea-title"
+                name="title"
+                type="text"
+                required
+                maxLength={120}
+                value={title}
+                onChange={(formEvent) => setTitle(formEvent.target.value)}
+                placeholder="p. ej. Huerto en el balcón"
+                className={inputClassName}
+              />
+            </div>
+            <div>
+              <label htmlFor="idea-detail" className={labelClassName}>
+                Detalle
+              </label>
+              <textarea
+                id="idea-detail"
+                name="detail"
+                rows={2}
+                value={detail}
+                onChange={(formEvent) => setDetail(formEvent.target.value)}
+                placeholder="Opcional"
+                className={`${inputClassName} min-h-11 py-3`}
+              />
+            </div>
+            <div>
+              <label htmlFor="idea-tag" className={labelClassName}>
+                Etiqueta
+              </label>
+              <input
+                id="idea-tag"
+                name="tag"
+                type="text"
+                maxLength={30}
+                value={tag}
+                onChange={(formEvent) => setTag(formEvent.target.value)}
+                placeholder="p. ej. Casa"
+                className={inputClassName}
+              />
+            </div>
+            <Button type="submit" disabled={createIdea.isPending} className="w-full">
+              {createIdea.isPending ? "Guardando…" : "Crear idea"}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
 
 export function ProyectosTabs({
   defaultTab,
@@ -38,13 +279,32 @@ export function ProyectosTabs({
 }): React.JSX.Element {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { currentWorkspaceId } = useWorkspaces();
+  const projectsQuery = useProjects(currentWorkspaceId);
+
   const activeTab: ProyectosTab =
     searchParams.get("tab") === "ideas" ? "ideas" : defaultTab === "ideas" ? "ideas" : "proyectos";
-  const section = SECTIONS.proyectos;
+  const projectParam = searchParams.get("project");
+  const taskParam = searchParams.get("task");
+
+  const [projectDialogOpen, setProjectDialogOpen] = React.useState(false);
+  const [editingProject, setEditingProject] = React.useState<ProjectItem | null>(null);
+
+  const projects = projectsQuery.data ?? [];
+  const openProject =
+    projectParam !== null ? (projects.find((item) => item.id === projectParam) ?? null) : null;
 
   function selectTab(tab: ProyectosTab): void {
     if (tab === activeTab) return;
     router.replace(tab === "ideas" ? "/proyectos?tab=ideas" : "/proyectos");
+  }
+
+  function openProjectDetail(project: ProjectItem): void {
+    router.replace(`/proyectos?project=${project.id}`);
+  }
+
+  function closeProjectDetail(): void {
+    router.replace("/proyectos");
   }
 
   return (
@@ -78,47 +338,62 @@ export function ProyectosTabs({
       </div>
 
       {activeTab === "ideas" ? (
+        <IdeasTab wsId={currentWorkspaceId} />
+      ) : openProject !== null ? (
         <div className="mt-2">
-          <SectionLabel>Ideas del espacio</SectionLabel>
-          <Card>
-            {IDEAS_MOCK.map((idea, index) => (
-              <React.Fragment key={idea.id}>
-                {index > 0 ? <CardDivider /> : null}
-                <CardRow minHeight="15">
-                  <span
-                    aria-hidden="true"
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-background text-foreground dark:bg-surface-2"
-                  >
-                    <Icon icon={Lightbulb} size={22} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-body font-semibold leading-6 text-foreground">
-                      {idea.title}
-                    </span>
-                    <span className="block truncate text-body-sm leading-5 text-muted-foreground">
-                      {idea.detail}
-                    </span>
-                  </span>
-                  <span className="shrink-0 rounded-full bg-background px-2 py-0.5 text-meta leading-4 text-muted-foreground dark:bg-surface-2">
-                    {idea.tag}
-                  </span>
-                </CardRow>
-              </React.Fragment>
-            ))}
-          </Card>
-          <p className="mt-3 px-2 text-meta leading-5 text-muted-foreground">
-            Crea una con Nueva idea desde el menú +.
-          </p>
+          <ProjectDetail
+            project={openProject}
+            deepTaskId={taskParam}
+            onBack={closeProjectDetail}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setEditingProject(openProject);
+              setProjectDialogOpen(true);
+            }}
+            className="mt-3 w-full text-center text-body-sm font-medium text-muted-foreground outline-none [@media(hover:hover)]:underline"
+          >
+            Editar proyecto
+          </button>
         </div>
       ) : (
         <div className="mt-2">
-          <EmptyState
-            icon={section.icon}
-            title={section.emptyTitle}
-            description={section.emptyDescription}
-          />
+          {projectsQuery.isPending && projects.length === 0 ? (
+            <div aria-label="Cargando proyectos" className="flex flex-col gap-3">
+              {[0, 1].map((index) => (
+                <span
+                  key={index}
+                  aria-hidden="true"
+                  className="block h-24 animate-pulse rounded-lg bg-surface-soft"
+                />
+              ))}
+            </div>
+          ) : projectsQuery.isError && projects.length === 0 ? (
+            <QueryRetry
+              message="No se pudieron cargar los proyectos."
+              onRetry={() => void projectsQuery.refetch()}
+            />
+          ) : (
+            <ProjectsList
+              projects={projects}
+              onOpen={openProjectDetail}
+              onNew={() => {
+                setEditingProject(null);
+                setProjectDialogOpen(true);
+              }}
+            />
+          )}
         </div>
       )}
+
+      {projectDialogOpen ? (
+        <ProjectDialog
+          open={projectDialogOpen}
+          project={editingProject}
+          onClose={() => setProjectDialogOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

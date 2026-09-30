@@ -10,17 +10,18 @@ import { IconButton } from "@/components/ui/icon-button";
 import { Pill } from "@/components/ui/pill";
 import { ProfileMenu } from "@/components/shell/profile-menu";
 import {
-  PlaceholderDialog,
   QuickActionsMobileMenu,
 } from "@/components/shell/quick-actions";
 import { avatarColorFor } from "@/lib/avatar-color";
-import { AI_CHAT_ID, AI_CHAT_NAME } from "@/lib/chat/ai-mock";
+import { AI_CHAT_ID, AI_CHAT_NAME } from "@/lib/ai/constants";
 import { POSTS_CHAT_EMOJI, POSTS_CHAT_NAME } from "@/lib/chat/posts";
 import { spring } from "@/lib/motion";
 import { getConversationId } from "@/lib/data/chats";
 import { useChats } from "@/hooks/use-chat";
 import { useAppPathname } from "@/lib/navigation";
 import { MobileWorkspaceSwitcher } from "@/components/workspaces/mobile-workspace-switcher";
+import { NotificationsBell } from "@/components/notifications/notifications-bell";
+import { useSearchStore } from "@/stores/search-store";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { AVATAR_FALLBACK_COLOR } from "@/types/models";
 
@@ -113,7 +114,7 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [actionsOpen, setActionsOpen] = React.useState(false);
-  const [searchOpen, setSearchOpen] = React.useState(false);
+  const setSearchOpen = useSearchStore((state) => state.setOpen);
 
   const chatId = getConversationId(pathname, searchParams.get("id"));
   const isChatList = pathname === "/chat";
@@ -166,6 +167,7 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
         </div>
         {isChatList ? (
           <div className="flex shrink-0 items-center gap-2">
+            <NotificationsBell />
             <IconButton variant="floating" aria-label="Buscar" onClick={() => setSearchOpen(true)}>
               <Icon icon={Search} size={20} />
             </IconButton>
@@ -186,18 +188,16 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
             </IconButton>
           </div>
         ) : (
-          <ProfileMenu size={44} />
+          <div className="flex shrink-0 items-center">
+            <NotificationsBell />
+            <ProfileMenu size={44} />
+          </div>
         )}
       </div>
       <span className="sr-only">{title}</span>
       <QuickActionsMobileMenu
         open={actionsOpen}
         onClose={() => setActionsOpen(false)}
-      />
-      <PlaceholderDialog
-        title="Buscar"
-        open={searchOpen}
-        onClose={() => setSearchOpen(false)}
       />
     </header>
   );

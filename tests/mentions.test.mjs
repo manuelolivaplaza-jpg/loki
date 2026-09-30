@@ -17,7 +17,6 @@ import {
   filterMentionCandidates,
   getMentionQuery,
   insertMention,
-  isAiEnabled,
   mentionsLoki,
   normalizeMention,
   parseMentionSegments,
@@ -216,11 +215,8 @@ ok(!mentionsLoki("hay pan"), "'hay' no es 'ai'");
   );
 }
 
-// --- flag + aviso ------------------------------------------------------------
-equal(isAiEnabled("true"), true, "flag true habilita");
-equal(isAiEnabled("false"), false, "flag false deshabilita");
-equal(isAiEnabled(undefined), false, "sin flag deshabilita (default)");
-equal(LOKI_DISABLED_TEXT, "Loki está desactivada. Actívala en Configuración → Loki IA.", "texto exacto del aviso");
+// --- aviso de Loki sin configurar --------------------------------------------
+equal(LOKI_DISABLED_TEXT, "Loki IA sin configurar. Pide al administrador que configure el proveedor.", "texto exacto del aviso");
 equal(LOKI_DISABLED_MENTION, "loki-disabled", "marca del aviso");
 equal(MENTION_COLOR, "#1D9BF0", "color de resaltado");
 equal(LOKI_DISPLAY_NAME, "Loki", "nombre visible de la IA");

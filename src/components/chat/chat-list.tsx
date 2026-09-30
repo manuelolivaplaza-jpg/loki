@@ -6,6 +6,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Card, CardRow } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/ui/icon";
+import { QueryRetry } from "@/components/ui/query-retry";
 import { SectionLabel } from "@/components/ui/section-label";
 import { LOKI_IA_CHAT } from "@/lib/data/chats";
 import { formatChatTime } from "@/lib/chat/format";
@@ -184,11 +185,17 @@ export function ChatList(): React.JSX.Element {
             </li>
           ))}
         </ul>
+      ) : chatsQuery.isError ? (
+        <QueryRetry
+          message="No se pudieron cargar las conversaciones."
+          onRetry={() => void chatsQuery.refetch()}
+        />
       ) : realChats.length === 0 ? (
         <EmptyState
           icon={MessageCircle}
           title="Sin conversaciones"
           description="Todavía no hay chats en este espacio. General se crea con el espacio."
+          action={{ label: "Recargar", onClick: () => void chatsQuery.refetch() }}
         />
       ) : (
         <ul>
@@ -201,11 +208,6 @@ export function ChatList(): React.JSX.Element {
           ))}
         </ul>
       )}
-      {chatsQuery.isError ? (
-        <p role="alert" className="px-2 py-2 text-body-sm text-danger">
-          No se pudieron cargar las conversaciones.
-        </p>
-      ) : null}
     </div>
   );
 }

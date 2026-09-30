@@ -10,8 +10,12 @@ import {
 } from "@tanstack/react-query";
 import {
   ensurePostsChat,
+  fetchAiMessages,
   fetchChats,
+  fetchLatestMessages,
   fetchOlderMessages,
+  fetchReactionsFor,
+  fetchThread,
   fetchUnreadCount,
   listenAiMessages,
   listenChats,
@@ -19,11 +23,11 @@ import {
   listenMembers,
   listenMyRead,
   listenPosts,
+  listenReactions,
   listenThread,
   listenTyping,
   listMembers,
   markChatRead,
-  MESSAGES_PAGE_SIZE,
   newMessageId,
   sendAiAssistantMessage,
   sendAiUserMessage,
@@ -36,16 +40,14 @@ import { useMessageStatusStore } from "@/lib/chat/message-status";
 import { isPostMessage, POSTS_CHAT_ID } from "@/lib/chat/posts";
 import type {
   ChatDoc,
+  MessageAttachment,
   MessageDoc,
   ReadReceiptDoc,
   TypingDoc,
 } from "@/types/chat";
 import type { WorkspaceMember } from "@/types/models";
-import type {
-  DocumentData,
-  QueryDocumentSnapshot,
-} from "firebase/firestore";
-import { Timestamp } from "firebase/firestore";
+// `Timestamp` local (los tipos públicos lo exigen; ver `src/lib/timestamp.ts`).
+import { Timestamp } from "@/lib/timestamp";
 import { useSessionStore } from "@/stores/session-store";
 
 function byCreatedAtAsc(a: MessageDoc, b: MessageDoc): number {
@@ -145,6 +147,8 @@ export type UseMessagesResult = {
   isLoadingOlder: boolean;
   isPending: boolean;
   error: Error | null;
+  /** Reintenta la carga inicial (patrón T34 `QueryRetry`). */
+  retry: () => void;
 };
 
 /**
@@ -187,13 +191,11 @@ export function useMessages(
 
   const query = useQuery<MessageDoc[], Error>({
     queryKey: ["messages", wsId, chatId],
-    queryFn: async () => [],
+    queryFn: () => fetchLatestMessages(wsId ?? "", chatId ?? ""),
     enabled,
     staleTime: Infinity,
   });
 
-  const [cursor, setCursor] =
-    React.useState<QueryDocumentSnapshot<DocumentData> | null>(null);
   const [hasMore, setHasMore] = React.useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = React.useState(false);
   const primedRef = React.useRef(false);
@@ -203,9 +205,8 @@ export function useMessages(
     const activeWsId: string = wsId;
     const activeChatId: string = chatId;
     primedRef.current = false;
-    setCursor(null);
     setHasMore(true);
-    const unsubscribe = listenLatestMessages(activeWsId, activeChatId, (latest, snapshots) => {
+    const unsubscribe = listenLatestMessages(activeWsId, activeChatId, (latest) => {
       if (!primedRef.current) {
         primedRef.current = true;
         queryClient.setQueryData<MessageDoc[]>(
@@ -216,9 +217,6 @@ export function useMessages(
         useMessageStatusStore
           .getState()
           .clearConfirmed(latest.map((item) => item.id));
-        const oldest = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
-        setCursor(oldest ?? null);
-        setHasMore(snapshots.length === MESSAGES_PAGE_SIZE);
         return;
       }
       queryClient.setQueryData<MessageDoc[]>(
@@ -234,29 +232,64 @@ export function useMessages(
     };
   }, [enabled, wsId, chatId, queryClient]);
 
-  const loadOlder = React.useCallback(async () => {
+  // Reacciones en vivo: viven en `message_reactions`, así que un evento suyo
+  // no dispara la suscripción de mensajes; se refrescan solo sus mapas.
+  React.useEffect(() => {
     if (!enabled || wsId === null || chatId === null) return;
-    if (cursor === null || isLoadingOlder || !hasMore) return;
     const activeWsId: string = wsId;
     const activeChatId: string = chatId;
-    const activeCursor = cursor;
+    const key = ["messages", activeWsId, activeChatId];
+    const unsubscribe = listenReactions(() => {
+      const cached = queryClient.getQueryData<MessageDoc[]>(key) ?? [];
+      if (cached.length === 0) return;
+      void fetchReactionsFor(cached.map((item) => item.id)).then((maps) => {
+        if (maps.size === 0) return;
+        queryClient.setQueryData<MessageDoc[]>(key, (old) =>
+          (old ?? []).map((item) => {
+            const entry = maps.get(item.id);
+            if (entry === undefined) return item;
+            return {
+              ...item,
+              reactions: { ...entry.map },
+              lastReaction: entry.last,
+            };
+          }),
+        );
+      });
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [enabled, wsId, chatId, queryClient]);
+
+  const loadOlder = React.useCallback(async () => {
+    if (!enabled || wsId === null || chatId === null) return;
+    if (isLoadingOlder || !hasMore) return;
+    const activeWsId: string = wsId;
+    const activeChatId: string = chatId;
+    // El cursor es el mensaje más antiguo en caché (clave created_at + id).
+    const cached: MessageDoc[] =
+      queryClient.getQueryData<MessageDoc[]>(["messages", activeWsId, activeChatId]) ??
+      [];
+    const oldest: MessageDoc | undefined = cached[0];
+    if (oldest === undefined) return;
     setIsLoadingOlder(true);
     try {
-      const page = await fetchOlderMessages(activeWsId, activeChatId, activeCursor, 30);
+      const page = await fetchOlderMessages(
+        activeWsId,
+        activeChatId,
+        { createdAt: oldest.createdAt.toDate().toISOString(), id: oldest.id },
+        30,
+      );
       queryClient.setQueryData<MessageDoc[]>(
         ["messages", activeWsId, activeChatId],
         (old) => mergeUnique(page.messages, old ?? []),
       );
-      const oldest =
-        page.snapshots.length > 0
-          ? page.snapshots[page.snapshots.length - 1]
-          : null;
-      if (oldest) setCursor(oldest);
       setHasMore(page.hasMore);
     } finally {
       setIsLoadingOlder(false);
     }
-  }, [enabled, wsId, chatId, cursor, isLoadingOlder, hasMore, queryClient]);
+  }, [enabled, wsId, chatId, isLoadingOlder, hasMore, queryClient]);
 
   return {
     messages: query.data ?? [],
@@ -265,6 +298,9 @@ export function useMessages(
     isLoadingOlder,
     isPending: query.isPending,
     error: query.error,
+    retry: () => {
+      void query.refetch();
+    },
   };
 }
 
@@ -273,6 +309,8 @@ export type UsePostsResult = {
   posts: MessageDoc[];
   isPending: boolean;
   error: Error | null;
+  /** Reintenta la suscripción al feed (patrón T34 `QueryRetry`). */
+  retry: () => void;
 };
 
 /** Espera antes de reintentar la suscripción al feed que falló. */
@@ -295,13 +333,10 @@ function isPermissionDenied(error: unknown): boolean {
  * espacio, en vivo y ordenados por `createdAt` descendente. Los comentarios
  * son respuestas de hilo y no entran aquí (`isPostMessage` los excluye).
  *
- * Primero asegura el chat con `ensurePostsChat` y **después** se suscribe:
- * en los espacios creados antes de T17 el doc no existe y la consulta muere
- * con `permission-denied` (las reglas resuelven `canAccessChat` sobre el doc
- * inexistente), así que sin ese paso los posts de otros nunca llegarían en
- * vivo hasta recargar. Si aun así el listener falla con `permission-denied`
- * (otro proceso lo borró, o la red cortó el stream), se muestra el estado
- * vacío sin error y se reintenta volviendo a asegurar el chat.
+ * Primero asegura el chat con `ensurePostsChat` (RPC idempotente para los
+ * espacios anteriores a T17) y **después** se suscribe. Sin acceso al espacio
+ * la RLS devuelve lista vacía, no error; si el canal falla (red), se muestra
+ * el estado vacío sin error y se reintenta volviendo a asegurar el chat.
  */
 export function usePosts(wsId: string | null): UsePostsResult {
   const queryClient = useQueryClient();
@@ -315,6 +350,8 @@ export function usePosts(wsId: string | null): UsePostsResult {
   // `ready` = el listener ya entregó su primer snapshot (o se rindió): hasta
   // entonces la vista muestra el esqueleto, no el estado vacío.
   const [ready, setReady] = React.useState(false);
+  // `nonce` = reintentos manuales (botón "Reintentar"): re-ejecuta el boot.
+  const [nonce, setNonce] = React.useState(0);
 
   // La caché la rellena el listener; la query solo existe para no perder
   // los ids al re-renderizar (mismo patrón que `useMessages`).
@@ -370,10 +407,9 @@ export function usePosts(wsId: string | null): UsePostsResult {
         (failure: Error) => {
           if (cancelled) return;
           unsubscribe = null;
-          // Con `permission-denied` el doc puede no existir todavía (o
-          // acabarse de crear): no es un error que haya que mostrar, el
-          // feed pasa a su estado vacío y la suscripción se reintenta
-          // por debajo; si vuelve a entrar un post, aparece en vivo.
+          // Un fallo del canal es casi siempre red: no es un error que haya
+          // que mostrar, el feed pasa a su estado vacío y la suscripción se
+          // reintenta por debajo; si vuelve a entrar un post, aparece en vivo.
           const denied = isPermissionDenied(failure);
           setError(denied ? null : failure);
           setReady(true);
@@ -406,7 +442,35 @@ export function usePosts(wsId: string | null): UsePostsResult {
     setError(null);
     void boot();
     return stop;
-  }, [enabled, wsId, uid, queryKey, queryClient]);
+  }, [enabled, wsId, uid, queryKey, queryClient, nonce]);
+
+  // Reacciones ("Me gusta") en vivo sobre el feed: viven en
+  // `message_reactions`, fuera de la suscripción de mensajes.
+  React.useEffect(() => {
+    if (!enabled) return;
+    const activeKey = queryKey;
+    const unsubscribe = listenReactions(() => {
+      const cached = queryClient.getQueryData<MessageDoc[]>(activeKey) ?? [];
+      if (cached.length === 0) return;
+      void fetchReactionsFor(cached.map((item) => item.id)).then((maps) => {
+        if (maps.size === 0) return;
+        queryClient.setQueryData<MessageDoc[]>(activeKey, (old) =>
+          (old ?? []).map((item) => {
+            const entry = maps.get(item.id);
+            if (entry === undefined) return item;
+            return {
+              ...item,
+              reactions: { ...entry.map },
+              lastReaction: entry.last,
+            };
+          }),
+        );
+      });
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [enabled, queryKey, queryClient]);
 
   const posts = React.useMemo(
     () => (query.data ?? []).filter(isPostMessage),
@@ -416,7 +480,13 @@ export function usePosts(wsId: string | null): UsePostsResult {
   // caché se muestra la fila en vez de parpadear el esqueleto.
   const isPending = !ready && error === null && posts.length === 0;
 
-  return { posts, isPending, error };
+  const retry = React.useCallback(() => {
+    setError(null);
+    setReady(false);
+    setNonce((n) => n + 1);
+  }, []);
+
+  return { posts, isPending, error, retry };
 }
 
 export type PublishPostInput = {
@@ -424,6 +494,7 @@ export type PublishPostInput = {
   authorName: string;
   text: string;
   mentions?: string[];
+  attachments?: MessageAttachment[];
   /** Id de cliente para el envío optimista y el reintento. */
   messageId?: string;
 };
@@ -466,6 +537,7 @@ export function usePublishPost(
         authorName: input.authorName,
         text: input.text,
         mentions: input.mentions ?? [],
+        attachments: input.attachments ?? [],
         threadParentId: null,
         type: "post",
         messageId: input.messageId,
@@ -487,7 +559,7 @@ export function usePublishPost(
         threadParentId: null,
         threadCount: 0,
         lastReplyAt: null,
-        attachments: [],
+        attachments: input.attachments ?? [],
         reactions: {},
         lastReaction: null,
         createdAt: Timestamp.now(),
@@ -529,7 +601,7 @@ export function useThread(
     parentId !== "";
   const query = useQuery<MessageDoc[], Error>({
     queryKey: ["thread", wsId, chatId, parentId],
-    queryFn: async () => [],
+    queryFn: () => fetchThread(wsId ?? "", chatId ?? "", parentId ?? ""),
     enabled,
     staleTime: Infinity,
   });
@@ -539,11 +611,36 @@ export function useThread(
     const activeWsId: string = wsId;
     const activeChatId: string = chatId;
     const activeParentId: string = parentId;
+    const key = ["thread", activeWsId, activeChatId, activeParentId];
     const unsubscribe = listenThread(activeWsId, activeChatId, activeParentId, (replies) => {
-      queryClient.setQueryData<MessageDoc[]>(
-        ["thread", activeWsId, activeChatId, activeParentId],
-        replies,
-      );
+      queryClient.setQueryData<MessageDoc[]>(key, replies);
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [enabled, wsId, chatId, parentId, queryClient]);
+
+  // Reacciones en vivo también dentro del hilo.
+  React.useEffect(() => {
+    if (!enabled || wsId === null || chatId === null || parentId === null) return;
+    const key = ["thread", wsId, chatId, parentId];
+    const unsubscribe = listenReactions(() => {
+      const cached = queryClient.getQueryData<MessageDoc[]>(key) ?? [];
+      if (cached.length === 0) return;
+      void fetchReactionsFor(cached.map((item) => item.id)).then((maps) => {
+        if (maps.size === 0) return;
+        queryClient.setQueryData<MessageDoc[]>(key, (old) =>
+          (old ?? []).map((item) => {
+            const entry = maps.get(item.id);
+            if (entry === undefined) return item;
+            return {
+              ...item,
+              reactions: { ...entry.map },
+              lastReaction: entry.last,
+            };
+          }),
+        );
+      });
     });
     return () => {
       unsubscribe();
@@ -648,7 +745,7 @@ export function useAiMessages(
   const enabled = uid !== null && uid !== "" && chatId !== null && chatId !== "";
   const query = useQuery<MessageDoc[], Error>({
     queryKey: ["aiMessages", uid, chatId],
-    queryFn: async () => [],
+    queryFn: () => fetchAiMessages(uid ?? "", chatId ?? ""),
     enabled,
     staleTime: Infinity,
   });
@@ -691,12 +788,12 @@ export function useSendAiMessage(
 }
 
 /**
- * T18: respuesta de Loki (`type: "ai"`) en el chat privado.
+ * Respuesta de Loki (`type: "ai"`) en el chat privado.
  *
- * Solo la usa el streaming SIMULADO de la fase 1-2: escribe el texto mock
- * ("[Simulado] …") que la UI revela palabra a palabra. Con el flag
- * `NEXT_PUBLIC_AI_ENABLED=true` la respuesta real la escribe el backend con
- * Admin SDK (`functions/`), nunca el cliente, y esta mutación no se llama.
+ * Se conserva por API de hooks, pero la vista ya no lo llama: la RLS solo
+ * deja `type: "user"` al cliente y el camino real es la Edge Function
+ * `loki-chat` (escribe con la service role y la respuesta llega por
+ * realtime). Si se llamara, el insert falla con mensaje en español.
  */
 export function useSendAiAssistantMessage(
   uid: string | null,

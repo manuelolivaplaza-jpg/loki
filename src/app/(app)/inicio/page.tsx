@@ -10,7 +10,6 @@ import {
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
-import { Avatar } from "@/components/ui/avatar";
 import { Card, CardDivider, CardRow } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
@@ -19,9 +18,16 @@ import { ProgressRing } from "@/components/ui/progress-ring";
 import { SectionLabel } from "@/components/ui/section-label";
 import { WeekStrip } from "@/components/ui/week-strip";
 import { PlaceholderDialog } from "@/components/shell/quick-actions";
-import { HOME_MOCK, HOME_WEEK_MARKS, type HomeDayMark } from "@/lib/mock/home";
+import {
+  useEventOccurrences,
+  useProjects,
+  useUpdateTask,
+  useWorkspaceTasks,
+} from "@/hooks/use-organizer";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaces } from "@/stores/workspace-store";
+import type { EventOccurrence, TaskItem } from "@/types/organizer";
 
 function greetingForHour(hour: number): string {
   if (hour >= 7 && hour < 13) return "Buenos días";
@@ -42,34 +48,117 @@ const QUICK_ACCESS: readonly QuickAccess[] = [
   { key: "invitar", label: "Invitar", icon: UserPlus },
 ];
 
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function eventWhenLabel(start: Date, now: Date): string {
+  const time = `${start.getHours().toString().padStart(2, "0")}:${start.getMinutes().toString().padStart(2, "0")}`;
+  const diffDays = Math.round((startOfDay(start).getTime() - startOfDay(now).getTime()) / 86_400_000);
+  if (diffDays <= 0) return `Hoy · ${time}`;
+  if (diffDays === 1) return `Mañana · ${time}`;
+  const day = new Intl.DateTimeFormat("es", { weekday: "short" }).format(start).replace(".", "");
+  const capitalized = day.charAt(0).toUpperCase() + day.slice(1);
+  return `${capitalized} · ${time}`;
+}
+
+function taskMeta(task: TaskItem, projectName: string | null): string {
+  const parts: string[] = [];
+  if (task.dueAt !== null) {
+    const date = task.dueAt.toDate();
+    parts.push(
+      `Hoy · ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`,
+    );
+  } else {
+    parts.push("Sin hora");
+  }
+  if (projectName !== null && projectName !== "") parts.push(projectName);
+  return parts.join(" · ");
+}
+
 export default function InicioPage(): React.JSX.Element {
   const profile = useProfileStore((state) => state.profile);
   const user = useSessionStore((state) => state.user);
-  const [tasks, setTasks] = React.useState(HOME_MOCK.todayTasks);
+  const { currentWorkspaceId } = useWorkspaces();
   const [quickAccess, setQuickAccess] = React.useState<QuickAccess | null>(null);
 
   const now = React.useMemo(() => new Date(), []);
-  const [weekDays, setWeekDays] = React.useState<readonly HomeDayMark[] | null>(
-    null,
-  );
-  const [todayIndex, setTodayIndex] = React.useState(-1);
+  const weekStart = React.useMemo(() => {
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    return monday;
+  }, [now]);
+  const weekEnd = React.useMemo(() => {
+    const end = new Date(weekStart.getTime());
+    end.setDate(end.getDate() + 7);
+    return end;
+  }, [weekStart]);
+  const monthEnd = React.useMemo(() => {
+    const end = new Date(now.getTime());
+    end.setDate(end.getDate() + 30);
+    return end;
+  }, [now]);
 
-  React.useEffect(() => {
-    const current = new Date();
-    const mondayOffset = (current.getDay() + 6) % 7;
-    const monday = new Date(current);
-    monday.setDate(current.getDate() - mondayOffset);
-    const days: HomeDayMark[] = Array.from({ length: 7 }, (_, index) => {
-      const date = new Date(monday);
-      date.setDate(monday.getDate() + index);
-      return {
-        day: date.getDate(),
-        hasEvents: HOME_WEEK_MARKS[index]?.hasEvents ?? false,
-      };
+  const tasksQuery = useWorkspaceTasks(currentWorkspaceId);
+  const projectsQuery = useProjects(currentWorkspaceId);
+  const weekQuery = useEventOccurrences(currentWorkspaceId, weekStart, weekEnd);
+  const upcomingQuery = useEventOccurrences(currentWorkspaceId, now, monthEnd);
+  const updateTask = useUpdateTask();
+  const [taskError, setTaskError] = React.useState<string | null>(null);
+
+  const tasks = React.useMemo(
+    () => (tasksQuery.data ?? []).filter((task) => task.parentTaskId === null),
+    [tasksQuery.data],
+  );
+  const projectsById = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const project of projectsQuery.data ?? []) map.set(project.id, project.name);
+    return map;
+  }, [projectsQuery.data]);
+
+  const doneCount = tasks.filter((task) => task.status === "done").length;
+  const progress = tasks.length === 0 ? 0 : Math.round((doneCount / tasks.length) * 100);
+  const activeProjects = (projectsQuery.data ?? []).filter(
+    (project) => project.status === "active",
+  ).length;
+
+  const todayTasks = React.useMemo(() => {
+    const start = startOfDay(now).getTime();
+    return tasks
+      .filter((task) => {
+        if (task.status === "done" || task.dueAt === null) return false;
+        const due = startOfDay(task.dueAt.toDate()).getTime();
+        return due <= start;
+      })
+      .sort((a, b) => (a.dueAt?.toMillis() ?? 0) - (b.dueAt?.toMillis() ?? 0));
+  }, [tasks, now]);
+
+  const weekDays = React.useMemo(() => {
+    const marks = new Array<boolean>(7).fill(false);
+    for (const occurrence of weekQuery.occurrences) {
+      const start = occurrence.startsAt.toDate();
+      for (let index = 0; index < 7; index += 1) {
+        const day = new Date(weekStart.getTime());
+        day.setDate(day.getDate() + index);
+        const next = new Date(day.getTime() + 86_400_000);
+        if (start.getTime() >= day.getTime() && start.getTime() < next.getTime()) {
+          marks[index] = true;
+        }
+      }
+    }
+    return Array.from({ length: 7 }, (_, index) => {
+      const day = new Date(weekStart.getTime());
+      day.setDate(day.getDate() + index);
+      return { day: day.getDate(), hasEvents: marks[index] ?? false };
     });
-    setWeekDays(days);
-    setTodayIndex(mondayOffset);
-  }, []);
+  }, [weekQuery.occurrences, weekStart]);
+  const todayIndex = (now.getDay() + 6) % 7;
+
+  const upcoming = React.useMemo<EventOccurrence[]>(
+    () => upcomingQuery.occurrences.filter((o) => o.endsAt.toMillis() >= now.getTime()).slice(0, 4),
+    [upcomingQuery.occurrences, now],
+  );
+
   const firstName =
     (profile?.displayName.trim() !== "" ? profile?.displayName : null) ??
     user?.displayName ??
@@ -84,15 +173,11 @@ export default function InicioPage(): React.JSX.Element {
   const dateLabel =
     rawDateLabel.charAt(0).toUpperCase() + rawDateLabel.slice(1);
 
-  const doneCount = tasks.filter((task) => task.done).length;
-  const progress =
-    HOME_MOCK.tasksTotal === 0
-      ? 0
-      : Math.round((HOME_MOCK.tasksCompleted / HOME_MOCK.tasksTotal) * 100);
-
-  function toggleTask(id: string, checked: boolean): void {
-    setTasks((prev) =>
-      prev.map((task) => (task.id === id ? { ...task, done: checked } : task)),
+  function toggleTask(task: TaskItem, checked: boolean): void {
+    setTaskError(null);
+    updateTask.mutate(
+      { id: task.id, patch: { status: checked ? "done" : "todo" } },
+      { onError: (error) => setTaskError(error.message) },
     );
   }
 
@@ -119,7 +204,7 @@ export default function InicioPage(): React.JSX.Element {
                     Tareas completadas
                   </span>
                   <span className="text-body-sm font-semibold text-foreground">
-                    {HOME_MOCK.tasksCompleted}/{HOME_MOCK.tasksTotal}
+                    {doneCount}/{tasks.length}
                   </span>
                 </li>
                 <li className="flex items-baseline justify-between gap-2">
@@ -127,7 +212,7 @@ export default function InicioPage(): React.JSX.Element {
                     Proyectos activos
                   </span>
                   <span className="text-body-sm font-semibold text-foreground">
-                    {HOME_MOCK.activeProjects}
+                    {activeProjects}
                   </span>
                 </li>
                 <li className="flex items-baseline justify-between gap-2">
@@ -135,7 +220,7 @@ export default function InicioPage(): React.JSX.Element {
                     Eventos esta semana
                   </span>
                   <span className="text-body-sm font-semibold text-foreground">
-                    {HOME_MOCK.weekEvents}
+                    {weekQuery.occurrences.length}
                   </span>
                 </li>
               </ul>
@@ -146,30 +231,41 @@ export default function InicioPage(): React.JSX.Element {
         <section aria-label="Hoy">
           <Card className="h-full p-4">
             <h2 className="text-body font-semibold text-foreground">
-              Hoy · {doneCount}/{tasks.length}
+              Hoy · {todayTasks.length}
             </h2>
-            <ul className="mt-2 flex flex-col">
-              {tasks.map((task, index) => (
-                <React.Fragment key={task.id}>
-                  {index > 0 ? <CardDivider className="mx-0" /> : null}
-                  <li className="flex items-center gap-3 py-3">
-                    <Checkbox
-                      checked={task.done}
-                      onCheckedChange={(checked) => toggleTask(task.id, checked)}
-                      label={task.title}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-body-sm font-medium text-foreground">
-                        {task.title}
+            {todayTasks.length === 0 ? (
+              <p className="mt-2 text-body-sm text-muted-foreground">
+                Nada vence hoy. Disfruta el día.
+              </p>
+            ) : (
+              <ul className="mt-2 flex flex-col">
+                {todayTasks.map((task, index) => (
+                  <React.Fragment key={task.id}>
+                    {index > 0 ? <CardDivider className="mx-0" /> : null}
+                    <li className="flex items-center gap-3 py-3">
+                      <Checkbox
+                        checked={task.status === "done"}
+                        onCheckedChange={(checked) => toggleTask(task, checked)}
+                        label={task.title}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-body-sm font-medium text-foreground">
+                          {task.title}
+                        </span>
+                        <span className="block text-meta text-muted-foreground">
+                          {taskMeta(task, projectsById.get(task.projectId) ?? null)}
+                        </span>
                       </span>
-                      <span className="block text-meta text-muted-foreground">
-                        {task.meta}
-                      </span>
-                    </span>
-                  </li>
-                </React.Fragment>
-              ))}
-            </ul>
+                    </li>
+                  </React.Fragment>
+                ))}
+              </ul>
+            )}
+            {taskError !== null ? (
+              <p role="alert" className="mt-1 text-meta text-danger">
+                {taskError}
+              </p>
+            ) : null}
           </Card>
         </section>
 
@@ -179,89 +275,50 @@ export default function InicioPage(): React.JSX.Element {
               Esta semana
             </h2>
             <div className="mt-2">
-              {weekDays === null ? (
-                <ol aria-label="Semana actual" className="grid grid-cols-7">
-                  {["L", "M", "M", "J", "V", "S", "D"].map((letter, index) => (
-                    <li
-                      key={`${letter}-${index}`}
-                      className="flex flex-col items-center gap-1 py-2"
-                      aria-hidden="true"
-                    >
-                      <span className="text-meta leading-4 text-muted-foreground">
-                        {letter}
-                      </span>
-                      <span className="flex h-8 w-8 items-center justify-center">
-                        <span className="h-8 w-8 animate-pulse rounded-full bg-surface-soft" />
-                      </span>
-                      <span className="flex h-1 items-center" />
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <WeekStrip days={weekDays} todayIndex={todayIndex} />
-              )}
+              <WeekStrip days={weekDays} todayIndex={todayIndex} />
             </div>
           </Card>
         </section>
 
         <section aria-label="Próximos eventos">
           <SectionLabel>Próximos eventos</SectionLabel>
-          <Card>
-            {HOME_MOCK.upcomingEvents.map((event, index) => (
-              <React.Fragment key={event.id}>
-                {index > 0 ? <CardDivider /> : null}
-                <CardRow>
-                  <span className="w-24 shrink-0 text-meta leading-5 text-muted-foreground">
-                    {event.when}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-body-sm font-medium text-foreground">
-                      {event.title}
+          {upcoming.length === 0 ? (
+            <Card>
+              <p className="px-4 py-6 text-center text-body-sm text-muted-foreground">
+                Sin eventos próximos.
+              </p>
+            </Card>
+          ) : (
+            <Card>
+              {upcoming.map((occurrence, index) => (
+                <React.Fragment key={occurrence.occurrenceId}>
+                  {index > 0 ? <CardDivider /> : null}
+                  <CardRow>
+                    <span className="w-24 shrink-0 text-meta leading-5 text-muted-foreground">
+                      {eventWhenLabel(occurrence.startsAt.toDate(), now)}
                     </span>
-                    {event.location !== undefined ? (
-                      <span className="block truncate text-meta text-muted-foreground">
-                        {event.location}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-body-sm font-medium text-foreground">
+                        {occurrence.title}
                       </span>
-                    ) : null}
-                  </span>
-                  <Link
-                    href="/calendario"
-                    aria-label={`Ver ${event.title} en el calendario`}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full outline-none interactive"
-                  >
-                    <Icon icon={ChevronRight} size={20} className="text-muted-foreground" />
-                  </Link>
-                </CardRow>
-              </React.Fragment>
-            ))}
-          </Card>
-        </section>
-
-        <section aria-label="Actividad reciente">
-          <SectionLabel>Actividad reciente</SectionLabel>
-          <Card className="px-2 py-2">
-            <ul className="flex flex-col">
-              {HOME_MOCK.recentActivity.map((item) => (
-                <li
-                  key={item.id}
-                  className="flex items-center gap-3 rounded-lg px-2 py-3 outline-none interactive"
-                >
-                  <Avatar
-                    initial={item.name.charAt(0)}
-                    color={item.color}
-                    size={40}
-                  />
-                  <p className="min-w-0 flex-1 truncate text-body-sm text-foreground">
-                    <span className="font-semibold">{item.name}</span>{" "}
-                    <span className="text-muted-foreground">{item.text}</span>
-                  </p>
-                  <span className="shrink-0 text-meta text-muted-foreground">
-                    {item.time}
-                  </span>
-                </li>
+                      {occurrence.location !== "" ? (
+                        <span className="block truncate text-meta text-muted-foreground">
+                          {occurrence.location}
+                        </span>
+                      ) : null}
+                    </span>
+                    <Link
+                      href="/calendario"
+                      aria-label={`Ver ${occurrence.title} en el calendario`}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full outline-none interactive"
+                    >
+                      <Icon icon={ChevronRight} size={20} className="text-muted-foreground" />
+                    </Link>
+                  </CardRow>
+                </React.Fragment>
               ))}
-            </ul>
-          </Card>
+            </Card>
+          )}
         </section>
 
         <section aria-label="Accesos rápidos">

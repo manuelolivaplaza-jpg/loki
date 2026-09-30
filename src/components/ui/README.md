@@ -9,8 +9,11 @@ defecto, oscuro equivalente. Referencias: `.forja/ref/grokbot-*-ref.jpg`
 ### Radios (únicas escalas; no usar otras escalas ni radios arbitrarios)
 | Token | Valor | Clase |
 |---|---|---|
+| `--radius-xs` | 8px | `rounded-[8px]` (citas, chips densos) |
 | `--radius-sm` | 12px | `rounded-sm` |
+| `--radius-md` | 16px | `rounded-2xl` (adjuntos, mosaicos) |
 | `--radius-lg` | 20px | `rounded-lg` |
+| `--radius-xl` | 24px | `rounded-[24px]` (sheets) |
 | `--radius-full` | 9999px | `rounded-full` |
 
 ### Sombras (únicas; no usar otras sombras ni sombras arbitrarias)
@@ -20,12 +23,12 @@ defecto, oscuro equivalente. Referencias: `.forja/ref/grokbot-*-ref.jpg`
 | `--shadow-overlay` | Sheets y dialogs | `shadow-overlay` |
 
 ### Espaciado
-Solo múltiplos del sistema 4/8/12/16/24 (`p-1/p-2/p-3/p-4/p-6` y
+Solo múltiplos del sistema 4/8/12/16/24/32 (`p-1/p-2/p-3/p-4/p-6/p-8` y
 equivalentes en `gap`/`m`/`px`/`py`). Evitar `2.5`, `3.5`, `5`, `7`, etc.
 Los tamaños fijos de componente (avatar 52, botón 44, switch 51×31) viven
 dentro de los componentes base, no en las pantallas.
 
-### Tipografía (únicas escalas; pesos solo 400/500/600)
+### Tipografía (únicas escalas; pesos solo 400/500/600/700)
 | Token | Tamaño / línea | Clase |
 |---|---|---|
 | `--text-meta` | 13px / 1.25rem | `text-meta` |
@@ -34,7 +37,40 @@ dentro de los componentes base, no en las pantallas.
 | `--text-title` | 20px / 1.4 | `text-title` |
 | `--text-display` | 28px / 1.2 | `text-display` |
 
-No usar tamaños arbitrarios en px, `text-xs/sm/base/xl/2xl` ni `font-bold`.
+No usar tamaños arbitrarios en px, `text-xs/sm/base/xl/2xl` ni `font-bold`
+(usar `font-semibold` 600 o `font-bold` 700 solo en cifras destacadas).
+
+## Patrones T34 (estados y microinteracciones)
+
+### Estados vacíos con acción
+`EmptyState` acepta `action?: { label: string; onClick: () => void }`:
+título + descripción + botón primario. Toda pantalla con lista vacía lo
+usa (chat, proyectos, calendario, notificaciones, búsqueda, ideas).
+
+### Skeletons en listas
+Mismo esqueleto en todas las listas (`animate-pulse` sobre
+`bg-surface-soft`, `aria-label="Cargando …"`, `aria-hidden` en las filas):
+chat (`chat-list.tsx`), conversación (`conversation-view.tsx`), proyectos,
+calendario, notificaciones y búsqueda (`search-palette.tsx` muestra
+"Buscando…").
+
+### Errores con reintento
+`QueryRetry` (`query-retry.tsx`): texto en español + botón "Reintentar"
+que llama a `refetch`/`retry` de la query. Todas las queries de lista lo
+montan (conversación, publicaciones, chats, calendario, proyectos,
+notificaciones, hilo).
+
+### Microinteracciones
+`motion.*` con el spring de `src/lib/motion.ts` (≈150-250ms ease-out) y
+`useReducedMotion` donde hay animación por item (`message-list.tsx`).
+`globals.css` apaga animaciones con `prefers-reduced-motion: reduce`.
+
+### Menú único del mensaje
+Long-press 500ms (táctil) y click derecho (escritorio) abren EL MISMO
+menú unificado (`message-item.tsx`): emojis de `ReactionBar` arriba y
+acciones de `MessageContextMenu` abajo (Responder, Responder en hilo,
+Copiar, Editar, Eliminar). Un solo contenedor flotante, cierra con Escape
+o click afuera.
 
 ### Colores
 Solo tokens: `background`, `surface`, `surface-2`, `surface-soft`,

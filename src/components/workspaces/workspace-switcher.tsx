@@ -1,12 +1,20 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import { Check, ChevronDown, Plus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
 import { MenuItem } from "@/components/ui/menu-card";
-import { CreateWorkspaceDialog } from "@/components/workspaces/create-workspace-dialog";
+/** Diálogo de espacio por code splitting: solo se descarga al crear. */
+const CreateWorkspaceDialog = dynamic(
+  () =>
+    import("@/components/workspaces/create-workspace-dialog").then(
+      (mod) => mod.CreateWorkspaceDialog,
+    ),
+  { ssr: false },
+);
 import { kindLabel } from "@/components/workspaces/workspace-options";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceStore, useWorkspaces } from "@/stores/workspace-store";
@@ -127,7 +135,9 @@ export function WorkspaceSwitcher(): React.JSX.Element {
           </div>
         </PopoverContent>
       </Popover>
-      <CreateWorkspaceDialog open={createOpen} onOpenChange={setCreateOpen} />
+      {createOpen ? (
+        <CreateWorkspaceDialog open={createOpen} onOpenChange={setCreateOpen} />
+      ) : null}
     </>
   );
 }

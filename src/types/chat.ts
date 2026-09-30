@@ -1,4 +1,4 @@
-import type { Timestamp } from "firebase/firestore";
+import type { Timestamp } from "@/lib/timestamp";
 
 export type ChatType = "group" | "dm" | "posts" | "ai";
 
@@ -25,12 +25,21 @@ export interface ChatDoc {
 
 export type MessageType = "user" | "ai" | "system" | "post";
 
+export type AttachmentKind = "image" | "video" | "audio" | "file";
+
 export interface MessageAttachment {
-  kind: "image" | "file";
+  kind: AttachmentKind;
   url: string;
   name: string;
   size: number;
   mime: string;
+  /** Ruta en el bucket (`{wsId}/...`), por si hay que borrar o re-firmar. */
+  path?: string;
+  /** Dimensiones originales (imagen/video). */
+  width?: number;
+  height?: number;
+  /** Duración en segundos (audio/video/nota de voz). */
+  duration?: number;
 }
 
 export interface MessageReplyRef {

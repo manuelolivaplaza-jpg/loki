@@ -39,12 +39,12 @@ export const LOKI_ALIASES: readonly string[] = ["loki", "ai"];
 export const LOKI_DISABLED_MENTION = "loki-disabled";
 
 /**
- * Texto EXACTO del aviso cuando la IA está desactivada (type "system").
+ * Texto EXACTO del aviso cuando Loki IA no está configurada (type "system").
  * Se muestra como mensaje de sistema SUTIL y CENTRADO en el timeline
  * (sin burbuja, texto pequeño gris), no como toast ni banner.
  */
 export const LOKI_DISABLED_TEXT =
-  "Loki está desactivada. Actívala en Configuración → Loki IA.";
+  "Loki IA sin configurar. Pide al administrador que configure el proveedor.";
 
 /** Color de resaltado de menciones (#1D9BF0, token `mention`). */
 export const MENTION_COLOR = "#1D9BF0";
@@ -228,7 +228,7 @@ export function parseMentionSegments(
     known.add(normalizeMention(name));
     known.add(normalizeMention(name.replace(/\s+/g, "")));
   }
-  // La marca del aviso "Loki está desactivada" (LOKI_DISABLED_MENTION) no es
+  // La marca del aviso "Loki IA sin configurar" (LOKI_DISABLED_MENTION) no es
   // una mención real: si se usara para resaltar, bastaría con ella para que
   // CUALQUIER "@palabra" del mensaje saliera en azul. El aviso no lleva "@"
   // en su texto, así que se ve igual de muted, pero el caso queda cerrado.
@@ -277,29 +277,10 @@ export function mentionsLoki(
 }
 
 /**
- * Flag de IA. En el bundle de Next, `NEXT_PUBLIC_AI_ENABLED` se inserta
- * en build; default "false" (ver `.env.example`). Si es "true", T18
- * (Cloud Functions) genera la respuesta real y el cliente no inventa nada.
- */
-export function isAiEnabled(value?: string): boolean {
-  const raw =
-    value ??
-    (typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_AI_ENABLED
-      : undefined);
-  return raw === "true";
-}
-
-/**
- * Payload del aviso de IA desactivada, compatible con las reglas actuales:
- * type "system" + authorId del propio usuario (las reglas prohíben type
- * "ai" desde el cliente en los chats de espacio y exigen authorId == uid).
- *
- * T18: en el chat privado con Loki (`users/{uid}/aiChats/...`) las reglas sí
- * permiten type "ai" al propio usuario, y por eso ahí la respuesta simulada
- * se escribe como "ai". En los chats de espacio el aviso de sistema es lo
- * único que el cliente puede escribir; el backend (`functions/`, apagado en
- * fase 1-2) escribirá la respuesta real con Admin SDK cuando se despliegue.
+ * Payload del aviso de Loki sin configurar, compatible con la RLS: type
+ * "system" + authorId del propio usuario (la RLS prohíbe type "ai" desde el
+ * cliente en los chats de espacio y exige author_id propio). La respuesta
+ * real la escribe la Edge Function `loki-chat` con la service role.
  */
 export function buildLokiDisabledMessage(
   authorId: string,

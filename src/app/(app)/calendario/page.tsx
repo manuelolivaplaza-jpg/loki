@@ -1,13 +1,7 @@
-import { EmptyState } from "@/components/ui/empty-state";
-import { SECTIONS } from "@/components/shell/sections";
+"use client";
+
+import { CalendarView } from "@/components/calendar/calendar-view";
 
 export default function CalendarioPage(): React.JSX.Element {
-  const section = SECTIONS.calendario;
-  return (
-    <EmptyState
-      icon={section.icon}
-      title={section.emptyTitle}
-      description={section.emptyDescription}
-    />
-  );
+  return <CalendarView />;
 }

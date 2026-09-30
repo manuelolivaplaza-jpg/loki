@@ -14,10 +14,10 @@ import { avatarColorFor } from "@/lib/avatar-color";
 import { getConversationId } from "@/lib/data/chats";
 import { useAuthorAvatarColor } from "@/hooks/use-avatar-color";
 import { useChats, useMembers } from "@/hooks/use-chat";
+import { useEventOccurrences, useWorkspaceTasks } from "@/hooks/use-organizer";
 import { useAppPathname } from "@/lib/navigation";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { cn } from "@/lib/utils";
-import { HOME_MOCK } from "@/lib/mock/home";
 import { useUiStore } from "@/stores/ui-store";
 import { getAvatarInitial, type WorkspaceMember } from "@/types/models";
 
@@ -145,11 +145,24 @@ function ChatDetails(): React.JSX.Element | null {
 
 export function RightPanel({ section }: RightPanelProps): React.JSX.Element {
   const rightPanelOpen = useUiStore((state) => state.rightPanelOpen);
+  const { currentWorkspaceId } = useWorkspaces();
+  const tasksQuery = useWorkspaceTasks(currentWorkspaceId);
+  const now = React.useMemo(() => new Date(), []);
+  const monthEnd = React.useMemo(() => {
+    const end = new Date(now.getTime());
+    end.setDate(end.getDate() + 30);
+    return end;
+  }, [now]);
+  const upcomingQuery = useEventOccurrences(currentWorkspaceId, now, monthEnd);
 
   const contextItems = React.useMemo(() => {
     if (section.key !== "inicio") return section.contextItems;
-    const openTasks = HOME_MOCK.todayTasks.filter((task) => !task.done).length;
-    const nextEvent = HOME_MOCK.upcomingEvents[0];
+    const openTasks = (tasksQuery.data ?? []).filter(
+      (task) => task.parentTaskId === null && task.status !== "done",
+    ).length;
+    const nextEvent = upcomingQuery.occurrences.find(
+      (occurrence) => occurrence.endsAt.toMillis() >= now.getTime(),
+    );
     return [
       { title: "Resumen", meta: "Tu día de un vistazo" },
       {
@@ -161,10 +174,10 @@ export function RightPanel({ section }: RightPanelProps): React.JSX.Element {
         meta:
           nextEvent === undefined
             ? "Nada programado"
-            : `${nextEvent.title} · ${nextEvent.when}`,
+            : `${nextEvent.title} · ${nextEvent.startsAt.toDate().toLocaleString("es", { weekday: "short", hour: "2-digit", minute: "2-digit" })}`,
       },
     ];
-  }, [section]);
+  }, [section, tasksQuery.data, upcomingQuery.occurrences, now]);
 
   return (
     <div

@@ -52,8 +52,10 @@
     0 24px 64px rgba(15, 20, 25, 0.18),
     0 2px 8px rgba(15, 20, 25, 0.08);
 
-  /* Radios: las tres únicas escalas del sistema. */
+  /* Radios: las cinco únicas escalas del sistema (8/12/16/24/pill). */
+  --radius-xs: 8px;
   --radius-sm: 12px;
+  --radius-md: 16px;
   --radius-lg: 20px;
   --radius-xl: 24px;
   --radius-full: 9999px;
@@ -103,7 +105,9 @@
     0 24px 70px rgba(0, 0, 0, 0.65),
     0 2px 8px rgba(0, 0, 0, 0.5);
 
+  --radius-xs: 8px;
   --radius-sm: 12px;
+  --radius-md: 16px;
   --radius-lg: 20px;
   --radius-xl: 24px;
   --radius-full: 9999px;
@@ -151,8 +155,10 @@
 
   --font-sans: var(--font-sans);
 
-  /* Radios redefinidos: solo sm / lg / xl / full existen en el sistema. */
+  /* Radios del sistema: xs 8 / sm 12 / md 16 / lg 20 / xl 24 / full pill. */
+  --radius-xs: var(--radius-xs);
   --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
   --radius-lg: var(--radius-lg);
   --radius-xl: var(--radius-xl);
   --radius-full: var(--radius-full);
@@ -280,4 +286,46 @@ body {
   line-height: 1.5rem;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/*
+ * PWA + Android: áreas seguras del notch/gestos sin cambiar el diseño.
+ * La bottom-nav y el composer ya usan `env(safe-area-inset-bottom)` en su
+ * propio padding (ver `bottom-nav.tsx` y `composer.tsx`); estas utilidades
+ * solo exponen el resto de insets para pantallas que lo necesiten y evitan
+ * que el contenido quede bajo el notch en `viewport-fit=cover`.
+ */
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.px-safe {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+
+/*
+ * Tokens T34 (resumen en `src/components/ui/README.md`):
+ * - Espaciado: múltiplos 4/8/12/16/24/32 (`p-1/p-2/p-3/p-4/p-6/p-8`).
+ * - Radios: 8/12/16/24/pill (`--radius-xs/sm/md/xl/full`; `lg` 20px solo
+ *   heredado en componentes base existentes).
+ * - Sombras: solo `--shadow-float` y `--shadow-overlay` (no crear otras).
+ * - Tipografía Inter 13/15/17/20/28, pesos 400/500/600/700
+ *   (`text-meta/body-sm/body/title/display`; evita `font-bold`, usa 600/700).
+ * - Iconos lucide con stroke 1.75 vía `Icon` (`icon.tsx`).
+ * - Microinteracciones: spring único de `src/lib/motion.ts` (≈150-250ms
+ *   ease-out efectivo); con `prefers-reduced-motion` no hay animación.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

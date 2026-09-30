@@ -6,6 +6,8 @@ import { Composer } from "@/components/chat/composer";
 import { PostRow, usePostClock } from "@/components/chat/post-row";
 import { ThreadPanel } from "@/components/chat/thread-panel";
 import { EmptyState } from "@/components/ui/empty-state";
+import { QueryRetry } from "@/components/ui/query-retry";
+import { useListWindow } from "@/lib/virtual-window";
 import { membersToCandidates, toggleReaction } from "@/lib/data/chat";
 import { useMembers, usePosts, usePublishPost } from "@/hooks/use-chat";
 import {
@@ -21,7 +23,7 @@ import { useMessageStatusStore } from "@/lib/chat/message-status";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
-import type { MessageDoc } from "@/types/chat";
+import type { MessageAttachment, MessageDoc } from "@/types/chat";
 
 /**
  * Vista de Publicaciones (T17).
@@ -43,7 +45,7 @@ export function PostsView(): React.JSX.Element {
   const authorName =
     profileName !== "" ? profileName : sessionName !== "" ? sessionName : "Miembro";
 
-  const { posts, isPending, error } = usePosts(wsId);
+  const { posts, isPending, error, retry } = usePosts(wsId);
   const publish = usePublishPost(wsId);
   const membersQuery = useMembers(wsId);
   const sendStatus = useMessageStatusStore((state) => state.status);
@@ -57,8 +59,21 @@ export function PostsView(): React.JSX.Element {
     [membersQuery.data],
   );
 
+  // T35: ventana virtual ligera: el feed (más reciente primero) pinta
+  // los primeros `limit` posts y el centinela final agranda la ventana
+  // por intersección (el feed vive en caché, no hay cursor de servidor).
+  const feedWindow = useListWindow({
+    total: posts.length,
+    hasMore: false,
+    resetKey: wsId ?? "sin-espacio",
+  });
+  const visiblePosts = React.useMemo(
+    () => posts.slice(0, feedWindow.limit),
+    [posts, feedWindow.limit],
+  );
+
   const handlePublish = React.useCallback(
-    (text: string, mentions: string[]) => {
+    (text: string, mentions: string[], attachments?: MessageAttachment[]) => {
       if (currentUid === null) {
         setPublishError("Inicia sesión para publicar.");
         return;
@@ -69,7 +84,7 @@ export function PostsView(): React.JSX.Element {
       }
       setPublishError(null);
       publish.mutate(
-        { authorId: currentUid, authorName, text, mentions },
+        { authorId: currentUid, authorName, text, mentions, attachments },
         { onError: (err) => setPublishError(err.message) },
       );
     },
@@ -109,6 +124,7 @@ export function PostsView(): React.JSX.Element {
           authorName: post.authorName,
           text: post.text,
           mentions: post.mentions,
+          attachments: post.attachments,
           messageId: post.id,
         },
         { onError: (err) => setPublishError(err.message) },
@@ -139,6 +155,8 @@ export function PostsView(): React.JSX.Element {
           sending={publish.isPending}
           members={[]}
           onSend={handlePublish}
+          wsId={wsId}
+          mediaBucket="post-media"
         />
         {publishError !== null ? (
           <p role="alert" className="px-4 pb-2 text-center text-body-sm text-danger">
@@ -165,9 +183,10 @@ export function PostsView(): React.JSX.Element {
             ))}
           </ul>
         ) : error !== null ? (
-          <p role="alert" className="px-4 py-8 text-center text-body-sm text-danger">
-            No se pudieron cargar las publicaciones.
-          </p>
+          <QueryRetry
+            message="No se pudieron cargar las publicaciones."
+            onRetry={retry}
+          />
         ) : posts.length === 0 ? (
           <EmptyState
             icon={Newspaper}
@@ -177,7 +196,7 @@ export function PostsView(): React.JSX.Element {
         ) : (
           <div className="mx-auto w-full max-w-[760px]">
             <ul aria-label="Publicaciones del espacio">
-              {posts.map((post) => (
+              {visiblePosts.map((post) => (
                 <PostRow
                   key={post.id}
                   post={post}
@@ -194,6 +213,9 @@ export function PostsView(): React.JSX.Element {
                 />
               ))}
             </ul>
+            {posts.length > visiblePosts.length ? (
+              <div ref={feedWindow.bottomSentinelRef} className="h-1" aria-hidden="true" />
+            ) : null}
           </div>
         )}
       </div>

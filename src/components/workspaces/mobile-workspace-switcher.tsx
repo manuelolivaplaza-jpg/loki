@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, Plus } from "lucide-react";
@@ -9,7 +10,14 @@ import { Icon } from "@/components/ui/icon";
 import { MenuItem } from "@/components/ui/menu-card";
 import { Pill } from "@/components/ui/pill";
 import { fade, fadeScale } from "@/lib/motion";
-import { CreateWorkspaceDialog } from "@/components/workspaces/create-workspace-dialog";
+/** Diálogo de espacio por code splitting: solo se descarga al crear. */
+const CreateWorkspaceDialog = dynamic(
+  () =>
+    import("@/components/workspaces/create-workspace-dialog").then(
+      (mod) => mod.CreateWorkspaceDialog,
+    ),
+  { ssr: false },
+);
 import { kindLabel } from "@/components/workspaces/workspace-options";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceStore, useWorkspaces } from "@/stores/workspace-store";
@@ -157,7 +165,9 @@ export function MobileWorkspaceSwitcher(): React.JSX.Element {
             document.body,
           )
         : null}
-      <CreateWorkspaceDialog open={createOpen} onOpenChange={setCreateOpen} />
+      {createOpen ? (
+        <CreateWorkspaceDialog open={createOpen} onOpenChange={setCreateOpen} />
+      ) : null}
     </>
   );
 }

@@ -11,11 +11,13 @@ import {
   MessageBubble,
 } from "@/components/chat/message-bubble";
 import { Icon } from "@/components/ui/icon";
+import { QueryRetry } from "@/components/ui/query-retry";
 import { useNotifyTyping, useThread } from "@/hooks/use-chat";
 import { sendMessage } from "@/lib/data/chat";
+import { POSTS_CHAT_ID } from "@/lib/chat/posts";
 import { fade, fadeScale } from "@/lib/motion";
 import type { MentionCandidate } from "@/lib/chat/mentions";
-import type { MessageDoc } from "@/types/chat";
+import type { MessageAttachment, MessageDoc } from "@/types/chat";
 import { cn } from "@/lib/utils";
 
 type ThreadPanelProps = {
@@ -98,7 +100,7 @@ export function ThreadPanel({
   }, [replies.length]);
 
   const handleSend = React.useCallback(
-    (text: string, mentions: string[]) => {
+    (text: string, mentions: string[], attachments?: MessageAttachment[]) => {
       if (currentUid === null || sending) return;
       setSending(true);
       setError(null);
@@ -108,6 +110,7 @@ export function ThreadPanel({
         text,
         mentions,
         threadParentId: parent.id,
+        attachments,
         type: "user",
       })
         .catch((err: unknown) => {
@@ -216,9 +219,10 @@ export function ThreadPanel({
             </div>
           ) : null}
           {thread.isError ? (
-            <p role="alert" className="py-2 text-center text-body-sm text-danger">
-              No se pudieron cargar las respuestas.
-            </p>
+            <QueryRetry
+              message="No se pudieron cargar las respuestas."
+              onRetry={() => void thread.refetch()}
+            />
           ) : null}
           <ul aria-label={`Respuestas: ${title}`} className="flex flex-col gap-3">
             {replies.map((reply) => (
@@ -241,6 +245,8 @@ export function ThreadPanel({
           sending={sending}
           members={members}
           onSend={handleSend}
+          wsId={wsId}
+          mediaBucket={chatId === POSTS_CHAT_ID ? "post-media" : "chat-media"}
           onValueChange={notifyTyping}
         />
       </motion.div>

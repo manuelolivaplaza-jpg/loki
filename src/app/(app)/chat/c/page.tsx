@@ -12,7 +12,7 @@ function ConversationByQuery(): React.JSX.Element {
   const id = searchParams.get("id") ?? "";
   if (id === "") {
     return (
-      <div className="flex h-[calc(100dvh-68px)] items-center justify-center md:h-[calc(100dvh-48px)]">
+      <div className="flex h-[calc(100dvh-68px)] items-center justify-center md:h-dvh">
         <EmptyState
           icon={MessageCircle}
           title="Elige una conversación"

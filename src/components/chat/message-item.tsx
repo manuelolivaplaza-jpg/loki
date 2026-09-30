@@ -36,6 +36,8 @@ type MessageItemProps = {
   onCopy: (message: MessageDoc) => void;
   onEdit: (message: MessageDoc) => void;
   onDelete: (message: MessageDoc) => void;
+  /** Chat de IA: oculta reacciones en los mensajes propios. */
+  disableOwnReactions?: boolean;
 };
 
 /**
@@ -62,6 +64,7 @@ export function MessageItem({
   onCopy,
   onEdit,
   onDelete,
+  disableOwnReactions = false,
 }: MessageItemProps): React.JSX.Element {
   const [reactionsOpen, setReactionsOpen] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -74,6 +77,8 @@ export function MessageItem({
   // IA y mensajes de sistema no admiten reacciones ni menú.
   const interactive =
     message.type !== "system" && message.type !== "ai" && !message.deleted;
+  // En el chat de IA no se reacciona a los mensajes propios.
+  const ownReactionsOff = disableOwnReactions && isMine;
   // IA y system ocupan toda la columna (sin el tope del 78%).
   const wide = message.type === "system" || message.type === "ai";
 
@@ -157,7 +162,8 @@ export function MessageItem({
   const quote = message.replyTo;
   const threadCount = message.threadCount ?? 0;
   const showThreadLink = threadCount > 0 && message.threadParentId === null;
-  const showReactions = interactive && (reactionsOpen || (hovered && !hoverDismissed));
+  const showReactions =
+    interactive && !ownReactionsOff && (reactionsOpen || (hovered && !hoverDismissed));
 
   return (
     <div
@@ -309,13 +315,15 @@ export function MessageItem({
             isMine ? "items-end" : "items-start",
           )}
         >
-          <ReactionChips
-            reactions={message.reactions ?? {}}
-            currentUid={currentUid}
-            onToggle={(emoji, hasReacted) =>
-              onToggleReaction(message, emoji, hasReacted)
-            }
-          />
+          {!ownReactionsOff ? (
+            <ReactionChips
+              reactions={message.reactions ?? {}}
+              currentUid={currentUid}
+              onToggle={(emoji, hasReacted) =>
+                onToggleReaction(message, emoji, hasReacted)
+              }
+            />
+          ) : null}
           {showThreadLink ? (
             <button
               type="button"

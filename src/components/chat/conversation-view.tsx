@@ -715,7 +715,7 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   const showSuggestions = lokiConfigured !== false;
 
   return (
-    <div className="flex h-[calc(100dvh-68px)] flex-col md:h-[calc(100dvh-48px)]">
+    <div className="flex h-[calc(100dvh-68px)] flex-col md:h-dvh">
       <span className="sr-only">Conversación con {chatName}</span>
       <div ref={setScrollRefs} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
         {isPending ? (
@@ -761,6 +761,7 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
               messages={visibleMessages}
               currentUid={currentUid}
               animatedIds={animatedIds}
+              disableOwnReactions={isLoki}
               topSentinelRef={listWindow.topSentinelRef}
               isLoadingOlder={isLoadingOlder || listWindow.loadingOlder}
               hasMore={hasMore}

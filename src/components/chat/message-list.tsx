@@ -28,6 +28,8 @@ type MessageListProps = {
   onCopy: (message: MessageDoc) => void;
   onEdit: (message: MessageDoc) => void;
   onDelete: (message: MessageDoc) => void;
+  /** Chat de IA: oculta reacciones en los mensajes propios. */
+  disableOwnReactions?: boolean;
 };
 
 /**
@@ -49,6 +51,7 @@ export function MessageList({
   onCopy,
   onEdit,
   onDelete,
+  disableOwnReactions = false,
 }: MessageListProps): React.JSX.Element {
   const reduceMotion = useReducedMotion();
   const groups = React.useMemo(
@@ -96,6 +99,7 @@ export function MessageList({
                 showAuthor={index === 0}
                 showTime={index === group.messages.length - 1}
                 currentUid={currentUid}
+                disableOwnReactions={disableOwnReactions}
                 sendStatus={group.isMine ? sendStatus?.[message.id] : undefined}
                 onRetry={onRetryMessage}
                 onToggleReaction={onToggleReaction}

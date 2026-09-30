@@ -262,6 +262,26 @@ export function useMessages(
     };
   }, [enabled, wsId, chatId, queryClient]);
 
+  // Red de seguridad: al volver a la pestaña se refresca por si el
+  // realtime se cortó (red caída, suspensión del equipo).
+  React.useEffect(() => {
+    if (!enabled || wsId === null || chatId === null) return;
+    const activeWsId: string = wsId;
+    const activeChatId: string = chatId;
+    function handleFocus(): void {
+      void queryClient.invalidateQueries({
+        queryKey: ["messages", activeWsId, activeChatId],
+      });
+    }
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) handleFocus();
+    });
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [enabled, wsId, chatId, queryClient]);
+
   const loadOlder = React.useCallback(async () => {
     if (!enabled || wsId === null || chatId === null) return;
     if (isLoadingOlder || !hasMore) return;
@@ -733,6 +753,14 @@ export function useSendMessage(
       if (context !== undefined) {
         useMessageStatusStore.getState().clearStatus(context.clientId);
       }
+    },
+    // Red de seguridad: aunque el realtime falle, el envío refresca la
+    // lista (el optimista ya la pintó al instante).
+    onSettled: () => {
+      if (wsId === null || wsId === "" || chatId === null || chatId === "") return;
+      void queryClient.invalidateQueries({
+        queryKey: ["messages", wsId, chatId],
+      });
     },
   });
 }

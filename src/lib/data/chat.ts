@@ -286,8 +286,58 @@ type TablePoolEntry = {
  */
 const tablePool = new Map<string, TablePoolEntry>();
 
-function subscribeTable(sub: TableSubscription): Unsubscribe {
+/** Reintentos de re-suscripción ante error del canal (con tope y pausa). */
+const TABLE_REATTACH_MAX = 5;
+const TABLE_REATTACH_DELAY_MS = 2000;
+
+function attachTableChannel(
+  sub: TableSubscription,
+  entry: TablePoolEntry,
+  attempts: number,
+): void {
   const supabase = getSupabaseClient();
+  try {
+    const channel: RealtimeChannel = supabase.channel(sub.topic);
+    channel.on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: sub.table,
+        ...(sub.filter === undefined ? {} : { filter: sub.filter }),
+      },
+      () => {
+        const current = tablePool.get(sub.topic);
+        if (current === undefined || current.cancelled) return;
+        for (const onEvent of current.events) onEvent();
+      },
+    );
+    channel.subscribe((status, error) => {
+      const current = tablePool.get(sub.topic);
+      if (current === undefined || current.cancelled) return;
+      if (status !== "CHANNEL_ERROR" && status !== "TIMED_OUT") return;
+      const err =
+        error instanceof Error ? error : new Error(`Canal ${sub.topic}: ${status}`);
+      for (const onError of current.errors) onError(err);
+      // El canal puede quedar muerto (red caída): se recrea con tope.
+      if (attempts >= TABLE_REATTACH_MAX) return;
+      void supabase.removeChannel(channel);
+      setTimeout(() => {
+        const live = tablePool.get(sub.topic);
+        if (live === undefined || live.cancelled || live.refs <= 0) return;
+        attachTableChannel(sub, live, attempts + 1);
+      }, TABLE_REATTACH_DELAY_MS);
+    });
+    entry.remove = () => {
+      void supabase.removeChannel(channel);
+    };
+  } catch {
+    // Realtime caído: se entrega la foto inicial y se sigue por query.
+    tablePool.delete(sub.topic);
+  }
+}
+
+function subscribeTable(sub: TableSubscription): Unsubscribe {
   let entry = tablePool.get(sub.topic);
   if (entry === undefined) {
     const fresh: TablePoolEntry = {
@@ -299,37 +349,9 @@ function subscribeTable(sub: TableSubscription): Unsubscribe {
     };
     tablePool.set(sub.topic, fresh);
     entry = fresh;
-    try {
-      const channel: RealtimeChannel = supabase.channel(sub.topic);
-      channel.on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: sub.table,
-          ...(sub.filter === undefined ? {} : { filter: sub.filter }),
-        },
-        () => {
-          const current = tablePool.get(sub.topic);
-          if (current === undefined || current.cancelled) return;
-          for (const onEvent of current.events) onEvent();
-        },
-      );
-      channel.subscribe((status, error) => {
-        const current = tablePool.get(sub.topic);
-        if (current === undefined || current.cancelled) return;
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          const err =
-            error instanceof Error ? error : new Error(`Canal ${sub.topic}: ${status}`);
-          for (const onError of current.errors) onError(err);
-        }
-      });
-      fresh.remove = () => {
-        void supabase.removeChannel(channel);
-      };
-    } catch {
-      // Realtime caído: se entrega la foto inicial y se sigue por query.
-      tablePool.delete(sub.topic);
+    attachTableChannel(sub, fresh, 0);
+    if (tablePool.get(sub.topic) === undefined) {
+      // Realtime caído: foto inicial y se sigue por query.
       entry = undefined;
     }
   }

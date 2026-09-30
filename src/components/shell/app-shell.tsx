@@ -48,9 +48,13 @@ function getHeaderTitle(pathname: string | null): string {
 
 export function AppShell({ children }: AppShellProps): React.JSX.Element {
   const pathname = useAppPathname();
+  const normalized = normalizePathname(pathname);
   const section = getSectionByPath(pathname);
   const headerTitle = getHeaderTitle(pathname);
   const hideBottomNav = isFullscreenRoute(pathname);
+  const normalizedRoute = normalized ?? "";
+  const isChatRoute =
+    normalizedRoute === "/chat" || normalizedRoute.startsWith("/chat/");
   const rightPanelOpen = useUiStore((state) => state.rightPanelOpen);
   const toggleRightPanel = useUiStore((state) => state.toggleRightPanel);
   const setSearchOpen = useSearchStore((state) => state.setOpen);
@@ -82,10 +86,12 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
           <div className="flex min-w-0 flex-1 flex-col">
             <main
               className={cn(
-                "min-h-[calc(100dvh-48px)] md:min-h-dvh md:pb-6",
                 hideBottomNav
-                  ? "pb-0"
-                  : "pb-[calc(96px+env(safe-area-inset-bottom))]",
+                  ? "min-h-[calc(100dvh-48px)] pb-0 md:min-h-dvh"
+                  : "min-h-[calc(100dvh-48px)] pb-[calc(96px+env(safe-area-inset-bottom))] md:min-h-dvh",
+                // Rutas de chat: columnas a alto fijo con su propio scroll
+                // (una sola barra por columna, sin scroll de página).
+                isChatRoute ? "md:pb-0" : "md:pb-6",
               )}
             >
               <ErrorBoundary section="el contenido">{children}</ErrorBoundary>

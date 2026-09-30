@@ -27,8 +27,8 @@ function ConversationByQuery(): React.JSX.Element {
 export default function ChatConversationPage(): React.JSX.Element {
   return (
     <React.Suspense fallback={<div className="min-h-[calc(100dvh-68px)]" />}>
-      <div className="md:flex md:items-stretch">
-        <div className="hidden min-w-0 md:block md:w-[340px] md:max-w-[340px] md:shrink-0 md:border-r md:border-divider">
+      <div className="md:flex md:items-stretch md:overflow-hidden">
+        <div className="hidden min-w-0 md:block md:h-dvh md:w-[340px] md:max-w-[340px] md:shrink-0 md:overflow-y-auto md:border-r md:border-divider">
           <ChatList />
         </div>
         <div className="min-w-0 flex-1">

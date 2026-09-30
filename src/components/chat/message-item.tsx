@@ -11,6 +11,7 @@ import { MessageContextMenu, type MessageMenuAction } from "@/components/chat/me
 import { ReactionBar } from "@/components/chat/reaction-bar";
 import { ReactionChips } from "@/components/chat/reaction-chips";
 import { Icon } from "@/components/ui/icon";
+import { formatHour } from "@/lib/chat/format";
 import type { MessageDoc, MessageSendStatus } from "@/types/chat";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +74,10 @@ export function MessageItem({
   // la barra hasta que vuelva a salir de la fila.
   const [hoverDismissed, setHoverDismissed] = React.useState(false);
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Deslizar a la izquierda revela la hora (estilo Instagram).
+  const [swipeX, setSwipeX] = React.useState(0);
+  const swipeRef = React.useRef({ x: 0, y: 0, active: false });
+  const SWIPE_MAX = 84;
 
   // IA y mensajes de sistema no admiten reacciones ni menú.
   const interactive =
@@ -87,6 +92,11 @@ export function MessageItem({
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+  }, []);
+
+  const swipeEnd = React.useCallback(() => {
+    swipeRef.current.active = false;
+    setSwipeX(0);
   }, []);
 
   const openUnified = React.useCallback(() => {
@@ -189,6 +199,9 @@ export function MessageItem({
       <div
         className={cn(
           MESSAGE_ROW_CLASS,
+          // Deslizar horizontal revela la hora; el scroll vertical lo
+          // sigue gestionando el navegador.
+          "touch-pan-y",
           // Sin selección ni callout de iOS: en esta zona el long-press
           // abre reacciones y menú.
           "long-press",
@@ -212,17 +225,39 @@ export function MessageItem({
                 if ((event.target as HTMLElement).closest("[data-floating]") !== null) {
                   return;
                 }
+                swipeRef.current = {
+                  x: event.clientX,
+                  y: event.clientY,
+                  active: true,
+                };
                 startTimer();
               }
             : undefined
         }
-        onPointerUp={interactive ? cancelTimer : undefined}
-        onPointerCancel={interactive ? cancelTimer : undefined}
-        onPointerMove={interactive ? cancelTimer : undefined}
+        onPointerUp={interactive ? () => { cancelTimer(); swipeEnd(); } : undefined}
+        onPointerCancel={interactive ? () => { cancelTimer(); swipeEnd(); } : undefined}
+        onPointerMove={
+          interactive
+            ? (event) => {
+                const swipe = swipeRef.current;
+                if (swipe.active && event.buttons !== 0) {
+                  const dx = event.clientX - swipe.x;
+                  const dy = event.clientY - swipe.y;
+                  if (Math.abs(dx) > 8 || Math.abs(dy) > 8) cancelTimer();
+                  if (dx < -10 && Math.abs(dx) > Math.abs(dy)) {
+                    setSwipeX(Math.max(dx, -SWIPE_MAX));
+                  }
+                } else {
+                  cancelTimer();
+                }
+              }
+            : undefined
+        }
         onPointerLeave={
           interactive
             ? () => {
                 cancelTimer();
+                swipeEnd();
                 setHovered(false);
                 setHoverDismissed(false);
               }
@@ -249,10 +284,23 @@ export function MessageItem({
             : undefined
         }
       >
+        {/* Hora al deslizar a la izquierda (estilo Instagram) o al
+            pasar el puntero en escritorio. */}
+        {!wide ? (
+          <span
+            aria-hidden="true"
+            style={{ opacity: swipeX < -8 || hovered ? 1 : 0 }}
+            className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-meta tabular-nums text-muted-foreground transition-opacity duration-150"
+          >
+            {formatHour(message.createdAt)}
+          </span>
+        ) : null}
         <div
           className={cn(
             wide ? "relative w-full" : MESSAGE_BUBBLE_FIT_CLASS,
+            !wide && swipeX === 0 && "transition-transform duration-150 ease-out",
           )}
+          style={wide ? undefined : { transform: `translateX(${swipeX}px)` }}
         >
           <MessageBubble
             message={message}

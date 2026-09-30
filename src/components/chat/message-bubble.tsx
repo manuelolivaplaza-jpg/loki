@@ -8,7 +8,6 @@ import { MessageAttachments } from "@/components/media/message-attachments";
 import { SafeText } from "@/components/chat/safe-text";
 import { useAuthorAvatarColor } from "@/hooks/use-avatar-color";
 import { avatarColorFor } from "@/lib/avatar-color";
-import { formatHour } from "@/lib/chat/format";
 import { formatPostTime } from "@/lib/chat/posts";
 import { parseMentionSegments } from "@/lib/chat/mentions";
 import type { MessageDoc, MessageSendStatus } from "@/types/chat";
@@ -109,13 +108,15 @@ function MentionedText({
   );
 }
 
-/** "HH:mm · (editado)" (el borrado suave no cuenta como edición). */
-function MessageMeta({ message }: { message: MessageDoc }): React.JSX.Element {
+/** "(editado)" (el borrado suave no cuenta como edición). La hora no se
+ *  muestra bajo el mensaje: se revela al deslizar la burbuja a la izquierda
+ *  (estilo Instagram) o al pasar el puntero en escritorio. */
+function MessageMeta({ message }: { message: MessageDoc }): React.JSX.Element | null {
   const edited = message.editedAt !== null && !message.deleted;
+  if (!edited) return null;
   return (
     <p className="mt-1 text-center text-meta leading-4 text-muted-foreground">
-      {formatHour(message.createdAt)}
-      {edited ? " · (editado)" : ""}
+      (editado)
     </p>
   );
 }

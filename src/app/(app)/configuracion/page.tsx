@@ -13,6 +13,7 @@ import { signOutUser } from "@/lib/auth/actions";
 import { getLokiStatus } from "@/lib/ai/loki";
 import { isPushConfigured, registerPushToken } from "@/lib/push/fcm";
 import { DEFAULT_PREFS } from "@/lib/data/notifications";
+import { GcalSection } from "@/components/calendar/gcal-section";
 import { MembersSection } from "@/components/members/members-section";
 import {
   useNotificationPrefs,
@@ -265,6 +266,8 @@ export default function ConfiguracionPage(): React.JSX.Element {
           ) : null}
         </Card>
       </section>
+
+      <GcalSection />
 
       <MembersSection />
 

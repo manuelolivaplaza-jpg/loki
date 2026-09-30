@@ -6,6 +6,7 @@ import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { QueryRetry } from "@/components/ui/query-retry";
 import { useEventOccurrences } from "@/hooks/use-organizer";
+import { useGcal } from "@/hooks/use-gcal";
 import { useWorkspaces } from "@/stores/workspace-store";
 import type { EventItem, EventOccurrence } from "@/types/organizer";
 import { cn } from "@/lib/utils";
@@ -80,6 +81,24 @@ export function CalendarView(): React.JSX.Element {
   const range =
     view === "month" ? monthRange(anchor) : view === "week" ? weekRange(anchor) : agendaRange(anchor);
   const { occurrences, isPending, error, retry } = useEventOccurrences(currentWorkspaceId, range.from, range.to);
+
+  // Pull automático de Google al abrir el calendario: si hay conexión y el
+  // último sync tiene más de 15 min (o nunca hubo), importa y refresca
+  // ["events"]. Sin conexión es no-op. Una sola vez por montaje.
+  const { status: gcalStatus, pull: gcalPull } = useGcal();
+  const autoPulledRef = React.useRef(false);
+  React.useEffect(() => {
+    if (autoPulledRef.current) return;
+    if (!gcalStatus.connected) return;
+    const last = gcalStatus.lastPullAt === null ? null : new Date(gcalStatus.lastPullAt).getTime();
+    const stale = last === null || Number.isNaN(last) || Date.now() - last > 15 * 60_000;
+    if (!stale) return;
+    autoPulledRef.current = true;
+    void gcalPull();
+    // Solo depende del estado de conexión: el pull invalida ["gcal"] y no
+    // debe re-dispararse por el refresco.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gcalStatus.connected]);
 
   function shift(direction: 1 | -1): void {
     setAnchor((current) => {

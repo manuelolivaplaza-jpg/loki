@@ -11,6 +11,8 @@ flowchart LR
     Edge --> SB
     Edge --> LLM["Proveedor LLM\n(OpenAI / Anthropic / Gemini)"]
     Edge --> FCM["FCM"]
+    Edge --> GCal["Google Calendar"]
+    GCal --> Edge
     FCM --> App
 ```
 
@@ -47,7 +49,8 @@ En el panel (Edge Functions → Secrets) o con `supabase secrets set`:
 - Push: `FCM_SERVICE_ACCOUNT` (JSON de la cuenta de servicio). Sin él:
   503 `not_configured`.
 - Despliega con `supabase functions deploy loki-chat` y
-  `supabase functions deploy push-send`.
+  `supabase functions deploy push-send` (más
+  `supabase functions deploy google-calendar` si usas la sync de 7).
 
 ## 4. pg_cron (recordatorios y limpieza)
 
@@ -74,7 +77,69 @@ Firebase **no guarda datos** (sin Firestore/Auth/Storage en la app):
 - **Firebase Hosting**: `npm run build` y publica el export (`out/`,
   ver `firebase.json`). Sin SSR: todo es estático + Supabase cliente.
 
-## 7. Firma del APK/AAB (Android, `cl.loki.app`)
+## 7. Google Calendar (sincronización bidireccional)
+
+La Edge Function `google-calendar` importa (pull) y exporta (push) eventos
+entre Loki y Google Calendar. Sin los secretos responde 503
+`not_configured` y la app sigue funcionando solo con Loki.
+
+### 7.1. Google Cloud (lo hace Manu en la consola)
+
+1. Crea un proyecto en [Google Cloud](https://console.cloud.google.com/)
+   (o usa uno existente).
+2. Activa la **Google Calendar API** (APIs y servicios → Biblioteca →
+   busca "Google Calendar API" → Habilitar).
+3. Crea el cliente OAuth (APIs y servicios → Credenciales → Crear
+   credenciales → ID de cliente OAuth):
+   - Tipo de aplicación: **Web**.
+   - En **Orígenes autorizados de JavaScript** añade tu dominio
+     (`https://<vercel>` y `http://localhost:3000` para local).
+   - En **URIs de redirección autorizados** añade la URL EXACTA:
+     `https://<vercel>/auth/google/callback`
+     (local: `http://localhost:3000/auth/google/callback`).
+     Tiene que coincidir carácter por carácter con `GOOGLE_REDIRECT_URL`.
+4. En la pantalla de consentimiento (OAuth consent screen):
+   - Tipo: Externo, con tu email de prueba en "Test users" mientras esté
+     en modo de prueba.
+   - Scopes: `https://www.googleapis.com/auth/calendar.events`
+     (ver, crear y editar tus eventos de calendario; no se toca nada más).
+5. Anota el **Client ID** y el **Client Secret**.
+
+### 7.2. Secretos (Edge Function `google-calendar`)
+
+En el panel (Edge Functions → Secrets) o con `supabase secrets set`:
+
+- `GOOGLE_CLIENT_ID`: el Client ID del paso anterior.
+- `GOOGLE_CLIENT_SECRET`: el Client Secret. Sin él: 503 `not_configured`.
+- `GOOGLE_REDIRECT_URL`: la URL exacta de 7.1
+  (`https://<vercel>/auth/google/callback`).
+- `GOOGLE_TOKEN_KEY`: texto cualquiera de 32+ caracteres. Cifra el refresh
+  token (AES-GCM); no lo cambies una vez conectado o los tokens guardados
+  dejarán de leerse.
+
+Despliega con `supabase functions deploy google-calendar` y aplica la
+migración (`supabase db push`: crea `calendar_connections` y las columnas
+`events.external_id` / `events.external_source`).
+
+### 7.3. Frontend (Vercel)
+
+No hace falta variable pública para el flujo actual (la URL OAuth la genera
+la Edge). Reservada para uso futuro: `NEXT_PUBLIC_GOOGLE_CLIENT_ID`.
+Lo único que debe coincidir es que la app esté servida en el dominio cuya
+ruta `/auth/google/callback` registraste como `GOOGLE_REDIRECT_URL`.
+
+### 7.4. Cómo funciona
+
+- **Conectar**: Configuración → Google Calendar → Conectar (redirige a
+  Google, vuelve a `/auth/google/callback`, que intercambia el `?code=`).
+- **Pull** (Google → Loki): próximos 30 días al espacio actual; borra de
+  Loki los que Google eliminó (solo `external_source = 'google'`). Auto-pull
+  al abrir el Calendario si el último sync tiene más de 15 min.
+- **Push** (Loki → Google): al crear/editar un evento con la conexión
+  activa (fire-and-forget con aviso discreto si falla); al borrar un evento
+  con espejo se borra también en Google.
+
+## 8. Firma del APK/AAB (Android, `cl.loki.app`)
 
 1. Genera el keystore una vez (fuera del repo, con backup):
    ```bash
@@ -86,7 +151,7 @@ Firebase **no guarda datos** (sin Firestore/Auth/Storage en la app):
    `assembleRelease` (APK) o `bundleRelease` (AAB para Play).
 4. El `google-services.json` de Firebase va en `android/app/` (gitignored).
 
-## 8. Chequeo previo al lanzamiento
+## 9. Chequeo previo al lanzamiento
 
 ```bash
 npm run check-env   # env sin imprimir secretos

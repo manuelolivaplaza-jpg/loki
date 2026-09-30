@@ -36,6 +36,8 @@ function toEvent(row: EventRow): EventItem {
     attendees: [...row.attendees],
     reminderMinutes: [...row.reminder_minutes],
     recurrence: (row.recurrence ?? null) as EventRecurrence | null,
+    externalId: row.external_id ?? null,
+    externalSource: row.external_source ?? "loki",
     createdAt: toTimestamp(row.created_at),
     updatedAt: toTimestamp(row.updated_at),
   };
@@ -53,7 +55,7 @@ function eventErrorMessage(error: unknown): string {
 }
 
 const EVENT_COLUMNS =
-  "id, workspace_id, project_id, title, description, starts_at, ends_at, all_day, location, color, created_by, attendees, reminder_minutes, recurrence, created_at, updated_at";
+  "id, workspace_id, project_id, title, description, starts_at, ends_at, all_day, location, color, created_by, attendees, reminder_minutes, recurrence, external_id, external_source, created_at, updated_at";
 
 /**
  * Eventos que tocan la ventana [from, to] (puntuales) más los recurrentes que

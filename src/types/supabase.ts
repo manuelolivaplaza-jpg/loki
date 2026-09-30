@@ -62,6 +62,8 @@ type EventRow = {
   attendees: string[];
   reminder_minutes: number[];
   recurrence: string | null;
+  external_id: string | null;
+  external_source: string;
   created_at: string;
   updated_at: string;
 };
@@ -533,6 +535,8 @@ export type Database = {
           attendees?: string[];
           reminder_minutes?: number[];
           recurrence?: string | null;
+          external_id?: string | null;
+          external_source?: string;
           created_at?: string;
           updated_at?: string;
         };
@@ -551,6 +555,8 @@ export type Database = {
           attendees?: string[];
           reminder_minutes?: number[];
           recurrence?: string | null;
+          external_id?: string | null;
+          external_source?: string;
           created_at?: string;
           updated_at?: string;
         };

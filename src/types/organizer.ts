@@ -18,6 +18,10 @@ export interface EventItem {
   attendees: string[];
   reminderMinutes: number[];
   recurrence: EventRecurrence | null;
+  /** Id en Google Calendar (null = solo Loki). */
+  externalId: string | null;
+  /** Origen: "loki" o "google". */
+  externalSource: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

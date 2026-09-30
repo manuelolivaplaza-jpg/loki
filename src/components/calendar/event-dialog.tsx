@@ -17,6 +17,8 @@ import {
   useProjects,
   useUpdateEvent,
 } from "@/hooks/use-organizer";
+import { useGcalStatus } from "@/hooks/use-gcal";
+import { pushGcal, unpushGcal } from "@/lib/data/gcal";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { AVATAR_COLORS } from "@/types/models";
@@ -75,6 +77,9 @@ export function EventDialog({
   const createEvent = useCreateEvent(currentWorkspaceId);
   const updateEvent = useUpdateEvent();
   const deleteEvent = useDeleteEvent();
+  const gcalQuery = useGcalStatus();
+  const gcalConnected = gcalQuery.data?.connected === true;
+  const [gcalNotice, setGcalNotice] = React.useState<string | null>(null);
 
   const initial: {
     title: string;
@@ -148,6 +153,7 @@ export function EventDialog({
     setReminders(initial.reminders);
     setRecurrence(initial.recurrence);
     setError(null);
+    setGcalNotice(null);
     setConfirmDelete(false);
   }, [open, initial]);
 
@@ -170,9 +176,10 @@ export function EventDialog({
       return;
     }
     setError(null);
+    setGcalNotice(null);
     try {
       if (event === null) {
-        await createEvent.mutateAsync({
+        const id = await createEvent.mutateAsync({
           uid: user.uid,
           input: {
             title,
@@ -188,6 +195,13 @@ export function EventDialog({
             recurrence: recurrence === "" ? null : recurrence,
           },
         });
+        // Espejo a Google (fire-and-forget): si falla, el evento ya quedó
+        // en Loki y se avisa discretamente sin bloquear.
+        if (gcalConnected) {
+          void pushGcal(id).catch(() => {
+            setGcalNotice("Se guardó en Loki, pero no llegó a Google.");
+          });
+        }
       } else {
         await updateEvent.mutateAsync({
           id: event.id,
@@ -205,6 +219,11 @@ export function EventDialog({
             recurrence: recurrence === "" ? null : recurrence,
           },
         });
+        if (gcalConnected) {
+          void pushGcal(event.id).catch(() => {
+            setGcalNotice("Se guardó en Loki, pero no llegó a Google.");
+          });
+        }
       }
       onClose();
     } catch (err: unknown) {
@@ -219,8 +238,13 @@ export function EventDialog({
       return;
     }
     setError(null);
+    const externalId = event.externalId;
     try {
       await deleteEvent.mutateAsync(event.id);
+      // Borra el espejo en Google (best effort, nunca bloquea ni avisa).
+      if (externalId !== null) {
+        void unpushGcal(externalId);
+      }
       onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "No se pudo eliminar el evento.");
@@ -432,6 +456,11 @@ export function EventDialog({
           {error !== null ? (
             <p role="alert" className="text-meta text-danger">
               {error}
+            </p>
+          ) : null}
+          {gcalNotice !== null ? (
+            <p role="status" className="text-meta text-muted-foreground">
+              {gcalNotice}
             </p>
           ) : null}
           <Button type="submit" disabled={saving} className="w-full">

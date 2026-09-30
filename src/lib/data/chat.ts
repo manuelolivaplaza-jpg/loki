@@ -268,35 +268,93 @@ type TableSubscription = {
  * de cuándo llegue el primer evento) y luego recarga ante cada evento. Si el
  * canal falla, el error va a `onError`, nunca sin capturar.
  */
+type TablePoolEntry = {
+  refs: number;
+  events: Set<() => void>;
+  errors: Set<(error: Error) => void>;
+  cancelled: boolean;
+  remove: () => void;
+};
+
+/**
+ * Un canal por topic, compartido entre componentes. `supabase.channel(topic)`
+ * devuelve la misma instancia si ya existe y añadir `.on()` tras
+ * `subscribe()` lanza ("cannot add postgres_changes callbacks after
+ * subscribe"), lo que tumbaba la app cuando dos vistas escuchaban lo mismo
+ * (p. ej. campana + toast). Aquí cada `listen*` suma sus callbacks y el
+ * canal se crea una sola vez.
+ */
+const tablePool = new Map<string, TablePoolEntry>();
+
 function subscribeTable(sub: TableSubscription): Unsubscribe {
   const supabase = getSupabaseClient();
-  let cancelled = false;
-  const channel: RealtimeChannel = supabase.channel(sub.topic);
-  channel.on(
-    "postgres_changes",
-    {
-      event: "*",
-      schema: "public",
-      table: sub.table,
-      ...(sub.filter === undefined ? {} : { filter: sub.filter }),
-    },
-    () => {
-      if (!cancelled) sub.onEvent();
-    },
-  );
-  channel.subscribe((status, error) => {
-    if (cancelled) return;
-    if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-      sub.onError?.(
-        error instanceof Error ? error : new Error(`Canal ${sub.topic}: ${status}`),
+  let entry = tablePool.get(sub.topic);
+  if (entry === undefined) {
+    const fresh: TablePoolEntry = {
+      refs: 0,
+      events: new Set(),
+      errors: new Set(),
+      cancelled: false,
+      remove: () => undefined,
+    };
+    tablePool.set(sub.topic, fresh);
+    entry = fresh;
+    try {
+      const channel: RealtimeChannel = supabase.channel(sub.topic);
+      channel.on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: sub.table,
+          ...(sub.filter === undefined ? {} : { filter: sub.filter }),
+        },
+        () => {
+          const current = tablePool.get(sub.topic);
+          if (current === undefined || current.cancelled) return;
+          for (const onEvent of current.events) onEvent();
+        },
       );
+      channel.subscribe((status, error) => {
+        const current = tablePool.get(sub.topic);
+        if (current === undefined || current.cancelled) return;
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          const err =
+            error instanceof Error ? error : new Error(`Canal ${sub.topic}: ${status}`);
+          for (const onError of current.errors) onError(err);
+        }
+      });
+      fresh.remove = () => {
+        void supabase.removeChannel(channel);
+      };
+    } catch {
+      // Realtime caído: se entrega la foto inicial y se sigue por query.
+      tablePool.delete(sub.topic);
+      entry = undefined;
     }
-  });
+  }
+  if (entry === undefined) {
+    sub.onEvent();
+    return () => undefined;
+  }
+  const current = entry;
+  current.refs += 1;
+  current.events.add(sub.onEvent);
+  if (sub.onError !== undefined) current.errors.add(sub.onError);
   // La foto inicial sale igual haya o no eventos después.
   sub.onEvent();
+  let done = false;
   return () => {
-    cancelled = true;
-    void supabase.removeChannel(channel);
+    if (done) return;
+    done = true;
+    current.events.delete(sub.onEvent);
+    if (sub.onError !== undefined) current.errors.delete(sub.onError);
+    current.refs -= 1;
+    if (current.refs <= 0) {
+      current.cancelled = true;
+      current.remove();
+      if (tablePool.get(sub.topic) === current) tablePool.delete(sub.topic);
+    }
   };
 }
 

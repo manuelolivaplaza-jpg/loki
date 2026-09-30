@@ -201,31 +201,88 @@ export function groupNotifications(
     .filter((entry) => entry.items.length > 0);
 }
 
+type NotificationsListener = (items: NotificationItem[]) => void;
+
+type SharedSubscription = {
+  refs: number;
+  listeners: Set<NotificationsListener>;
+  cancelled: boolean;
+  unsubscribeChannel?: () => void;
+};
+
+/**
+ * Una sola suscripción realtime por usuario, compartida entre campana, toast
+ * y bandeja. `supabase.channel(topic)` devuelve la MISMA instancia si ya
+ * existe, y añadir `.on()` después de `subscribe()` revienta la app
+ * ("cannot add postgres_changes callbacks after subscribe"). Con este
+ * registro el canal se crea una vez y cada montaje solo suma su callback.
+ */
+const sharedSubscriptions = new Map<string, SharedSubscription>();
+
+function reloadNotifications(uid: string): void {
+  const entry = sharedSubscriptions.get(uid);
+  if (entry === undefined || entry.cancelled) return;
+  void listNotifications(uid)
+    .then((items) => {
+      const current = sharedSubscriptions.get(uid);
+      if (current === undefined || current.cancelled) return;
+      for (const listener of current.listeners) {
+        listener(items);
+      }
+    })
+    .catch(() => undefined);
+}
+
 export function listenNotifications(
   uid: string,
-  cb: (items: NotificationItem[]) => void,
+  cb: NotificationsListener,
 ): Unsubscribe {
   const supabase = getSupabaseClient();
-  let cancelled = false;
-  const reload = (): void => {
-    void listNotifications(uid)
-      .then((items) => {
-        if (!cancelled) cb(items);
-      })
-      .catch(() => undefined);
-  };
-  const channel = supabase.channel(`loki:notifications:${uid}`);
-  channel.on(
-    "postgres_changes",
-    { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${uid}` },
-    () => {
-      if (!cancelled) reload();
-    },
-  );
-  channel.subscribe();
-  reload();
+  let entry = sharedSubscriptions.get(uid);
+  if (entry === undefined) {
+    const fresh: SharedSubscription = {
+      refs: 0,
+      listeners: new Set(),
+      cancelled: false,
+    };
+    sharedSubscriptions.set(uid, fresh);
+    entry = fresh;
+    try {
+      const channel = supabase.channel(`loki:notifications:${uid}`);
+      channel.on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications", filter: `user_id=eq.${uid}` },
+        () => reloadNotifications(uid),
+      );
+      channel.subscribe();
+      fresh.unsubscribeChannel = () => {
+        void supabase.removeChannel(channel);
+      };
+    } catch {
+      // Realtime caído: la bandeja sigue funcionando por query inicial.
+      sharedSubscriptions.delete(uid);
+      entry = undefined;
+    }
+  }
+  if (entry === undefined) {
+    void listNotifications(uid).then(cb).catch(() => undefined);
+    return () => undefined;
+  }
+  entry.refs += 1;
+  entry.listeners.add(cb);
+  reloadNotifications(uid);
+  let done = false;
   return () => {
-    cancelled = true;
-    void supabase.removeChannel(channel);
+    if (done) return;
+    done = true;
+    const current = sharedSubscriptions.get(uid);
+    if (current === undefined) return;
+    current.listeners.delete(cb);
+    current.refs -= 1;
+    if (current.refs <= 0) {
+      current.cancelled = true;
+      current.unsubscribeChannel?.();
+      sharedSubscriptions.delete(uid);
+    }
   };
 }

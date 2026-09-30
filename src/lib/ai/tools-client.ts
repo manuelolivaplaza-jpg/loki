@@ -14,6 +14,7 @@
  */
 
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { edgeHeaders } from "@/lib/edge";
 import {
   LOKI_FUNCTION_PATH,
   LOKI_NOT_CONFIGURED_TITLE,
@@ -109,10 +110,7 @@ async function ssePost(
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: edgeHeaders(token),
       body: JSON.stringify(payload),
     });
   } catch {

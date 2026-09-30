@@ -11,6 +11,7 @@
  */
 
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { edgeHeaders } from "@/lib/edge";
 
 export const GCAL_FUNCTION_PATH = "google-calendar";
 
@@ -98,10 +99,7 @@ async function callGcal(action: string, extra?: Record<string, string>): Promise
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: edgeHeaders(token),
       body: JSON.stringify({ action, ...(extra ?? {}) }),
     });
   } catch {

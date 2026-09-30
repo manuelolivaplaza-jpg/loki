@@ -14,6 +14,7 @@
  */
 
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { edgeHeaders } from "@/lib/edge";
 
 export const LOKI_FUNCTION_PATH = "loki-chat";
 
@@ -55,7 +56,7 @@ export async function getLokiStatus(): Promise<LokiHealth> {
   const url = functionUrl();
   if (url === null) return LOKI_OFFLINE;
   try {
-    const res = await fetch(`${url}/health`, { method: "GET" });
+    const res = await fetch(`${url}/health`, { method: "GET", headers: edgeHeaders() });
     if (!res.ok) return LOKI_OFFLINE;
     const body: unknown = await res.json();
     if (!isRecord(body)) return LOKI_OFFLINE;
@@ -131,10 +132,7 @@ export async function streamLokiReply(
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
-      },
+      headers: edgeHeaders(token),
       body: JSON.stringify(input),
     });
   } catch {

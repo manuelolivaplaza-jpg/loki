@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, Copy, QrCode, Share2 } from "lucide-react";
+import { Check, Copy, Crown, QrCode, Share2, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,17 +10,24 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
+import { MenuItem } from "@/components/ui/menu-card";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { inputClassName, labelClassName } from "@/components/auth/auth-ui";
 import { useCreateInvite } from "@/hooks/use-organizer";
 import { useSessionStore } from "@/stores/session-store";
-import type { ExpiryOption } from "@/lib/data/invites";
 import type { InviteItem } from "@/types/organizer";
-import { cn } from "@/lib/utils";
 
-const EXPIRY_OPTIONS: readonly { value: ExpiryOption; label: string }[] = [
-  { value: "1d", label: "1 día" },
-  { value: "7d", label: "7 días" },
-  { value: "never", label: "Nunca" },
+const ROLE_OPTIONS: readonly {
+  value: InviteItem["role"];
+  label: string;
+  detail: string;
+}[] = [
+  { value: "member", label: "Miembro", detail: "Participa en chats, tareas y eventos" },
+  { value: "admin", label: "Administrador", detail: "Además invita y gestiona el espacio" },
 ];
 
 async function makeQrDataUrl(text: string): Promise<string | null> {
@@ -44,7 +51,7 @@ export function InviteDialog({
   const createInvite = useCreateInvite(wsId);
   const user = useSessionStore((state) => state.user);
   const [role, setRole] = React.useState<InviteItem["role"]>("member");
-  const [expiry, setExpiry] = React.useState<ExpiryOption>("7d");
+  const [roleOpen, setRoleOpen] = React.useState(false);
   const [invite, setInvite] = React.useState<InviteItem | null>(null);
   const [qr, setQr] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -53,7 +60,7 @@ export function InviteDialog({
   React.useEffect(() => {
     if (!open) return;
     setRole("member");
-    setExpiry("7d");
+    setRoleOpen(false);
     setInvite(null);
     setQr(null);
     setError(null);
@@ -76,7 +83,6 @@ export function InviteDialog({
       const created = await createInvite.mutateAsync({
         uid: user.uid,
         role,
-        expiry,
         maxUses: null,
       });
       setInvite(created);
@@ -129,45 +135,60 @@ export function InviteDialog({
         {invite === null ? (
           <form onSubmit={(formEvent) => void handleCreate(formEvent)} className="flex flex-col gap-4">
             <div>
-              <label htmlFor="invite-role" className={labelClassName}>
+              <span id="invite-role-label" className={labelClassName}>
                 Rol
-              </label>
-              <select
-                id="invite-role"
-                name="role"
-                value={role}
-                onChange={(formEvent) => setRole(formEvent.target.value as InviteItem["role"])}
-                className={inputClassName}
-              >
-                <option value="member">Miembro</option>
-                <option value="admin">Administrador</option>
-              </select>
-            </div>
-            <div>
-              <span id="invite-expiry-label" className={labelClassName}>
-                Caduca
               </span>
-              <div role="group" aria-labelledby="invite-expiry-label" className="flex gap-2">
-                {EXPIRY_OPTIONS.map((option) => {
-                  const active = expiry === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => setExpiry(option.value)}
-                      className={cn(
-                        "h-9 flex-1 rounded-full text-body-sm outline-none interactive",
-                        active
-                          ? "bg-foreground font-semibold text-background dark:bg-white dark:text-black"
-                          : "bg-surface-soft text-foreground",
-                      )}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
+              <Popover open={roleOpen} onOpenChange={setRoleOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-labelledby="invite-role-label"
+                    aria-haspopup="menu"
+                    aria-expanded={roleOpen}
+                    className={`${inputClassName} flex items-center gap-3 text-left`}
+                  >
+                    <Icon
+                      icon={role === "admin" ? Crown : User}
+                      size={20}
+                      className="shrink-0 text-muted-foreground"
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      {role === "admin" ? "Administrador" : "Miembro"}
+                    </span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-72 p-2">
+                  <div role="menu" aria-label="Rol de la invitación" className="flex flex-col gap-1">
+                    {ROLE_OPTIONS.map((option) => {
+                      const selected = role === option.value;
+                      return (
+                        <MenuItem
+                          key={option.value}
+                          icon={option.value === "admin" ? Crown : User}
+                          description={option.detail}
+                          role="menuitemradio"
+                          aria-checked={selected}
+                          aria-label={option.label}
+                          onClick={() => {
+                            setRole(option.value);
+                            setRoleOpen(false);
+                          }}
+                        >
+                          <span className="flex items-center gap-2">
+                            {option.label}
+                            {selected ? (
+                              <Icon icon={Check} size={20} className="shrink-0 text-accent" />
+                            ) : null}
+                          </span>
+                        </MenuItem>
+                      );
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <p className="mt-1 text-meta leading-5 text-muted-foreground">
+                Las invitaciones no caducan.
+              </p>
             </div>
             {error !== null ? (
               <p role="alert" className="text-meta text-danger">

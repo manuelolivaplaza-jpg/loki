@@ -57,7 +57,6 @@ import {
   revokeInvite,
   setMemberRole,
   type AcceptInviteResult,
-  type ExpiryOption,
 } from "@/lib/data/invites";
 import type {
   EventItem,
@@ -406,7 +405,7 @@ export function useInvites(wsId: string | null): UseQueryResult<InviteItem[], Er
 
 export function useCreateInvite(
   wsId: string | null,
-): UseMutationResult<InviteItem, Error, { uid: string; role: InviteItem["role"]; expiry: ExpiryOption; maxUses: number | null }> {
+): UseMutationResult<InviteItem, Error, { uid: string; role: InviteItem["role"]; maxUses: number | null }> {
   const invalidate = useInvalidateKeys();
   return useMutation({
     mutationFn: (input) => {

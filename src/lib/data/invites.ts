@@ -64,24 +64,19 @@ export async function listInvites(wsId: string): Promise<InviteItem[]> {
   return ((data ?? []) as InviteRow[]).map(toInvite);
 }
 
-export type ExpiryOption = "1d" | "7d" | "never";
-
 export async function createInvite(
   wsId: string,
   uid: string,
-  input: { role?: InviteItem["role"]; expiry?: ExpiryOption; maxUses?: number | null },
+  input: { role?: InviteItem["role"]; maxUses?: number | null },
 ): Promise<InviteItem> {
-  const expiresAt =
-    input.expiry === undefined || input.expiry === "never"
-      ? null
-      : new Date(Date.now() + (input.expiry === "1d" ? 1 : 7) * 86_400_000).toISOString();
+  // Las invitaciones no caducan: entran cuando quieran con ese rol.
   const { data, error } = await getSupabaseClient()
     .from("invites")
     .insert({
       workspace_id: wsId,
       created_by: uid,
       role: input.role ?? "member",
-      expires_at: expiresAt,
+      expires_at: null,
       max_uses: input.maxUses ?? null,
     })
     .select(INVITE_COLUMNS)

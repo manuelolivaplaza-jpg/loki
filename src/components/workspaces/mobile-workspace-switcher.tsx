@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, Plus } from "lucide-react";
+import { Check, Plus, UserPlus } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
 import { MenuItem } from "@/components/ui/menu-card";
@@ -25,6 +26,7 @@ import { useProfileStore } from "@/stores/profile-store";
 import { cn } from "@/lib/utils";
 
 export function MobileWorkspaceSwitcher(): React.JSX.Element {
+  const router = useRouter();
   const user = useSessionStore((state) => state.user);
   const profile = useProfileStore((state) => state.profile);
   const { workspaces, currentWorkspace, currentWorkspaceId, isLoading } = useWorkspaces();
@@ -141,6 +143,17 @@ export function MobileWorkspaceSwitcher(): React.JSX.Element {
                         <p className="px-3 py-2 text-meta text-muted-foreground">Todavía no tienes espacios.</p>
                       ) : null}
                       <div aria-hidden="true" className="mx-2 my-2 h-px bg-divider" />
+                      <MenuItem
+                        icon={UserPlus}
+                        role="menuitem"
+                        aria-label="Unirse a un espacio"
+                        onClick={() => {
+                          setOpen(false);
+                          router.push("/invite");
+                        }}
+                      >
+                        Unirse a un espacio
+                      </MenuItem>
                       <MenuItem
                         icon={Plus}
                         role="menuitem"

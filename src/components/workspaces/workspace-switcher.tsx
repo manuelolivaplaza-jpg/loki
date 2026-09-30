@@ -21,7 +21,12 @@ import { useWorkspaceStore, useWorkspaces } from "@/stores/workspace-store";
 import { useProfileStore } from "@/stores/profile-store";
 import { cn } from "@/lib/utils";
 
-export function WorkspaceSwitcher(): React.JSX.Element {
+export function WorkspaceSwitcher({
+  expanded = false,
+}: {
+  /** La sidebar extendida muestra nombre + chevron; contraída, solo el emoji. */
+  expanded?: boolean;
+}): React.JSX.Element {
   const user = useSessionStore((state) => state.user);
   const profile = useProfileStore((state) => state.profile);
   const { workspaces, currentWorkspace, currentWorkspaceId, isLoading } = useWorkspaces();
@@ -62,7 +67,10 @@ export function WorkspaceSwitcher(): React.JSX.Element {
             aria-haspopup="menu"
             aria-expanded={open}
             aria-label="Cambiar de espacio"
-            className="flex w-full items-center justify-center gap-2 rounded-sm px-2 py-2 outline-none interactive xl:justify-start xl:px-2"
+            className={cn(
+              "flex w-full items-center gap-2 rounded-sm px-3 py-2 outline-none interactive",
+              expanded && "justify-start",
+            )}
           >
             {loading ? (
               <span
@@ -72,7 +80,12 @@ export function WorkspaceSwitcher(): React.JSX.Element {
             ) : (
               <Avatar emoji={display?.emoji ?? "🏠"} size={32} />
             )}
-            <span className="hidden min-w-0 max-w-32 flex-1 text-left xl:block">
+            <span
+              className={cn(
+                "min-w-0 max-w-32 flex-1 text-left",
+                !expanded && "hidden",
+              )}
+            >
               {loading ? (
                 <span
                   aria-hidden="true"
@@ -84,7 +97,11 @@ export function WorkspaceSwitcher(): React.JSX.Element {
                 </span>
               )}
             </span>
-            <Icon icon={ChevronDown} size={20} className="hidden shrink-0 text-muted-foreground xl:block" />
+            <Icon
+              icon={ChevronDown}
+              size={20}
+              className={cn("shrink-0 text-muted-foreground", !expanded && "hidden")}
+            />
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-64" align="start">

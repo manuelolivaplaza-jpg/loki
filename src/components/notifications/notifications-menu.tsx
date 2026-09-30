@@ -57,10 +57,7 @@ export function NotificationsMenu({
           title="Notificaciones (doble clic para ver todas)"
           aria-expanded={open}
           aria-haspopup="menu"
-          className={cn(
-            "relative flex h-11 items-center rounded-full text-foreground outline-none interactive",
-            expanded ? "w-full justify-start gap-3 px-3" : "w-11 justify-center",
-          )}
+          className="flex h-11 w-full items-center justify-start gap-3 rounded-full px-3 text-foreground outline-none interactive"
         >
           <span className="relative flex items-center justify-center">
             <Icon icon={Bell} size={20} />

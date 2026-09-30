@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ChevronsLeft, ChevronsRight, Plus } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Plus, Search } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -16,9 +16,11 @@ import {
   type QuickAction,
 } from "@/components/shell/quick-actions";
 import { NAV_ITEMS } from "@/components/shell/sections";
+import { NotificationsMenu } from "@/components/notifications/notifications-menu";
 import { WorkspaceSwitcher } from "@/components/workspaces/workspace-switcher";
 import { isActiveHref, useAppPathname } from "@/lib/navigation";
 import { useProfileStore } from "@/stores/profile-store";
+import { useSearchStore } from "@/stores/search-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useUiStore } from "@/stores/ui-store";
 import { cn } from "@/lib/utils";
@@ -35,6 +37,7 @@ export function Sidebar(): React.JSX.Element {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
   const user = useSessionStore((state) => state.user);
   const profile = useProfileStore((state) => state.profile);
+  const setSearchOpen = useSearchStore((state) => state.setOpen);
   const [newOpen, setNewOpen] = React.useState(false);
   const [selected, setSelected] = React.useState<QuickAction | null>(null);
 
@@ -111,6 +114,23 @@ export function Sidebar(): React.JSX.Element {
             );
           })}
         </ul>
+        <div className={cn("mt-1 flex", expanded ? "block" : "justify-center")}>
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            aria-label="Buscar"
+            title="Buscar (Ctrl+K)"
+            className={cn(
+              "flex h-11 items-center rounded-full text-foreground outline-none interactive",
+              expanded ? "w-full justify-start gap-3 px-3" : "w-11 justify-center",
+            )}
+          >
+            <Icon icon={Search} size={20} />
+            {expanded ? (
+              <span className="text-body-sm">Buscar</span>
+            ) : null}
+          </button>
+        </div>
         <div className={cn("mt-3 flex", expanded ? "block" : "justify-center")}>
           <Popover open={newOpen} onOpenChange={setNewOpen}>
             <PopoverTrigger asChild>
@@ -155,16 +175,24 @@ export function Sidebar(): React.JSX.Element {
 
       <div
         className={cn(
-          "flex items-center gap-3 border-t border-divider px-2 py-3",
-          expanded ? "justify-start" : "justify-center",
+          "flex flex-col gap-1 border-t border-divider px-2 py-2",
+          expanded ? "items-stretch" : "items-center",
         )}
       >
-        <ProfileMenu size={36} />
-        {expanded ? (
-          <span className="min-w-0 flex-1 truncate text-body-sm font-medium text-foreground">
-            {displayName}
-          </span>
-        ) : null}
+        <NotificationsMenu expanded={expanded} />
+        <div
+          className={cn(
+            "flex items-center gap-3 px-2 pt-1",
+            expanded ? "justify-start" : "justify-center",
+          )}
+        >
+          <ProfileMenu size={36} />
+          {expanded ? (
+            <span className="min-w-0 flex-1 truncate text-body-sm font-medium text-foreground">
+              {displayName}
+            </span>
+          ) : null}
+        </div>
       </div>
       <QuickActionDialog action={selected} onClose={() => setSelected(null)} />
     </aside>

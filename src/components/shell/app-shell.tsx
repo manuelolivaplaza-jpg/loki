@@ -2,10 +2,9 @@
 
 import * as React from "react";
 import dynamic from "next/dynamic";
-import { PanelRight, Search } from "lucide-react";
+import { PanelRight } from "lucide-react";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { MobileHeader } from "@/components/shell/mobile-header";
-import { NotificationsBell } from "@/components/notifications/notifications-bell";
 import { NotificationsToast } from "@/components/notifications/notifications-toast";
 import { RightPanel } from "@/components/shell/right-panel";
 import { getSectionByPath, isFullscreenRoute } from "@/components/shell/sections";
@@ -56,12 +55,8 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
   const toggleRightPanel = useUiStore((state) => state.toggleRightPanel);
   const setSearchOpen = useSearchStore((state) => state.setOpen);
   const {
-    currentWorkspace,
     currentWorkspaceId,
-    workspaces,
-    isLoading: workspacesLoading,
   } = useWorkspaces();
-  const showWorkspaceSkeleton = workspacesLoading && workspaces.length === 0;
 
   // Atajo global: Cmd/Ctrl+K abre la búsqueda desde cualquier pantalla.
   React.useEffect(() => {
@@ -85,46 +80,6 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
 
         <div className="flex min-w-0 flex-1 items-start">
           <div className="flex min-w-0 flex-1 flex-col">
-            <header className="sticky top-0 z-10 hidden h-12 items-center justify-between bg-background/80 px-3 backdrop-blur md:flex lg:px-4">
-              <div className="flex min-w-0 flex-col justify-center">
-                <h1 className="truncate text-title font-semibold leading-tight text-foreground">
-                  {headerTitle}
-                </h1>
-                {showWorkspaceSkeleton ? (
-                  <span
-                    aria-hidden="true"
-                    className="mt-1 block h-4 w-32 animate-pulse rounded-full bg-surface-soft"
-                  />
-                ) : currentWorkspace !== null ? (
-                  <p className="truncate text-meta leading-tight text-muted-foreground">
-                    {currentWorkspace.emoji} {currentWorkspace.name}
-                  </p>
-                ) : null}
-              </div>
-              <IconButton
-                variant="ghost"
-                onClick={() => setSearchOpen(true)}
-                aria-label="Buscar"
-                title="Buscar (Ctrl+K)"
-              >
-                <Icon icon={Search} size={20} />
-              </IconButton>
-              <IconButton
-                variant="ghost"
-                onClick={toggleRightPanel}
-                aria-label={
-                  rightPanelOpen
-                    ? "Ocultar panel contextual"
-                    : "Mostrar panel contextual"
-                }
-                aria-expanded={rightPanelOpen}
-                className="hidden xl:inline-flex"
-              >
-                <Icon icon={PanelRight} size={20} />
-              </IconButton>
-              <NotificationsBell />
-            </header>
-
             <main
               className={cn(
                 "min-h-[calc(100dvh-48px)] md:min-h-dvh md:pb-6",
@@ -145,6 +100,20 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
 
       <BottomNav />
       <NotificationsToast />
+      {/* Botón flotante del panel contextual (solo escritorio ancho). */}
+      <div className="fixed right-4 top-4 z-40 hidden xl:block">
+        <IconButton
+          variant="floating"
+          onClick={toggleRightPanel}
+          aria-label={
+            rightPanelOpen ? "Ocultar panel contextual" : "Mostrar panel contextual"
+          }
+          aria-expanded={rightPanelOpen}
+          title={rightPanelOpen ? "Ocultar panel" : "Mostrar panel"}
+        >
+          <Icon icon={PanelRight} size={20} />
+        </IconButton>
+      </div>
       <ErrorBoundary section="la búsqueda">
         <SearchPalette wsId={currentWorkspaceId} />
       </ErrorBoundary>

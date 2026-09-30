@@ -122,26 +122,50 @@ export function CalendarView(): React.JSX.Element {
     setDialogOpen(true);
   }
 
-  const title = new Intl.DateTimeFormat("es", { month: "long", year: "numeric" }).format(anchor);
+  const title = new Intl.DateTimeFormat("es", { month: "long" }).format(anchor);
   const titleLabel = title.charAt(0).toUpperCase() + title.slice(1);
+  const yearLabel = new Intl.DateTimeFormat("es", { year: "numeric" }).format(anchor);
+  const isCurrentPeriod = React.useMemo(() => {
+    const now = new Date();
+    if (view === "month") {
+      return now.getFullYear() === anchor.getFullYear() && now.getMonth() === anchor.getMonth();
+    }
+    const start = view === "week" ? weekRange(anchor).from : agendaRange(anchor).from;
+    const end = view === "week" ? weekRange(anchor).to : agendaRange(anchor).to;
+    return now.getTime() >= start.getTime() && now.getTime() <= end.getTime();
+  }, [view, anchor]);
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
-          <IconButton variant="ghost" aria-label="Anterior" onClick={() => shift(-1)}>
-            <Icon icon={ChevronLeft} size={20} />
-          </IconButton>
-          <h1 className="min-w-32 text-center text-title font-semibold text-foreground">
+      <div className="flex items-end justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-meta font-medium leading-4 text-muted-foreground">{yearLabel}</p>
+          <h1 className="truncate text-display font-bold leading-tight text-foreground">
             {titleLabel}
           </h1>
-          <IconButton variant="ghost" aria-label="Siguiente" onClick={() => shift(1)}>
-            <Icon icon={ChevronRight} size={20} />
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {!isCurrentPeriod ? (
+            <button
+              type="button"
+              onClick={() => setAnchor(new Date())}
+              className="h-9 rounded-full px-3 text-body-sm font-semibold text-mention outline-none interactive"
+            >
+              Hoy
+            </button>
+          ) : null}
+          <div className="flex items-center rounded-full bg-surface-soft p-0.5">
+            <IconButton variant="ghost" aria-label="Anterior" onClick={() => shift(-1)} className="h-9 w-9">
+              <Icon icon={ChevronLeft} size={20} />
+            </IconButton>
+            <IconButton variant="ghost" aria-label="Siguiente" onClick={() => shift(1)} className="h-9 w-9">
+              <Icon icon={ChevronRight} size={20} />
+            </IconButton>
+          </div>
+          <IconButton variant="solid" aria-label="Crear evento" onClick={() => openCreate()}>
+            <Icon icon={Plus} size={20} />
           </IconButton>
         </div>
-        <IconButton variant="solid" aria-label="Crear evento" onClick={() => openCreate()}>
-          <Icon icon={Plus} size={20} />
-        </IconButton>
       </div>
 
       <div

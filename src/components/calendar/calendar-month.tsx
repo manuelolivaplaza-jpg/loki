@@ -4,7 +4,8 @@ import * as React from "react";
 import type { EventItem, EventOccurrence } from "@/types/organizer";
 import { cn } from "@/lib/utils";
 
-const WEEKDAYS = ["L", "M", "M", "J", "V", "S", "D"];
+const WEEKDAYS_SHORT = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"];
+const WEEKDAYS_LETTER = ["L", "M", "M", "J", "V", "S", "D"];
 
 function sameDay(a: Date, b: Date): boolean {
   return (
@@ -12,6 +13,10 @@ function sameDay(a: Date, b: Date): boolean {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate()
   );
+}
+
+function monthName(date: Date): string {
+  return new Intl.DateTimeFormat("es", { month: "long" }).format(date);
 }
 
 export function CalendarMonth({
@@ -46,66 +51,99 @@ export function CalendarMonth({
       list.push(occurrence);
       map.set(key, list);
     }
+    for (const list of map.values()) {
+      list.sort((a, b) => a.startsAt.toMillis() - b.startsAt.toMillis());
+    }
     return map;
   }, [occurrences]);
 
   return (
-    <div role="grid" aria-label="Mes">
-      <div aria-hidden="true" className="grid grid-cols-7">
-        {WEEKDAYS.map((letter, index) => (
+    <div role="grid" aria-label="Mes" className="overflow-hidden rounded-2xl border border-divider bg-background">
+      <div aria-hidden="true" className="grid grid-cols-7 border-b border-divider bg-surface-soft/60">
+        {WEEKDAYS_SHORT.map((name, index) => (
           <span
-            key={`${letter}-${index}`}
-            className="py-1 text-center text-meta font-medium leading-4 text-muted-foreground"
+            key={name}
+            className="py-2 text-center text-meta font-semibold uppercase tracking-wide text-muted-foreground"
           >
-            {letter}
+            <span className="hidden md:inline">{name}</span>
+            <span className="md:hidden">{WEEKDAYS_LETTER[index]}</span>
           </span>
         ))}
       </div>
-      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg bg-divider">
-        {cells.map((day) => {
+      <div className="grid grid-cols-7">
+        {cells.map((day, cellIndex) => {
           const key = `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
-          const events = (byDay.get(key) ?? []).slice(0, 3);
-          const extra = (byDay.get(key) ?? []).length - events.length;
+          const all = byDay.get(key) ?? [];
+          const shown = all.slice(0, 3);
+          const extra = all.length - shown.length;
           const inMonth = day.getMonth() === anchor.getMonth();
           const isToday = sameDay(day, today);
+          const isLastRow = cellIndex >= 35;
+          const isLastCol = cellIndex % 7 === 6;
           return (
             <div
               key={key}
               className={cn(
-                "flex min-h-[68px] flex-col items-stretch gap-0.5 bg-background p-1 md:min-h-[92px]",
-                !inMonth && "opacity-45",
+                "flex min-h-[76px] flex-col items-stretch gap-1 p-1.5 md:min-h-[104px] md:p-2",
+                !isLastRow && "border-b border-divider",
+                !isLastCol && "border-r border-divider",
+                isToday ? "bg-accent/[0.07]" : "bg-background",
+                !inMonth && "opacity-50",
               )}
             >
-              <button
-                type="button"
-                aria-label={`Crear el ${day.getDate()} de ${new Intl.DateTimeFormat("es", { month: "long" }).format(day)}`}
-                onClick={() => onSelectDay(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0))}
-                className={cn(
-                  "flex h-6 w-6 items-center justify-center rounded-full text-meta leading-4 outline-none interactive",
-                  isToday
-                    ? "bg-foreground font-semibold text-background dark:bg-white dark:text-black"
-                    : "text-foreground",
-                )}
-              >
-                {day.getDate()}
-              </button>
-              {events.map((occurrence) => (
+              <div className="flex items-center justify-between">
                 <button
-                  key={occurrence.occurrenceId}
                   type="button"
-                  aria-label={occurrence.title}
-                  onClick={() => onSelectEvent(occurrence)}
-                  className="truncate rounded-sm px-1 text-left text-meta leading-4 text-foreground outline-none interactive"
-                  style={{ backgroundColor: `${occurrence.color}26` }}
+                  aria-label={`Crear el ${day.getDate()} de ${monthName(day)}`}
+                  onClick={() => onSelectDay(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0))}
+                  className={cn(
+                    "flex h-7 w-7 items-center justify-center rounded-full text-body-sm outline-none interactive",
+                    isToday
+                      ? "bg-foreground font-bold text-background dark:bg-white dark:text-black"
+                      : "font-medium text-foreground",
+                    !inMonth && "text-muted-foreground",
+                  )}
                 >
-                  {occurrence.title}
+                  {day.getDate()}
                 </button>
-              ))}
-              {extra > 0 ? (
-                <span className="px-1 text-meta leading-4 text-muted-foreground">
-                  +{extra} más
-                </span>
-              ) : null}
+                {all.length > 2 ? (
+                  <span
+                    aria-hidden="true"
+                    className="rounded-full bg-surface-soft px-1.5 text-meta font-semibold leading-4 text-muted-foreground"
+                  >
+                    {all.length}
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex min-h-0 flex-col gap-1">
+                {shown.map((occurrence) => (
+                  <button
+                    key={occurrence.occurrenceId}
+                    type="button"
+                    aria-label={`${occurrence.title}, ${new Intl.DateTimeFormat("es", { hour: "2-digit", minute: "2-digit" }).format(occurrence.startsAt.toDate())}`}
+                    onClick={() => onSelectEvent(occurrence)}
+                    className="flex min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-left outline-none interactive"
+                    style={{ backgroundColor: `${occurrence.color}1f` }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: occurrence.color }}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-meta font-medium leading-4 text-foreground">
+                      {occurrence.title}
+                    </span>
+                    <span className="hidden shrink-0 text-meta tabular-nums leading-4 text-muted-foreground md:inline">
+                      {new Intl.DateTimeFormat("es", { hour: "2-digit", minute: "2-digit" }).format(occurrence.startsAt.toDate())}
+                    </span>
+                  </button>
+                ))}
+                {extra > 0 ? (
+                  <span className="px-1.5 text-left text-meta font-medium leading-4 text-accent">
+                    +{extra} más
+                  </span>
+                ) : null}
+              </div>
             </div>
           );
         })}

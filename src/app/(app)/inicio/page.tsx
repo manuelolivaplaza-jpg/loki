@@ -123,17 +123,6 @@ export default function InicioPage(): React.JSX.Element {
     (project) => project.status === "active",
   ).length;
 
-  const todayTasks = React.useMemo(() => {
-    const start = startOfDay(now).getTime();
-    return tasks
-      .filter((task) => {
-        if (task.status === "done" || task.dueAt === null) return false;
-        const due = startOfDay(task.dueAt.toDate()).getTime();
-        return due <= start;
-      })
-      .sort((a, b) => (a.dueAt?.toMillis() ?? 0) - (b.dueAt?.toMillis() ?? 0));
-  }, [tasks, now]);
-
   const weekDays = React.useMemo(() => {
     const marks = new Array<boolean>(7).fill(false);
     for (const occurrence of weekQuery.occurrences) {
@@ -154,6 +143,43 @@ export default function InicioPage(): React.JSX.Element {
     });
   }, [weekQuery.occurrences, weekStart]);
   const todayIndex = (now.getDay() + 6) % 7;
+  const [selectedDayIndex, setSelectedDayIndex] = React.useState(todayIndex);
+
+  // Día seleccionado de la tira semanal (por defecto hoy): la tarjeta
+  // muestra sus tareas (vencen ese día; hoy incluye las atrasadas) y
+  // sus eventos.
+  const selectedDate = React.useMemo(() => {
+    const day = new Date(weekStart.getTime());
+    day.setDate(day.getDate() + selectedDayIndex);
+    return day;
+  }, [weekStart, selectedDayIndex]);
+  const selectedStart = startOfDay(selectedDate).getTime();
+  const isSelectedToday = selectedStart === startOfDay(now).getTime();
+  const selectedLabel = isSelectedToday
+    ? "Hoy"
+    : (() => {
+      const raw = new Intl.DateTimeFormat("es", { weekday: "long" }).format(selectedDate);
+      return raw.charAt(0).toUpperCase() + raw.slice(1);
+    })();
+
+  const dayTasks = React.useMemo(() => {
+    return tasks
+      .filter((task) => {
+        if (task.status === "done" || task.dueAt === null) return false;
+        const due = startOfDay(task.dueAt.toDate()).getTime();
+        return isSelectedToday ? due <= selectedStart : due === selectedStart;
+      })
+      .sort((a, b) => (a.dueAt?.toMillis() ?? 0) - (b.dueAt?.toMillis() ?? 0));
+  }, [tasks, selectedStart, isSelectedToday]);
+
+  const dayEvents = React.useMemo(() => {
+    const end = selectedStart + 86_400_000;
+    return weekQuery.occurrences.filter((occurrence) => {
+      const start = occurrence.startsAt.toMillis();
+      const finish = occurrence.endsAt.toMillis();
+      return start < end && finish > selectedStart;
+    });
+  }, [weekQuery.occurrences, selectedStart]);
 
   const upcoming = React.useMemo<EventOccurrence[]>(
     () => upcomingQuery.occurrences.filter((o) => o.endsAt.toMillis() >= now.getTime()).slice(0, 4),
@@ -229,19 +255,19 @@ export default function InicioPage(): React.JSX.Element {
           </Card>
         </section>
 
-        <section aria-label="Hoy">
+        <section aria-label={selectedLabel}>
           <Card className="h-full p-4">
             <h2 className="text-body font-semibold text-foreground">
-              Hoy · {todayTasks.length}
+              {selectedLabel} · {dayTasks.length + dayEvents.length}
             </h2>
-            {todayTasks.length === 0 ? (
+            {dayTasks.length === 0 && dayEvents.length === 0 ? (
               <p className="mt-2 text-body-sm text-muted-foreground">
-                Nada vence hoy. Disfruta el día.
+                {isSelectedToday ? "Nada vence hoy. Disfruta el día." : `Nada para el ${selectedLabel.toLowerCase()}.`}
               </p>
             ) : (
               <ul className="mt-2 flex flex-col">
-                {todayTasks.map((task, index) => (
-                  <React.Fragment key={task.id}>
+                {dayTasks.map((task, index) => (
+                  <React.Fragment key={`task-${task.id}`}>
                     {index > 0 ? <CardDivider className="mx-0" /> : null}
                     <li className="flex items-center gap-3 py-3">
                       <Checkbox
@@ -255,6 +281,27 @@ export default function InicioPage(): React.JSX.Element {
                         </span>
                         <span className="block text-meta text-muted-foreground">
                           {taskMeta(task, projectsById.get(task.projectId) ?? null)}
+                        </span>
+                      </span>
+                    </li>
+                  </React.Fragment>
+                ))}
+                {dayEvents.map((occurrence, index) => (
+                  <React.Fragment key={occurrence.occurrenceId}>
+                    {index > 0 || dayTasks.length > 0 ? <CardDivider className="mx-0" /> : null}
+                    <li className="flex items-center gap-3 py-3">
+                      <span
+                        aria-hidden="true"
+                        className="h-8 w-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: occurrence.color }}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-body-sm font-medium text-foreground">
+                          {occurrence.title}
+                        </span>
+                        <span className="block text-meta text-muted-foreground">
+                          {eventWhenLabel(occurrence.startsAt.toDate(), now)}
+                          {occurrence.location !== "" ? ` · ${occurrence.location}` : ""}
                         </span>
                       </span>
                     </li>
@@ -276,7 +323,12 @@ export default function InicioPage(): React.JSX.Element {
               Esta semana
             </h2>
             <div className="mt-2">
-              <WeekStrip days={weekDays} todayIndex={todayIndex} />
+              <WeekStrip
+                days={weekDays}
+                todayIndex={todayIndex}
+                selectedIndex={selectedDayIndex}
+                onSelectDay={setSelectedDayIndex}
+              />
             </div>
           </Card>
         </section>

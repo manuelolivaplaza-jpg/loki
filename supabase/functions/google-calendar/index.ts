@@ -417,15 +417,31 @@ type GoogleItem = {
   location: string;
   start: string | null;
   end: string | null;
+  allDay: boolean;
 };
 
-function gcalDate(value: unknown): string | null {
+function gcalRange(value: unknown): { start: string; end: string; allDay: boolean } | null {
   if (!isRecord(value)) return null;
   const dateTime = value["dateTime"];
-  if (typeof dateTime === "string" && dateTime !== "") return dateTime;
+  if (typeof dateTime === "string" && dateTime !== "") {
+    return { start: dateTime, end: "", allDay: false };
+  }
   const date = value["date"];
-  if (typeof date === "string" && date !== "") return `${date}T00:00:00.000Z`;
+  if (typeof date === "string" && date !== "") {
+    // Todo el día: mediodía UTC para no caer en el día anterior en América.
+    return { start: `${date}T12:00:00.000Z`, end: "", allDay: true };
+  }
   return null;
+}
+
+function gcalDate(value: unknown): string | null {
+  const range = gcalRange(value);
+  return range === null ? null : range.start;
+}
+
+function gcalAllDay(value: unknown): boolean {
+  const range = gcalRange(value);
+  return range !== null && range.allDay;
 }
 
 function toGoogleItem(value: unknown): GoogleItem | null {
@@ -440,6 +456,7 @@ function toGoogleItem(value: unknown): GoogleItem | null {
     location: typeof value["location"] === "string" ? value["location"] : "",
     start: gcalDate(value["start"]),
     end: gcalDate(value["end"]),
+    allDay: gcalAllDay(value["start"]) || gcalAllDay(value["end"]),
   };
 }
 

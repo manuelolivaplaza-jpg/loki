@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { exchangeGcal } from "@/lib/data/gcal";
+import { exchangeGcal, pullGcal } from "@/lib/data/gcal";
 
 /**
  * Vuelta de Google OAuth (?code= o ?error=). Intercambia el código por la
@@ -13,6 +14,7 @@ import { exchangeGcal } from "@/lib/data/gcal";
  */
 function GoogleCallbackInner(): React.JSX.Element {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const code = searchParams.get("code") ?? "";
   const denied = searchParams.get("error") ?? "";
@@ -33,15 +35,24 @@ function GoogleCallbackInner(): React.JSX.Element {
     void exchangeGcal(code).then(
       (email) => {
         if (cancelled) return;
-        setState("done");
-        setMessage(
-          email !== ""
-            ? `Conectado como ${email}. Volviendo a Configuración…`
-            : "Conectado. Volviendo a Configuración…",
-        );
-        window.setTimeout(() => {
-          if (!cancelled) router.replace("/configuracion");
-        }, 1200);
+        // Importación inmediata: los eventos de Google aparecen en el
+        // calendario de la plataforma sin esperar a abrirlo.
+        setMessage("Conectado. Importando tus eventos…");
+        void pullGcal()
+          .catch(() => undefined)
+          .finally(() => {
+            if (cancelled) return;
+            void queryClient.invalidateQueries({ queryKey: ["events"] });
+            setState("done");
+            setMessage(
+              email !== ""
+                ? `Conectado como ${email}. Tus eventos ya están en el calendario.`
+                : "Conectado. Tus eventos ya están en el calendario.",
+            );
+            window.setTimeout(() => {
+              if (!cancelled) router.replace("/calendario");
+            }, 1600);
+          });
       },
       (err: unknown) => {
         if (cancelled) return;
@@ -54,7 +65,7 @@ function GoogleCallbackInner(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [code, denied, router]);
+  }, [code, denied, router, queryClient]);
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">

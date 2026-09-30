@@ -27,8 +27,8 @@ import { cn } from "@/lib/utils";
 
 /**
  * Barra lateral de escritorio: contraída (solo iconos, 68px) o extendida
- * (con nombres, 220px). Los blancos de la barra SON el botón: el relleno
- * flexible alterna el estado (el chevron se insinúa al pasar el puntero).
+ * (con nombres, 220px). Sin animaciones: el cambio es instantáneo. El
+ * botón circular sobre el borde y el borde mismo alternan el estado.
  * La columna de iconos queda siempre fija a la izquierda: al extender solo
  * aparecen los nombres, nada se mueve. El perfil va abajo, con avatar fijo
  * + nombre.
@@ -55,10 +55,25 @@ export function Sidebar(): React.JSX.Element {
   return (
     <aside
       className={cn(
-        "group/aside sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-divider bg-background transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex",
+        "relative sticky top-0 hidden h-dvh shrink-0 flex-col border-r border-divider bg-background md:flex",
         expanded ? "w-[220px]" : "w-[68px]",
       )}
     >
+      {/* Borde clicable + botón circular: alternan la barra, sin animación. */}
+      <button
+        type="button"
+        onClick={toggleSidebar}
+        aria-label={toggleLabel}
+        title={toggleLabel}
+        className="absolute -right-2 top-0 z-10 h-full w-4 cursor-ew-resize bg-transparent outline-none"
+      >
+        <span
+          aria-hidden="true"
+          className="absolute left-1/2 top-1/2 flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-divider bg-background text-muted-foreground shadow-float"
+        >
+          <Icon icon={expanded ? ChevronsLeft : ChevronsRight} size={20} />
+        </span>
+      </button>
       <div className="px-2 pb-1 pt-2">
         <WorkspaceSwitcher expanded={expanded} />
       </div>
@@ -143,21 +158,6 @@ export function Sidebar(): React.JSX.Element {
           </Popover>
         </div>
 
-        {/* Blanco de la barra = botón para extender u ocultar. */}
-        <button
-          type="button"
-          onClick={toggleSidebar}
-          aria-label={toggleLabel}
-          title={toggleLabel}
-          className="mb-1 mt-2 flex min-h-10 w-full flex-1 items-start justify-center rounded-lg pt-2 text-muted-foreground outline-none interactive"
-        >
-          <span
-            aria-hidden="true"
-            className="opacity-0 transition-opacity duration-200 group-hover/aside:opacity-100"
-          >
-            <Icon icon={expanded ? ChevronsLeft : ChevronsRight} size={20} />
-          </span>
-        </button>
       </nav>
 
       <div className="flex flex-col items-stretch gap-1 border-t border-divider px-2 py-2">

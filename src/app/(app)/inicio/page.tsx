@@ -18,6 +18,7 @@ import { ProgressRing } from "@/components/ui/progress-ring";
 import { SectionLabel } from "@/components/ui/section-label";
 import { WeekStrip } from "@/components/ui/week-strip";
 import { PlaceholderDialog } from "@/components/shell/quick-actions";
+import { InviteDialog } from "@/components/members/invite-dialog";
 import {
   useEventOccurrences,
   useProjects,
@@ -350,11 +351,19 @@ export default function InicioPage(): React.JSX.Element {
         </section>
       </div>
 
-      <PlaceholderDialog
-        title={quickAccess?.label ?? ""}
-        open={quickAccess !== null}
-        onClose={() => setQuickAccess(null)}
-      />
+      {quickAccess?.key === "invitar" ? (
+        <InviteDialog
+          open={quickAccess !== null}
+          wsId={currentWorkspaceId}
+          onClose={() => setQuickAccess(null)}
+        />
+      ) : (
+        <PlaceholderDialog
+          title={quickAccess?.label ?? ""}
+          open={quickAccess !== null}
+          onClose={() => setQuickAccess(null)}
+        />
+      )}
     </div>
   );
 }

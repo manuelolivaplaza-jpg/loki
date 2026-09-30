@@ -19,6 +19,8 @@ import {
   DialogTitle,
   DialogOverlay,
 } from "@/components/ui/dialog";
+import { InviteDialog } from "@/components/members/invite-dialog";
+import { useWorkspaces } from "@/stores/workspace-store";
 import { MenuItem } from "@/components/ui/menu-card";
 import { fade, slideUp, stagger, fadeScale } from "@/lib/motion";
 
@@ -104,6 +106,17 @@ export function QuickActionDialog({
   action: QuickAction | null;
   onClose: () => void;
 }): React.JSX.Element {
+  const { currentWorkspaceId } = useWorkspaces();
+  // Invitar ya es real: abre el diálogo con link, código y QR.
+  if (action?.key === "invitar") {
+    return (
+      <InviteDialog
+        open={action !== null}
+        wsId={currentWorkspaceId}
+        onClose={onClose}
+      />
+    );
+  }
   return (
     <PlaceholderDialog
       title={action?.title ?? ""}

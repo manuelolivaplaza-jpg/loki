@@ -788,7 +788,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       `/calendar_connections?user_id=eq.${encodeURIComponent(uid)}`,
       { method: "PATCH", prefer: "return=minimal", body: { last_pull_at: new Date().toISOString() } },
     );
-    return json(200, { imported, updated, removed });
+    return json(200, { imported, updated, removed, fetched: googleItems.length });
   }
 
   // --- push: Loki -> Google (crear o actualizar) ------------------------------------

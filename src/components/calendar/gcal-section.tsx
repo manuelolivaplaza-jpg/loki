@@ -51,7 +51,11 @@ export function GcalSection(): React.JSX.Element {
     if (result.imported > 0) parts.push(`${result.imported} nuevo(s)`);
     if (result.updated > 0) parts.push(`${result.updated} actualizado(s)`);
     if (result.removed > 0) parts.push(`${result.removed} eliminado(s)`);
-    setNotice(parts.length === 0 ? "Ya está al día." : `Sincronizado: ${parts.join(", ")}.`);
+    if (parts.length === 0) {
+      setNotice(`Ya está al día. Google devolvió ${result.fetched} evento(s) en 30 días.`);
+    } else {
+      setNotice(`Sincronizado: ${parts.join(", ")}.`);
+    }
   }
 
   async function handleDisconnect(): Promise<void> {

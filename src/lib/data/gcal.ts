@@ -27,6 +27,8 @@ export type GcalPullResult = {
   imported: number;
   updated: number;
   removed: number;
+  /** Eventos que Google devolvió en la ventana (diagnóstico). */
+  fetched: number;
 };
 
 /** Error con mensaje ya en español para pintar en la UI. */
@@ -178,6 +180,7 @@ export async function pullGcal(): Promise<GcalPullResult> {
     imported: asCount(body["imported"]),
     updated: asCount(body["updated"]),
     removed: asCount(body["removed"]),
+    fetched: asCount(body["fetched"]),
   };
 }
 

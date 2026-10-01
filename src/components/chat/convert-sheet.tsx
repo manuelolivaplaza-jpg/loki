@@ -41,6 +41,9 @@ function parseDate(value: string | null): Date | null {
  * Prefill con el analizador determinista (título, fecha, responsable por
  * mención, Bandeja, notas con cita+autor) sobre los formularios existentes.
  * "Mejorar con Loki" propone título/fecha con el modelo barato (opcional).
+ *
+ * Con `sourceText` (nota de voz) el texto de trabajo es la transcripción y se
+ * dice de dónde salió, para que nadie convierta algo sin saber qué se dijo.
  */
 export function ConvertSheet({
   message,
@@ -51,6 +54,8 @@ export function ConvertSheet({
   kind,
   members,
   onClose,
+  sourceText = null,
+  sourceLabel = null,
 }: {
   message: MessageDoc;
   wsId: string;
@@ -60,6 +65,10 @@ export function ConvertSheet({
   kind: ConvertKind;
   members: ConvertMember[];
   onClose: () => void;
+  /** Texto a convertir (transcripción de una nota de voz). */
+  sourceText?: string | null;
+  /** Etiqueta de procedencia, p. ej. "nota de voz". */
+  sourceLabel?: string | null;
 }): React.JSX.Element {
   const [inboxId, setInboxId] = React.useState<string | null>(null);
   const [announce, setAnnounce] = React.useState(false);
@@ -81,8 +90,10 @@ export function ConvertSheet({
     };
   }, [wsId]);
 
-  const intent = React.useMemo(() => analyzeIntent(message.text), [message.text]);
-  const baseTitle = smartTitle(message.text);
+  // Nota de voz: el texto de trabajo es la transcripción, no `message.text`.
+  const workText = sourceText !== null && sourceText.trim() !== "" ? sourceText : message.text;
+  const intent = React.useMemo(() => analyzeIntent(workText), [workText]);
+  const baseTitle = smartTitle(workText);
   const title = suggested?.title !== undefined && suggested.title !== ""
     ? suggested.title
     : (intent !== null && intent.title !== "" ? intent.title : baseTitle);
@@ -100,7 +111,7 @@ export function ConvertSheet({
     setImproving(true);
     setImproveError(null);
     try {
-      const result = await suggestConvertTitle(message.text);
+      const result = await suggestConvertTitle(workText);
       if (result.title === "" && result.dateISO === null) {
         setImproveError("Loki no encontró nada mejor.");
       } else {
@@ -167,6 +178,11 @@ export function ConvertSheet({
         {improveError !== null ? (
           <span role="alert" className="text-body-sm text-danger">
             {improveError}
+          </span>
+        ) : null}
+        {sourceLabel !== null && sourceLabel !== "" ? (
+          <span className="text-meta leading-4 text-muted-foreground">
+            Convirtiendo la {sourceLabel}
           </span>
         ) : null}
       </div>

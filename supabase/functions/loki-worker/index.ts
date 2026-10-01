@@ -10,10 +10,13 @@
 //
 // Tipos soportados: chat_summary (modelo barato), day_digest y
 // redact_highlights (plantilla determinista + pulido opcional con modelo
-// barato). transcribe_audio, ocr_image y dispatch_agent terminan en error
-// claro "no soportado todavía" (sin reintentos infinitos).
+// barato), chat_digest y transcribe_audio (notas de voz bajo demanda).
+// ocr_image y dispatch_agent terminan en error claro "no soportado todavía"
+// (sin reintentos infinitos).
 // Sin LLM_API_KEY: lo que necesita modelo termina en error
-// "Loki IA sin configurar", sin reintentar.
+// "Loki IA sin configurar", sin reintentar. Para transcribe_audio la clave es
+// la de voz a texto (STT_API_KEY): sin ella el trabajo termina en error
+// "Transcripción sin configurar" y la UI lo muestra tal cual.
 //
 // Antes de cada llamada al LLM reserva cuota con reserve_ai_quota() (espacio +
 // usuario); sin cuota el trabajo termina en error amable. Lo determinista
@@ -24,6 +27,8 @@
 // max_attempts -> error terminal. Idempotencia: el reclamo es atómico
 // (queued -> running solo si sigue queued) y la doble entrega no reprocesa.
 // =============================================================================
+
+import { SttError, sttHealth, transcribeAudio } from "../_shared/transcribe.ts";
 
 const SUPABASE_URL = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -401,6 +406,7 @@ async function processJob(job: Job): Promise<Record<string, unknown>> {
     case "chat_digest":
       return processChatDigest(job);
     case "transcribe_audio":
+      return processTranscribe(job);
     case "ocr_image":
     case "dispatch_agent":
       throw Object.assign(
@@ -409,6 +415,287 @@ async function processJob(job: Job): Promise<Record<string, unknown>> {
       );
     default:
       throw Object.assign(new Error("Tipo de trabajo desconocido."), { terminal: true });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Transcripción de notas de voz (bajo demanda).
+//
+// El cliente NO manda el audio: solo pide la transcripción de una fila de
+// `audio_transcriptions` (con la ruta `{workspace_id}/...` que ya vive en el
+// bucket). Aquí se descarga con la service role (permisos de servidor), se
+// manda al proveedor de voz a texto y se guarda el texto.
+//
+// Seguridad, en este orden y sin saltarse nada:
+//   1. La fila tiene que existir y pedirla tiene que ser del mismo espacio.
+//   2. Si tiene message_id, el chat tiene que existir y, si es DM, quien lo
+//      pidió tiene que estar en member_ids (misma regla que can_access_chat).
+//   3. Cuota del espacio ANTES de bajar el audio: si el espacio llegó a su
+//      límite, el trabajo termina con error y el audio no sale del servidor.
+// -----------------------------------------------------------------------------
+
+type TranscriptionRow = {
+  id: string;
+  workspace_id: string;
+  bucket: string;
+  object_path: string;
+  message_id: string | null;
+  chat_id: string | null;
+  requested_by: string | null;
+  status: string;
+  duration_seconds: number | null;
+};
+
+/** Nombre con extensión deducido de la ruta (el multipart lo exige). */
+function audioFileName(objectPath: string, mime: string): string {
+  const base = objectPath.split("/").pop() ?? "nota-de-voz";
+  const clean = base.replace(/[^A-Za-z0-9._-]+/g, "_").slice(-80);
+  const hasExt = /\.[A-Za-z0-9]{2,5}$/.test(clean);
+  if (hasExt) return clean;
+  if (mime.includes("mp4") || mime.includes("aac") || mime.includes("m4a")) {
+    return `${clean}.m4a`;
+  }
+  if (mime.includes("mpeg") || mime.includes("mp3")) return `${clean}.mp3`;
+  if (mime.includes("wav")) return `${clean}.wav`;
+  if (mime.includes("ogg")) return `${clean}.ogg`;
+  if (mime.includes("flac")) return `${clean}.flac`;
+  return `${clean}.webm`;
+}
+
+/** MIME por extension, para cuando Storage devuelve octet-stream. */
+const MIME_BY_EXT: Readonly<Record<string, string>> = {
+  webm: "audio/webm",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  opus: "audio/opus",
+  mp3: "audio/mpeg",
+  mpga: "audio/mpeg",
+  m4a: "audio/mp4",
+  mp4: "audio/mp4",
+  aac: "audio/aac",
+  wav: "audio/wav",
+  flac: "audio/flac",
+};
+
+/** MIME utilizable: el que dice Storage y, si no sirve, el de la extension. */
+function usableMime(stored: string, fileName: string): string {
+  const mime = stored.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (mime.startsWith("audio/")) return stored;
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  const byExt = MIME_BY_EXT[ext];
+  // Sin nada reconocible, webm es lo que produce MediaRecorder en Chrome y
+  // en Android (y lo que aceptan los dos proveedores soportados).
+  return byExt ?? "audio/webm";
+}
+
+/** Descarga el audio con la service role (permisos de servidor). */
+async function downloadAudio(
+  bucket: string,
+  objectPath: string,
+): Promise<{ bytes: ArrayBuffer; mime: string } | null> {
+  const encoded = objectPath.split("/").map(encodeURIComponent).join("/");
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${encoded}`, {
+    // Sin content-type application/json: esto es una descarga, no un JSON.
+    headers: { apikey: SERVICE_KEY, authorization: `Bearer ${SERVICE_KEY}` },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new SttError(
+      "download",
+      `No se pudo descargar el audio (HTTP ${res.status}).`,
+      res.status >= 500,
+    );
+  }
+  return {
+    bytes: await res.arrayBuffer(),
+    mime: res.headers.get("content-type") ?? "",
+  };
+}
+
+async function loadTranscription(id: string): Promise<TranscriptionRow | null> {
+  const res = await svcGet(
+    `/audio_transcriptions?id=eq.${encodeURIComponent(id)}&select=id,workspace_id,bucket,object_path,message_id,chat_id,requested_by,status,duration_seconds&limit=1`,
+  );
+  if (!res.ok || !Array.isArray(res.data)) return null;
+  const row = res.data[0];
+  if (!isRecord(row)) return null;
+  return {
+    id: String(row["id"] ?? id),
+    workspace_id: String(row["workspace_id"] ?? ""),
+    bucket: String(row["bucket"] ?? "chat-media"),
+    object_path: String(row["object_path"] ?? ""),
+    message_id: asString(row["message_id"]),
+    chat_id: asString(row["chat_id"]),
+    requested_by: asString(row["requested_by"]),
+    status: String(row["status"] ?? ""),
+    duration_seconds: typeof row["duration_seconds"] === "number" ? row["duration_seconds"] : null,
+  };
+}
+
+/** Marca la fila (service role) y avisa a la UI por Realtime. */
+async function saveTranscription(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await fetch(`${SUPABASE_URL}/rest/v1/audio_transcriptions?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: svcHeaders(),
+    body: JSON.stringify(patch),
+  }).catch(() => undefined);
+}
+
+async function processTranscribe(job: Job): Promise<Record<string, unknown>> {
+  const transcriptionId = asString(job.payload["transcription_id"]);
+  if (transcriptionId === null) {
+    throw Object.assign(new Error("Sin transcripción que hacer."), { terminal: true });
+  }
+  const row = await loadTranscription(transcriptionId);
+  if (row === null) {
+    throw Object.assign(new Error("La transcripción ya no existe."), { terminal: true });
+  }
+  if (row.status === "ready") {
+    return { transcription_id: row.id, cached: true };
+  }
+  // El espacio de la fila manda: el job y la transcripción son del mismo.
+  const ws = row.workspace_id !== "" ? row.workspace_id : job.workspace_id;
+  const uid = row.requested_by ?? job.requested_by;
+
+  // --- 1. Membresía del espacio ---
+  if (uid === null) {
+    await saveTranscription(row.id, { status: "error", error: "Sin usuario que lo pidió." });
+    throw Object.assign(new Error("Sin usuario que pidió la transcripción."), { terminal: true });
+  }
+  const member = await svcGet(
+    `/workspace_members?workspace_id=eq.${encodeURIComponent(ws)}&user_id=eq.${encodeURIComponent(uid)}&select=user_id&limit=1`,
+  );
+  if (!member.ok || !Array.isArray(member.data) || member.data.length === 0) {
+    await saveTranscription(row.id, {
+      status: "error",
+      error: "Ya no tienes acceso a este espacio.",
+    });
+    throw Object.assign(new Error("Sin acceso al espacio."), { terminal: true });
+  }
+
+  // --- 2. Visibilidad heredada del mensaje (DMs incluidos) ---
+  if (row.message_id !== null) {
+    const chatId = row.chat_id;
+    if (chatId === null) {
+      await saveTranscription(row.id, { status: "error", error: "Transcripción sin chat." });
+      throw Object.assign(new Error("Transcripción sin chat."), { terminal: true });
+    }
+    const chat = await svcGet(
+      `/chats?workspace_id=eq.${encodeURIComponent(ws)}&id=eq.${encodeURIComponent(chatId)}&select=type,member_ids&limit=1`,
+    );
+    const chatRow =
+      chat.ok && Array.isArray(chat.data) && isRecord(chat.data[0]) ? chat.data[0] : null;
+    if (chatRow === null) {
+      await saveTranscription(row.id, {
+        status: "error",
+        error: "El chat ya no existe.",
+      });
+      throw Object.assign(new Error("Chat no encontrado."), { terminal: true });
+    }
+    if (chatRow["type"] === "dm") {
+      const ids = Array.isArray(chatRow["member_ids"]) ? chatRow["member_ids"] : [];
+      if (!ids.includes(uid)) {
+        await saveTranscription(row.id, {
+          status: "error",
+          error: "Ya no tienes acceso a este chat.",
+        });
+        throw Object.assign(new Error("Sin acceso a ese chat."), { terminal: true });
+      }
+    }
+  }
+
+  // --- 3. Cuota ANTES de bajar el audio ---
+  // 1 unidad ≈ 1 minuto de audio (mínimo 1). Si no hay cuota, el audio no sale
+  // del servidor: se avisa en la transcripción y en el aviso al usuario.
+  const minutes = Math.max(1, Math.ceil((row.duration_seconds ?? 60) / 60));
+  const q = await reserve(ws, uid, "transcribe_audio", minutes);
+  if (!q.allowed) {
+    const message = quotaMessage(q.reason);
+    await saveTranscription(row.id, { status: "error", error: message });
+    await notifyUser(uid, ws, "Transcripción sin hacer", message, "/chat/loki-ia");
+    throw Object.assign(new Error(message), { terminal: true });
+  }
+
+  await saveTranscription(row.id, { status: "running", error: null });
+
+  // --- 4. Descarga con permisos de servidor ---
+  const objectPath = row.object_path;
+  // El CHECK de la tabla ata el primer segmento al workspace, pero el worker
+  // también lo comprueba: nada de bajar rutas de otros espacios.
+  if (!objectPath.startsWith(`${ws}/`)) {
+    await saveTranscription(row.id, {
+      status: "error",
+      error: "El audio no pertenece a este espacio.",
+    });
+    throw Object.assign(
+      new Error("El audio no pertenece a este espacio."),
+      { terminal: true },
+    );
+  }
+  let bytes: ArrayBuffer;
+  let mime: string;
+  const fileName = audioFileName(objectPath, row.bucket);
+  try {
+    const file = await downloadAudio(row.bucket, objectPath);
+    if (file === null) {
+      await saveTranscription(row.id, {
+        status: "error",
+        error: "El audio ya no está en el almacenamiento.",
+      });
+      throw Object.assign(new Error("Audio no encontrado."), { terminal: true });
+    }
+    bytes = file.bytes;
+    mime = usableMime(file.mime, fileName);
+  } catch (error) {
+    if (error instanceof SttError) {
+      await saveTranscription(row.id, { status: "error", error: error.message });
+      throw Object.assign(new Error(error.message), {
+        terminal: !error.retryable,
+        sttRetryable: error.retryable,
+      });
+    }
+    if (isRecord(error) && (error as { terminal?: unknown }).terminal === true) {
+      throw error;
+    }
+    const message = "No se pudo descargar el audio.";
+    await saveTranscription(row.id, { status: "error", error: message });
+    throw Object.assign(new Error(message), { terminal: true });
+  }
+
+  // --- 5. Transcripción ---
+  try {
+    const result = await transcribeAudio({
+      bytes,
+      mimeType: mime,
+      filename: fileName,
+      language: "es",
+      durationSeconds: row.duration_seconds,
+    });
+    await saveTranscription(row.id, {
+      status: "ready",
+      text: result.text.slice(0, 16000),
+      language: result.language.slice(0, 16),
+      provider: result.provider.slice(0, 40),
+      error: null,
+    });
+    return { transcription_id: row.id, chars: result.text.length, provider: result.provider };
+  } catch (error) {
+    const message =
+      error instanceof SttError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "No se pudo transcribir el audio.";
+    // Sin config o sin voz: no reintentar (repetir da lo mismo). Un fallo de
+    // red o del proveedor sí se reintenta con backoff.
+    const retryable = error instanceof SttError
+      ? error.retryable
+      : /HTTP 5|fetch failed|network/i.test(message);
+    await saveTranscription(row.id, { status: "error", error: message });
+    throw Object.assign(new Error(message), { terminal: !retryable, sttRetryable: retryable });
   }
 }
 
@@ -494,6 +781,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS });
   }
+  if (req.method === "GET") {
+    // Público a propósito (como /health de loki-chat): solo booleanos y el
+    // nombre del proveedor/modelo. Sirve para el aviso "Transcripción sin
+    // configurar" sin gastar un trabajo.
+    return json(200, { stt: sttHealth(), llm: llmConfigured() });
+  }
   if (req.method !== "POST") {
     return json(405, { code: "method_not_allowed" });
   }
@@ -531,10 +824,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     await finishOk(job.id, result);
     return json(200, { claimed: true, status: "done" });
   } catch (error) {
-    const terminal = isRecord(error) && (error as { terminal?: unknown }).terminal === true;
+    const rec = isRecord(error) ? (error as Record<string, unknown>) : {};
+    const terminal = rec["terminal"] === true;
     const message = error instanceof Error ? error.message : "Error del trabajador.";
-    const providerDown = /HTTP 4|HTTP 5|fetch failed|network/i.test(message);
+    // La transcripción marca si su fallo es reintentable (red o 5xx); el resto
+    // de trabajos deducen del mensaje, como antes.
+    const providerDown =
+      rec["sttRetryable"] === true || /HTTP 4|HTTP 5|fetch failed|network/i.test(message);
     await finishError(job.id, message, !terminal && providerDown, job.attempts, job.max_attempts);
     return json(200, { claimed: true, status: !terminal && providerDown ? "queued" : "error" });
   }
 });
+
+// GET /health: solo dice si hay proveedor de transcripción (nunca la clave).
+// Lo usa la UI para mostrar "Transcripción sin configurar" sin encolar nada.

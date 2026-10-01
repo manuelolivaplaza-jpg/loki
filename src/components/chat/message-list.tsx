@@ -4,6 +4,7 @@ import * as React from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { DaySeparator } from "@/components/chat/day-separator";
 import { MessageItem } from "@/components/chat/message-item";
+import type { VoiceContext } from "@/components/media/message-attachments";
 import { dayKey, formatDayLabel, groupMessages, toDateSafe } from "@/lib/chat/format";
 import { spring } from "@/lib/motion";
 import type { MessageDoc, MessageSendStatus } from "@/types/chat";
@@ -30,6 +31,11 @@ type MessageListProps = {
   onDelete: (message: MessageDoc) => void;
   /** Convertir el mensaje en tarea/evento/recordatorio (opcional). */
   onConvert?: (message: MessageDoc, kind: "task" | "event" | "reminder") => void;
+  /**
+   * Habilita "Ver transcripción" en las notas de voz de este chat (con su id,
+   * para heredar la visibilidad). `null` en el chat privado con Loki.
+   */
+  voice?: VoiceContext | null;
   /** Chat de IA: oculta reacciones en los mensajes propios. */
   disableOwnReactions?: boolean;
 };
@@ -54,6 +60,7 @@ export function MessageList({
   onEdit,
   onDelete,
   onConvert,
+  voice = null,
   disableOwnReactions = false,
 }: MessageListProps): React.JSX.Element {
   const reduceMotion = useReducedMotion();
@@ -112,6 +119,7 @@ export function MessageList({
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onConvert={onConvert}
+                voice={voice}
               />
             );
             // w-full en el wrapper: sin él, con items-end del grupo se

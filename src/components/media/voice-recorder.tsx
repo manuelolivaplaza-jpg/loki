@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Mic, Trash2 } from "lucide-react";
+import { Mic, Square, Trash2 } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
 import { formatDuration, pickVoiceMimeType } from "@/lib/media/audio";
+import { hapticsLight, hapticsWarn } from "@/lib/native/haptics";
 import { cn } from "@/lib/utils";
 
 /** Umbral horizontal (px) para cancelar deslizando. */
@@ -11,21 +12,45 @@ const CANCEL_SLIDE_PX = 80;
 /** Máximo de grabación: 5 minutos (se envía sola). */
 const MAX_RECORD_MS = 5 * 60 * 1000;
 const WAVE_BARS = 40;
+/** Grabación demasiado corta para tener voz. */
+const MIN_RECORD_MS = 1000;
 
 type Phase = "grabando" | "sin-permiso";
 
+/** Cómo se detiene la grabación. */
+export type VoiceRecorderMode =
+  /** Táctil: mantener para grabar, soltar para enviar, deslizar para cancelar. */
+  | "hold"
+  /** Escritorio/diálogo: click para empezar, click para parar. */
+  | "toggle";
+
+/** Por qué no se pudo grabar (para que el mensaje diga qué hacer). */
+export type VoiceRecorderError = "permiso" | "no-soportado" | "otro";
+
 /**
- * Grabadora de nota de voz: MANTÉN el botón para grabar, SUELTA para enviar,
- * DESLIZA a la izquierda (>80px) para cancelar. Onda en vivo con AnalyserNode,
- * cronómetro y botón de papelera para cancelar.
+ * Grabadora de nota de voz.
+ *
+ * - `mode="hold"` (chat): MANTÉN para grabar, SUELTA para enviar, DESLIZA a la
+ *   izquierda (>80px) para cancelar.
+ * - `mode="toggle"` (diálogos y escritorio): un click empieza y el siguiente
+ *   para; la papelera cancela.
+ *
+ * Onda en vivo con AnalyserNode, cronómetro, háptico al empezar y al terminar,
+ * tope de 5 minutos (se envía sola) y corte automático si la app pasa a
+ * segundo plano (no se pierde ni se manda un audio a medias).
  */
 export function VoiceRecorder({
   onCancel,
   onSend,
+  mode = "hold",
+  onError,
 }: {
   onCancel: () => void;
   /** Blob de audio + duración real en ms. */
   onSend: (blob: Blob, durationMs: number) => void;
+  mode?: VoiceRecorderMode;
+  /** Avisa por qué falló el micrófono (permiso, no soportado, otro). */
+  onError?: (reason: VoiceRecorderError) => void;
 }): React.JSX.Element {
   const [phase, setPhase] = React.useState<Phase>("grabando");
   const [holding, setHolding] = React.useState(false);
@@ -45,6 +70,8 @@ export function VoiceRecorder({
   const releaseRequestedRef = React.useRef(false);
   const finishedRef = React.useRef(false);
   const mimeRef = React.useRef("");
+  // En modo toggle el recording corre solo: `true` mientras hay sesión abierta.
+  const [active, setActive] = React.useState(false);
 
   const stopTracks = React.useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -57,6 +84,7 @@ export function VoiceRecorder({
     void audioCtxRef.current?.close().catch(() => undefined);
     audioCtxRef.current = null;
     analyserRef.current = null;
+    setActive(false);
   }, []);
 
   const finish = React.useCallback(
@@ -69,7 +97,7 @@ export function VoiceRecorder({
       stopTracks();
       // Sin grabación útil (cancelado, muy corta o nunca arrancó): se cierra.
       // Se intenta parar el MediaRecorder para soltar el micrófono del todo.
-      if (!send || recorder === null || recorder.state === "inactive" || durationMs < 1000) {
+      if (!send || recorder === null || recorder.state === "inactive" || durationMs < MIN_RECORD_MS) {
         if (recorder !== null && recorder.state !== "inactive") {
           try {
             recorder.stop();
@@ -87,7 +115,10 @@ export function VoiceRecorder({
         const blob = new Blob(chunksRef.current, type !== undefined ? { type } : undefined);
         chunksRef.current = [];
         if (blob.size === 0) onCancel();
-        else onSend(blob, durationMs);
+        else {
+          void hapticsLight();
+          onSend(blob, durationMs);
+        }
       };
       try {
         recorder.stop();
@@ -102,8 +133,18 @@ export function VoiceRecorder({
     finishedRef.current = false;
     releaseRequestedRef.current = false;
     chunksRef.current = [];
+    if (typeof navigator === "undefined" || navigator.mediaDevices === undefined) {
+      setPhase("sin-permiso");
+      onError?.("no-soportado");
+      return;
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
       streamRef.current = stream;
       const mime = pickVoiceMimeType();
       mimeRef.current = mime;
@@ -117,6 +158,8 @@ export function VoiceRecorder({
       };
       recorder.start(250);
       startTimeRef.current = Date.now();
+      setActive(true);
+      void hapticsLight();
 
       // Onda en vivo: nivel RMS de la señal por AnalyserNode.
       try {
@@ -162,16 +205,34 @@ export function VoiceRecorder({
 
       // Se soltó el botón antes de tener permiso: se envía al arrancar.
       if (releaseRequestedRef.current) finish(true);
-    } catch {
+    } catch (error: unknown) {
       stopTracks();
       setPhase("sin-permiso");
+      onError?.(
+        error instanceof DOMException && error.name === "NotAllowedError" ? "permiso" : "otro",
+      );
     }
-  }, [finish, stopTracks]);
+  }, [finish, onError, stopTracks]);
 
   // Limpieza al desmontar (cierra micrófono y timers).
   React.useEffect(() => () => stopTracks(), [stopTracks]);
 
+  // Si la app pasa a segundo plano (o se bloquea la pantalla) se corta la
+  // grabación: mejor una nota corta que un audio a medias que se pierde.
+  React.useEffect(() => {
+    if (!active) return;
+    const onVisibility = (): void => {
+      if (document.visibilityState === "hidden") {
+        void hapticsWarn();
+        finish(true);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [active, finish]);
+
   const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>): void => {
+    if (mode !== "hold") return;
     if (holding || phase !== "grabando") return;
     event.currentTarget.setPointerCapture(event.pointerId);
     startXRef.current = event.clientX;
@@ -184,14 +245,15 @@ export function VoiceRecorder({
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>): void => {
-    if (!holding) return;
+    if (mode !== "hold" || !holding) return;
     setWillCancel(startXRef.current - event.clientX >= CANCEL_SLIDE_PX);
   };
 
   const onPointerUp = (): void => {
-    if (!holding) return;
+    if (mode !== "hold" || !holding) return;
     setHolding(false);
     if (willCancel) {
+      void hapticsWarn();
       finish(false);
       return;
     }
@@ -199,25 +261,44 @@ export function VoiceRecorder({
     else releaseRequestedRef.current = true;
   };
 
+  const onToggle = (): void => {
+    if (phase !== "grabando") return;
+    if (active) {
+      finish(true);
+      return;
+    }
+    setLevels([]);
+    setElapsedMs(0);
+    void startRecording();
+  };
+
   if (phase === "sin-permiso") {
     return (
       <div
         role="alert"
-        className="flex items-center gap-2 rounded-2xl border border-divider bg-surface-soft px-3 py-2.5"
+        className="flex flex-col gap-2 rounded-2xl border border-divider bg-surface-soft px-3 py-2.5"
       >
-        <p className="min-w-0 flex-1 text-body-sm text-muted-foreground">
-          No se pudo acceder al micrófono. Revisa el permiso del navegador.
+        <p className="text-body-sm leading-5 text-foreground">
+          No se pudo acceder al micrófono.
+        </p>
+        <p className="text-meta leading-4 text-muted-foreground">
+          Actívalo en los ajustes del navegador (el candado junto a la
+          dirección) o, en la app Android, en Ajustes → Apps → Loki →
+          Permisos → Micrófono. Mientras tanto puedes subir un archivo de audio.
         </p>
         <button
           type="button"
           onClick={onCancel}
-          className="shrink-0 rounded-full px-3 py-1.5 text-body-sm font-semibold text-accent outline-none interactive active:bg-surface"
+          className="min-h-11 self-start rounded-full bg-surface-soft px-4 text-body-sm font-semibold text-foreground outline-none interactive"
         >
           Cerrar
         </button>
       </div>
     );
   }
+
+  const toggleMode = mode === "toggle";
+  const recording = toggleMode ? active : holding;
 
   return (
     <div
@@ -230,7 +311,10 @@ export function VoiceRecorder({
     >
       <button
         type="button"
-        onClick={() => finish(false)}
+        onClick={() => {
+          void hapticsWarn();
+          finish(false);
+        }}
         aria-label="Cancelar nota de voz"
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none interactive active:bg-surface"
       >
@@ -260,24 +344,39 @@ export function VoiceRecorder({
       <span className="shrink-0 text-body-sm font-medium tabular-nums text-foreground">
         {formatDuration(elapsedMs / 1000)}
       </span>
-      <button
-        type="button"
-        aria-label={holding ? "Suelta para enviar la nota de voz" : "Mantén para grabar"}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={() => {
-          setHolding(false);
-          finish(false);
-        }}
-        onContextMenu={(event) => event.preventDefault()}
-        className={cn(
-          "flex h-11 w-11 shrink-0 touch-none items-center justify-center rounded-full outline-none select-none interactive-solid",
-          holding && !willCancel ? "scale-110 bg-danger text-white" : "bg-foreground text-background dark:bg-white dark:text-black",
-        )}
-      >
-        <Icon icon={Mic} size={22} />
-      </button>
+      {toggleMode ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={active ? "Parar y enviar la nota de voz" : "Empezar a grabar"}
+          aria-pressed={active}
+          className={cn(
+            "flex h-11 w-11 shrink-0 touch-none items-center justify-center rounded-full outline-none select-none interactive-solid",
+            active ? "bg-danger text-white" : "bg-foreground text-background dark:bg-white dark:text-black",
+          )}
+        >
+          <Icon icon={active ? Square : Mic} size={22} />
+        </button>
+      ) : (
+        <button
+          type="button"
+          aria-label={holding ? "Suelta para enviar la nota de voz" : "Mantén para grabar"}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={() => {
+            setHolding(false);
+            finish(false);
+          }}
+          onContextMenu={(event) => event.preventDefault()}
+          className={cn(
+            "flex h-11 w-11 shrink-0 touch-none items-center justify-center rounded-full outline-none select-none interactive-solid",
+            holding && !willCancel ? "scale-110 bg-danger text-white" : "bg-foreground text-background dark:bg-white dark:text-black",
+          )}
+        >
+          <Icon icon={Mic} size={22} />
+        </button>
+      )}
     </div>
   );
 }

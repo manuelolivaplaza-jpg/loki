@@ -11,6 +11,7 @@ import { MessageContextMenu, type MessageMenuAction } from "@/components/chat/me
 import { ReactionBar } from "@/components/chat/reaction-bar";
 import { ReactionChips } from "@/components/chat/reaction-chips";
 import { Icon } from "@/components/ui/icon";
+import type { VoiceContext } from "@/components/media/message-attachments";
 import { formatHour } from "@/lib/chat/format";
 import { useMessageLinks } from "@/lib/data/message-links";
 import type { MessageDoc, MessageSendStatus } from "@/types/chat";
@@ -63,6 +64,11 @@ type MessageItemProps = {
   onEdit: (message: MessageDoc) => void;
   onDelete: (message: MessageDoc) => void;
   onConvert?: (message: MessageDoc, kind: "task" | "event" | "reminder") => void;
+  /**
+   * Contexto de las notas de voz ("Ver transcripción"). Lo pasa MessageList
+   * solo en chats de espacio: sin él, el audio se reproduce sin transcribir.
+   */
+  voice?: Omit<VoiceContext, "messageId"> | null;
   /** Chat de IA: oculta reacciones en los mensajes propios. */
   disableOwnReactions?: boolean;
 };
@@ -92,6 +98,7 @@ export function MessageItem({
   onEdit,
   onDelete,
   onConvert,
+  voice = null,
   disableOwnReactions = false,
 }: MessageItemProps): React.JSX.Element {
   const [reactionsOpen, setReactionsOpen] = React.useState(false);
@@ -339,6 +346,7 @@ export function MessageItem({
             showTime={showTime}
             sendStatus={sendStatus}
             onRetry={onRetry}
+            voice={voice}
           />
 
           {interactive ? (

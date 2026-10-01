@@ -6,6 +6,10 @@ import { AiConnecting } from "@/components/chat/ai-connecting";
 import { AiSuggestions } from "@/components/chat/ai-suggestions";
 import { AiToolCard, UndoBar, type CardConfirmPayload } from "@/components/chat/ai-tool-card";
 import { ConvertSheet, type ConvertKind } from "@/components/chat/convert-sheet";
+import { DictationBanner } from "@/components/chat/dictation-banner";
+import { VoiceConvertSheet } from "@/components/chat/voice-convert-sheet";
+import { DictateSheet } from "@/components/ai/dictate-sheet";
+import { firstTranscribable } from "@/hooks/use-voice-transcription";
 import {
   DigestJobStatus,
   DigestPanel,
@@ -100,7 +104,17 @@ function scrollToBottom(el: HTMLElement, smooth: boolean): void {
  * y la respuesta de la IA va sin burbuja. El resto de la vista (scroll, pill,
  * composer, hilos) es el mismo de T13–T16.
  */
-export function ConversationView({ chatId }: { chatId: string }): React.JSX.Element {
+export function ConversationView({
+  chatId,
+  openDictate = false,
+}: {
+  chatId: string;
+  /**
+   * Abre "Dictar a Loki" al entrar (viene de `/chat/loki-ia?dictar=1`).
+   * Solo tiene efecto en el chat privado con Loki.
+   */
+  openDictate?: boolean;
+}): React.JSX.Element {
   // El chat de Loki no tiene typing de otras personas: la lista y los hilos
   // son de los chats de espacio (T14).
   const isLoki = chatId === AI_CHAT_ID;
@@ -141,10 +155,12 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   const [toolSending, setToolSending] = React.useState(false);
   // Resultado con enlaces + deshacer tras confirmar (protocolo `created`).
   const [created, setCreated] = React.useState<CreatedResult | null>(null);
-  // Conversión mensaje -> tarea/evento/recordatorio.
+  // Conversión mensaje -> tarea/evento/recordatorio. `fromVoice` marca las
+  // notas de voz: ahí el texto a convertir es la transcripción.
   const [converting, setConverting] = React.useState<{
     message: MessageDoc;
     kind: ConvertKind;
+    fromVoice: boolean;
   } | null>(null);
   // Resumen de no leídos (pastilla + trabajo + tarjeta privada).
   const [digestWindow, setDigestWindow] = React.useState<{
@@ -159,6 +175,11 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
     cached: boolean;
   } | null>(null);
   const [digestBusy, setDigestBusy] = React.useState(false);
+  // "Dictar a Loki": micrófono → transcripción → el texto entra al mismo
+  // flujo que escribirlo. `dictation.text` se muestra SIEMPRE encima de la
+  // tarjeta de plan para poder corregir el dictado antes de confirmar.
+  const [dictating, setDictating] = React.useState(false);
+  const [dictation, setDictation] = React.useState<{ text: string } | null>(null);
   type ToolCtx =
     | { mode: "personal" }
     | { mode: "mention"; workspaceId: string; chatId: string; threadParentId?: string };
@@ -263,6 +284,16 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   const markAsRead = useMarkChatRead(wsForLive, chatForLive, currentUid);
   const sendStatus = useMessageStatusStore((state) => state.status);
 
+  // Contexto de las notas de voz de este chat (transcripción bajo demanda).
+  // Null en el chat privado con Loki: allí no hay adjuntos que transcribir.
+  const voiceContext = React.useMemo(
+    () =>
+      wsForLive === null || chatForLive === null
+        ? null
+        : { chatId: chatForLive, authorId: currentUid },
+    [wsForLive, chatForLive, currentUid],
+  );
+
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const nearBottomRef = React.useRef(true);
   const primedRef = React.useRef(false);
@@ -321,6 +352,8 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
     setDigestJobId(null);
     setDigestJobError(null);
     setDigest(null);
+    setDictating(false);
+    setDictation(null);
     toolCtxRef.current = null;
   }, [chatId]);
 
@@ -613,9 +646,71 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
         deleted: false,
         type: "user",
       };
-      setConverting({ message: pseudo, kind: "task" });
+      setConverting({ message: pseudo, kind: "task", fromVoice: false });
     },
     [currentUid, chatName],
+  );
+
+  /**
+   * Envía un texto a Loki IA (chat privado) por el camino de siempre: el
+   * mensaje del usuario, la respuesta en streaming y, si el texto trae
+   * acciones, la tarjeta de plan. Lo usan tanto el composer como el texto
+   * dictado (y el recálculo tras corregirlo).
+   */
+  const sendToLoki = React.useCallback(
+    (prompt: string) => {
+      if (currentUid === null) {
+        setSendError("Inicia sesión para hablar con Loki.");
+        return;
+      }
+      sendAiUser.mutate(
+        { authorName, text: prompt },
+        {
+          onSuccess: () => {
+            requestAnimationFrame(() => {
+              const el = scrollRef.current;
+              if (el !== null) scrollToBottom(el, false);
+            });
+            void (async () => {
+              // Sin proveedor solo sale la vía determinista (la Edge la
+              // ofrece igual); el resto responde 503 y se avisa.
+              setAiConnecting(true);
+              setStreamingText("");
+              try {
+                await sendLokiWithTools(
+                  { mode: "personal", text: prompt },
+                  {
+                    onChunk: (full) => {
+                      setStreamingText(full);
+                    },
+                    onToolPending: (action) => {
+                      toolCtxRef.current = { mode: "personal" };
+                      setToolPending(action);
+                    },
+                    onCreated: (result) => {
+                      setCreated(result);
+                    },
+                  },
+                );
+              } catch (error: unknown) {
+                if (error instanceof LokiError && error.code === "not_configured") {
+                  setSendError(LOKI_NOT_CONFIGURED_TITLE);
+                } else {
+                  setSendError(
+                    error instanceof Error ? error.message : "Loki no pudo responder.",
+                  );
+                }
+              } finally {
+                setAiConnecting(false);
+                setStreamingText(null);
+              }
+            })();
+          },
+          onError: (error) => setSendError(error.message),
+        },
+      );
+    },
+    [currentUid, authorName, sendAiUser],
   );
 
   const handleSend = React.useCallback(
@@ -632,53 +727,9 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           setSendError("Inicia sesión para hablar con Loki.");
           return;
         }
-        const prompt = text;
-        sendAiUser.mutate(
-          { authorName, text: prompt },
-          {
-            onSuccess: () => {
-              requestAnimationFrame(() => {
-                const el = scrollRef.current;
-                if (el !== null) scrollToBottom(el, false);
-              });
-              void (async () => {
-                // Sin proveedor solo sale la vía determinista (la Edge la
-                // ofrece igual); el resto responde 503 y se avisa.
-                setAiConnecting(true);
-                setStreamingText("");
-                try {
-                  await sendLokiWithTools(
-                    { mode: "personal", text: prompt },
-                    {
-                      onChunk: (full) => {
-                        setStreamingText(full);
-                      },
-                      onToolPending: (action) => {
-                        toolCtxRef.current = { mode: "personal" };
-                        setToolPending(action);
-                      },
-                      onCreated: (result) => {
-                        setCreated(result);
-                      },
-                    },
-                  );
-                } catch (error: unknown) {
-                  if (error instanceof LokiError && error.code === "not_configured") {
-                    setSendError(LOKI_NOT_CONFIGURED_TITLE);
-                  } else {
-                    setSendError(
-                      error instanceof Error ? error.message : "Loki no pudo responder.",
-                    );
-                  }
-                } finally {
-                  setAiConnecting(false);
-                  setStreamingText(null);
-                }
-              })();
-            },
-            onError: (error) => setSendError(error.message),
-          },
-        );
+        // Texto escrito a mano: no hay dictado que mostrar encima.
+        setDictation(null);
+        sendToLoki(text);
         return;
       }
       if (currentUid === null) {
@@ -778,7 +829,64 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
         },
       );
     },
-    [isLoki, currentUid, authorName, sendAiUser, sendMutation, wsForLive, chatForLive, replyTo, ensureLokiConfigured, threadParent],
+    [isLoki, currentUid, authorName, sendToLoki, sendMutation, wsForLive, chatForLive, replyTo, ensureLokiConfigured, threadParent],
+  );
+
+  // --- Voz a acción: "Dictar a Loki" ----------------------------------------
+
+  /** El texto dictado entra al MISMO flujo que escribirlo a mano. */
+  const handleDictated = React.useCallback(
+    (result: { text: string }) => {
+      if (!isLoki) return;
+      setDictation({ text: result.text });
+      setSendError(null);
+      sendToLoki(result.text);
+    },
+    [isLoki, sendToLoki],
+  );
+
+  /** Corrige el texto dictado y vuelve a pedir el plan con la corrección. */
+  const handleDictationRecalculate = React.useCallback(
+    (text: string) => {
+      if (!isLoki || text.trim() === "") return;
+      setDictation({ text: text.trim() });
+      setSendError(null);
+      setToolPending(null);
+      sendToLoki(text.trim());
+    },
+    [isLoki, sendToLoki],
+  );
+
+  // "Dictar a Loki" desde Acciones rápidas (?dictar=1): solo en el chat de
+  // Loki, y solo una vez (si no, se reabriría al navegar de vuelta).
+  const dictateOpenedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!openDictate || !isLoki || dictateOpenedRef.current) return;
+    dictateOpenedRef.current = true;
+    setDictating(true);
+  }, [openDictate, isLoki]);
+
+  // Atajo de teclado en escritorio: Ctrl/Cmd + Shift + D abre el micrófono.
+  // (En móvil no hay atajo: el botón del composer es el camino.)
+  React.useEffect(() => {
+    if (!isLoki) return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.shiftKey && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        setDictating((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isLoki]);
+
+  // "Convertir en…" sobre un mensaje: si es nota de voz, primero transcribe.
+  const handleConvert = React.useCallback(
+    (message: MessageDoc, kind: ConvertKind) => {
+      setConverting({ message, kind, fromVoice: firstTranscribable(message) !== null });
+    },
+    [],
   );
 
   // --- T16: reacciones, citas, edición, borrado e hilos ----------------------
@@ -1014,11 +1122,10 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
               onCopy={handleCopy}
               onEdit={handleEdit}
               onDelete={handleDelete}
-              onConvert={
-                isLoki || wsForLive === null
-                  ? undefined
-                  : (message, kind) => setConverting({ message, kind })
-              }
+              // Las notas de voz ofrecen "Ver transcripción" (bajo demanda) y
+              // "Convertir en…" sobre la transcripción.
+              voice={voiceContext}
+              onConvert={isLoki || wsForLive === null ? undefined : handleConvert}
             />
             {streamingMessage !== null ? (
               <div className="px-4 pb-2">
@@ -1068,6 +1175,30 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           >
             {notice}
           </p>
+        ) : null}
+        {isLoki && dictation !== null ? (
+          <div className="mx-auto w-full max-w-[760px] px-4 pb-2">
+            <DictationBanner
+              text={dictation.text}
+              onTextChange={(next) => setDictation({ text: next })}
+              onRecalculate={() => {
+                const next = dictation.text.trim();
+                if (next !== "") handleDictationRecalculate(next);
+              }}
+              recalculating={aiConnecting || sendAiUser.isPending}
+              onDismiss={() => setDictation(null)}
+            />
+          </div>
+        ) : null}
+        {isLoki && dictating ? (
+          <div className="mx-auto w-full max-w-[760px] px-4 pb-2">
+            <DictateSheet
+              open
+              wsId={currentWorkspaceId}
+              onClose={() => setDictating(false)}
+              onSubmit={handleDictated}
+            />
+          </div>
         ) : null}
         {toolPending !== null ? (
           <div className="mx-auto w-full max-w-[760px] px-4 pb-2">
@@ -1126,19 +1257,36 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
         ) : null}
         {converting !== null && wsForLive !== null && currentUid !== null ? (
           <div className="mx-auto w-full max-w-[760px] px-0 pb-2">
-            <ConvertSheet
-              message={converting.message}
-              wsId={wsForLive}
-              chatId={chatId}
-              uid={currentUid}
-              authorName={authorName}
-              kind={converting.kind}
-              members={(membersQuery.data ?? []).map((member) => ({
-                uid: member.uid,
-                name: member.displayName,
-              }))}
-              onClose={() => setConverting(null)}
-            />
+            {converting.fromVoice ? (
+              // Nota de voz: primero la transcripción, después el formulario.
+              <VoiceConvertSheet
+                message={converting.message}
+                wsId={wsForLive}
+                chatId={chatId}
+                uid={currentUid}
+                authorName={authorName}
+                kind={converting.kind}
+                members={(membersQuery.data ?? []).map((member) => ({
+                  uid: member.uid,
+                  name: member.displayName,
+                }))}
+                onClose={() => setConverting(null)}
+              />
+            ) : (
+              <ConvertSheet
+                message={converting.message}
+                wsId={wsForLive}
+                chatId={chatId}
+                uid={currentUid}
+                authorName={authorName}
+                kind={converting.kind}
+                members={(membersQuery.data ?? []).map((member) => ({
+                  uid: member.uid,
+                  name: member.displayName,
+                }))}
+                onClose={() => setConverting(null)}
+              />
+            )}
           </div>
         ) : null}
         <Composer
@@ -1153,6 +1301,11 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           onSend={handleSend}
           wsId={wsForLive}
           mediaBucket="chat-media"
+          // En el chat privado con Loki el micrófono dicta (el texto
+          // transcrito entra al mismo flujo); en los chats de espacio manda
+          // una nota de voz normal.
+          onDictate={isLoki ? () => setDictating(true) : null}
+          dictating={dictating}
           onValueChange={notifyTyping}
           edit={editing}
           onSaveEdit={handleSaveEdit}

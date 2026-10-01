@@ -9,7 +9,14 @@ Este directorio contiene:
 | Ruta | Qué es |
 |---|---|
 | `config.toml` | Configuración del stack local (puerto, auth sin confirmación, Google desactivado) |
-| `migrations/20260929000000_init.sql` | Todo el esquema: tablas, índices, triggers, vistas, RLS, buckets y políticas de Storage |
+| `migrations/20260929000000_init.sql` | Esquema base: tablas, índices, triggers, vistas, RLS, buckets y políticas de Storage |
+| `migrations/` (resto) | Una migración NUEVA por lote, con fecha posterior a la anterior. Nunca se edita una ya aplicada |
+| `functions/loki-chat/` | Loki IA con herramientas (streaming SSE + protocolo `tool_pending`) |
+| `functions/loki-worker/` | Trabajadora de `ai_jobs`: resúmenes, digest y transcripción de audio |
+| `functions/push-send/` | Envío de FCM (respeta `notification_prefs` y el horario de silencio) |
+| `functions/google-calendar/` | Sincronización bidireccional con Google Calendar |
+| `functions/_shared/intent.ts` | Analizador determinista de intenciones (copia sincronizada con `src/lib/chat/intent.ts`) |
+| `functions/_shared/transcribe.ts` | Voz a texto: `openai` (`/audio/transcriptions`) o `gemini` (`generateContent` con audio inline) |
 | `seed.sql` | Datos iniciales, vacío a propósito |
 | `README.md` | Este archivo |
 
@@ -154,17 +161,25 @@ desde las políticas:
 |---|---|
 | `is_member(workspace_id)` | ¿ Soy del espacio? |
 | `is_owner(workspace_id)` | ¿ Soy el owner? |
+| `is_space_admin(workspace_id)` | ¿ Soy owner o admin? |
 | `can_access_chat(workspace_id, chat_id)` | Grupo y posts los ve el espacio; un dm, solo sus `member_ids` |
+| `storage_workspace_id(object_name)` | Primer segmento de una ruta de Storage como uuid (o null) |
 | `create_workspace(name, emoji)` | Alta del onboarding: espacio + owner + chats `general` y `posts`, y deja el espacio como actual. Devuelve el uuid |
 | `ensure_posts_chat(workspace_id)` | Crea el chat `posts` de un espacio antiguo si falta. Idempotente: `true` si lo creó, `false` si ya estaba |
+| `ensure_inbox_project(workspace_id)` | Bandeja del espacio (proyecto `is_system`) para tareas y recordatorios sin proyecto |
+| `reserve_ai_quota(workspace_id, user_id, job_type, units)` | Reserva atómica de cuota (espacio + usuario) antes de cada llamada a un modelo o a voz a texto |
+| `retry_ai_job(job_id)` | Reencola un trabajo fallido (quien lo pidió o un admin) |
+| `retry_transcription(transcription_id)` | Reencola la transcripción de un audio que falló |
+| `global_search(workspace_id, q)` | Búsqueda de Cmd/Ctrl+K: mensajes, transcripciones, tareas, proyectos, eventos y personas |
 
 ---
 
 ## Realtime
 
-En la publicación `supabase_realtime`: `messages`, `message_reactions`, `chats`
-y `chat_reads`. La RLS se aplica también al realtime, así que solo llegan
-eventos de lo que el usuario puede ver.
+En la publicación `supabase_realtime`: `messages`, `message_reactions`, `chats`,
+`chat_reads` y las tablas que la UI mira en vivo (`ai_jobs`,
+`audio_transcriptions`, `projects`, `polls`, …). La RLS se aplica también al
+realtime, así que solo llegan eventos de lo que el usuario puede ver.
 
 Typing y presencia **no** usan tabla: van por Broadcast y Presence en el canal
 `chat:{workspace}:{chat}` (T21).
@@ -176,7 +191,31 @@ Typing y presencia **no** usan tabla: van por Broadcast y Presence en el canal
 | Bucket | Público | Ruta | Regla |
 |---|---|---|---|
 | `attachments` | no | `{workspace_id}/{chat_id}/...` | Lectura y escritura solo para miembros del espacio |
+| `chat-media` | no | `{workspace_id}/{uuid}-{nombre}` | Adjuntos de chat y notas de voz; solo miembros del espacio |
+| `post-media` | no | `{workspace_id}/{uuid}-{nombre}` | Adjuntos de publicaciones; solo miembros del espacio |
 | `avatars` | sí (lectura) | `{uid}/...` | Escritura solo en tu propia carpeta |
+
+El primer segmento de la ruta de `chat-media`/`post-media` es el espacio: es lo
+que permite que la Edge `loki-worker` baje el audio con permisos de servidor y
+que la tabla `audio_transcriptions` ate cada transcripción a SU espacio (CHECK
+`storage_workspace_id(object_path) = workspace_id`).
+
+### Edge Functions (Deno, sin dependencias externas)
+
+Ninguna importa paquetes: solo `fetch`, `FormData` y `Deno.env`. El código
+compartido va en `functions/_shared/` con imports **relativos** (`../_shared/x.ts`),
+que es lo que arregló el commit `ecd83f9` ("arreglo del bundle Deno").
+
+| Función | Quién la llama | Para qué |
+|---|---|---|
+| `loki-chat` | El cliente, con su JWT | Chat con streaming SSE, herramientas y confirmación de escrituras |
+| `loki-worker` | El trigger `wake_ai_worker` (pg_net) o `pg_cron` | Un trabajo de `ai_jobs` por llamada. `GET /health` dice si hay voz a texto configurado |
+| `push-send` | El trigger `maybe_push_notification` (pg_net) | FCM, respetando preferencias y horario de silencio |
+| `google-calendar` | El cliente, con su JWT | OAuth y sincronización pull/push |
+
+`loki-worker` exige `Authorization: Bearer <WORKER_KEY>` (secreto del servidor,
+el mismo valor que `loki.worker_key` en la base): un cliente nunca puede
+invocarla para saltarse cuotas.
 
 ---
 
@@ -211,8 +250,9 @@ da error. Solo un `INSERT` (o un `UPDATE` que viola el `WITH CHECK`) devuelve
 
 - **No hay proyecto Supabase real.** Nada de `supabase login`, `supabase link` ni
   `supabase db push`. Todo es local.
-- **No hay claves reales.** Las de `sb:status` son las de demo del CLI.
-- **No hay Edge Functions todavía.** Llega en T23 (`loki-chat`); el scaffold se
-  sirve con `npm run sb:functions`.
-- Firebase sigue presente en la app (T20 a T23); esta tarea solo añade la
-  infraestructura de Supabase al lado.
+- **No hay claves reales.** Las de `sb:status` son las de demo del CLI, y los
+  secretos de las Edge Functions viven en `supabase/functions/.env`
+  (gitignored, con plantilla `.env.example`). Sin `LLM_API_KEY` la UI muestra
+  "Loki IA sin configurar"; sin `STT_API_KEY`, "Transcripción sin configurar".
+- Firebase sigue presente **solo** para el push FCM. Ni Firestore, ni Auth, ni
+  Storage quedan en `src/`.

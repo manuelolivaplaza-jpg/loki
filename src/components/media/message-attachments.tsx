@@ -1,24 +1,39 @@
 "use client";
 
+import * as React from "react";
 import { AttachmentsGrid } from "@/components/media/attachments-grid";
 import { FileCard } from "@/components/media/file-card";
 import { VoiceMessage } from "@/components/media/voice-message";
+import { VoiceTranscription } from "@/components/media/transcription-panel";
 import type { MessageAttachment } from "@/types/chat";
 import { cn } from "@/lib/utils";
 
 export type AttachmentsTone = "mine" | "other" | "flat";
 
+/** Contexto de visibilidad: la transcripción hereda la del mensaje. */
+export type VoiceContext = {
+  messageId: string;
+  chatId: string;
+  authorId: string | null;
+};
+
 /**
  * Render de adjuntos de un mensaje: imágenes/video en mosaico, audios como
  * notas de voz y el resto como tarjetas de archivo. Lo usan la burbuja del
  * chat y la fila plana de Publicaciones (mismo componente en los dos).
+ *
+ * Con `voice` (mensaje de un chat de espacio), cada nota de voz además ofrece
+ * "Ver transcripción": el texto se pide bajo demanda y hereda la visibilidad
+ * del mensaje (en un DM, solo sus miembros).
  */
 export function MessageAttachments({
   attachments,
   tone = "other",
+  voice = null,
 }: {
   attachments: readonly MessageAttachment[];
   tone?: AttachmentsTone;
+  voice?: VoiceContext | null;
 }): React.JSX.Element | null {
   if (attachments.length === 0) return null;
   const media = attachments.filter(
@@ -43,6 +58,15 @@ export function MessageAttachments({
           )}
         >
           <VoiceMessage url={item.url} duration={item.duration} dark={tone === "mine"} />
+          {voice !== null ? (
+            <VoiceTranscription
+              attachment={item}
+              messageId={voice.messageId}
+              chatId={voice.chatId}
+              authorId={voice.authorId}
+              dark={tone === "mine"}
+            />
+          ) : null}
         </div>
       ))}
       {files.map((item, index) => (

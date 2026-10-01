@@ -239,6 +239,25 @@ type AiJobRow = {
   updated_at: string;
 };
 
+type AudioTranscriptionRow = {
+  id: string;
+  workspace_id: string;
+  bucket: string;
+  object_path: string;
+  message_id: string | null;
+  chat_id: string | null;
+  author_id: string | null;
+  requested_by: string | null;
+  text: string;
+  language: string;
+  duration_seconds: number | null;
+  status: string;
+  provider: string;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type AiSpaceUsageRow = {
   workspace_id: string;
   day: string;
@@ -381,6 +400,54 @@ type UserPresenceRow = {
 export type Database = {
   public: {
     Tables: {
+      audio_transcriptions: {
+        Row: AudioTranscriptionRow;
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          bucket?: string;
+          object_path: string;
+          message_id?: string | null;
+          chat_id?: string | null;
+          author_id?: string | null;
+          requested_by?: string | null;
+          text?: string;
+          language?: string;
+          duration_seconds?: number | null;
+          status?: string;
+          provider?: string;
+          error?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          bucket?: string;
+          object_path?: string;
+          message_id?: string | null;
+          chat_id?: string | null;
+          author_id?: string | null;
+          requested_by?: string | null;
+          text?: string;
+          language?: string;
+          duration_seconds?: number | null;
+          status?: string;
+          provider?: string;
+          error?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "audio_transcriptions_message_id_fkey";
+            columns: ["message_id"];
+            isOneToOne: false;
+            referencedRelation: "messages";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       ai_chats: {
         Row: AiChatRow;
         Insert: {
@@ -1422,6 +1489,12 @@ export type Database = {
       retry_ai_job: {
         Args: {
           p_job_id: string;
+        };
+        Returns: boolean;
+      };
+      retry_transcription: {
+        Args: {
+          p_transcription_id: string;
         };
         Returns: boolean;
       };

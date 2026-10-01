@@ -3,10 +3,10 @@
 /**
  * Paleta de búsqueda global (Cmd/Ctrl+K y lupa).
  *
- * Montaje único en `AppShell`: overlay + input con 5 grupos de resultados
- * (Mensajes, Tareas, Proyectos, Eventos y Personas), acciones rápidas y
- * recientes cuando la consulta está vacía. Teclado: ↑↓ navegar, Enter
- * abrir, Esc cerrar. Las coincidencias se resaltan con `<mark>`.
+ * Montaje único en `AppShell`: overlay + input con grupos de resultados
+ * (Mensajes, Notas de voz, Tareas, Proyectos, Eventos y Personas), acciones
+ * rápidas y recientes cuando la consulta está vacía. Teclado: ↑↓ navegar,
+ * Enter abrir, Esc cerrar. Las coincidencias se resaltan con `<mark>`.
  */
 
 import * as React from "react";
@@ -24,6 +24,7 @@ import {
   UserPlus,
   Users,
   X,
+  Mic,
   type LucideIcon,
 } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
@@ -43,7 +44,14 @@ import { cn } from "@/lib/utils";
 /** Espera tras la última tecla antes de llamar a la RPC. */
 const SEARCH_DEBOUNCE_MS = 220;
 
-type ActionKind = "message" | "task" | "project" | "event" | "action" | "recent";
+type ActionKind =
+  | "message"
+  | "task"
+  | "project"
+  | "event"
+  | "action"
+  | "recent"
+  | "transcription";
 
 type PaletteItem = {
   key: string;
@@ -285,6 +293,29 @@ export function SearchPalette({
         })),
       });
     }
+    if (results.transcriptions.length > 0) {
+      out.push({
+        label: "Notas de voz",
+        items: results.transcriptions.map((hit) => ({
+          key: `transcription:${hit.id}`,
+          kind: "transcription",
+          recentKind: "message",
+          title: hit.text === "" ? "(sin texto)" : hit.text,
+          subtitle:
+            hit.authorName === ""
+              ? "Transcripción"
+              : `${hit.authorName} · transcripción`,
+          // Sin mensaje (dictado suelto): al chat de Loki, que es donde se
+          // puede volver a escuchar. Con mensaje: al chat de la nota.
+          href:
+            hit.chatId !== null && hit.chatId !== ""
+              ? `/chat/c?id=${encodeURIComponent(hit.chatId)}`
+              : "/chat/loki-ia",
+          icon: Mic,
+          highlightText: hit.text,
+        })),
+      });
+    }
     if (results.tasks.length > 0) {
       out.push({
         label: "Tareas",
@@ -411,6 +442,7 @@ export function SearchPalette({
 
   const totalHits =
     results.messages.length +
+    results.transcriptions.length +
     results.tasks.length +
     results.projects.length +
     results.events.length +

@@ -58,4 +58,17 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Micrófono (notas de voz y "Dictar a Loki").
+         El WebChromeClient de Capacitor 8 (BridgeWebChromeClient
+         .onPermissionRequest) reenvía `android.webkit.resource.AUDIO_CAPTURE` a
+         la petición en tiempo de ejecución de RECORD_AUDIO +
+         MODIFY_AUDIO_SETTINGS: sin declararlas aquí, el sistema no concede
+         nada y getUserMedia() falla dentro de la WebView. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- La app sigue instalable en equipos sin micrófono (siempre queda la
+         alternativa de subir un archivo de audio). -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 </manifest>

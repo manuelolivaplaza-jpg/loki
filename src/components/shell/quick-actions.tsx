@@ -9,6 +9,7 @@ import {
   FolderPlus,
   Lightbulb,
   ListPlus,
+  Mic,
   Send,
   UserPlus,
   type LucideIcon,
@@ -41,6 +42,7 @@ export const QUICK_ACTIONS: readonly QuickAction[] = [
   { key: "proyecto", title: "Nuevo proyecto", description: "Organiza tareas en un espacio", icon: FolderPlus, href: "/proyectos" },
   { key: "lista", title: "Nueva lista", description: "Compras, quehaceres o checklist", icon: ListPlus, href: "/proyectos?tab=listas" },
   { key: "post", title: "Compartir algo", description: "Publica un post en el espacio", icon: Send, href: "/chat/publicaciones" },
+  { key: "dictar", title: "Dictar a Loki", description: "Habla y Loki lo convierte en tareas", icon: Mic, href: "/chat/loki-ia?dictar=1" },
   { key: "invitar", title: "Invitar miembro", description: "Suma a alguien a tu espacio", icon: UserPlus, href: null },
 ];
 

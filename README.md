@@ -2,7 +2,8 @@
 
 App familiar (Next.js 15 con export estático + Capacitor, TypeScript estricto,
 Tailwind, shadcn/ui): espacios, chats en vivo, publicaciones, hilos,
-reacciones, menciones y Loki IA. Diseño claro estilo Grok Bot.
+reacciones, menciones, notas de voz con transcripción y Loki IA. Diseño claro
+estilo Grok Bot.
 
 ## Arquitectura
 
@@ -11,7 +12,9 @@ reacciones, menciones y Loki IA. Diseño claro estilo Grok Bot.
 | App web / móvil | `src/` (Next.js App Router) | Export estático (`output: "export"` con `BUILD_TARGET=capacitor`); sin SSR ni cookies de servidor |
 | Base de datos, auth, realtime, storage | Supabase local (Postgres + RLS + Realtime + Storage) | `supabase/`; detalle en [`supabase/README.md`](supabase/README.md) |
 | Loki IA real | Edge Function `supabase/functions/loki-chat` (Deno) | Proveedor por entorno; sin clave responde 503 y la UI muestra "Loki IA sin configurar" |
-| Push | Firebase **solo** para FCM en el cliente (`src/lib/push/fcm.ts`) + Edge Function `supabase/functions/push-send` (desactivada por defecto) | Sin config, "Notificaciones no configuradas en este entorno" |
+| IA por trabajos (resúmenes, transcripción) | `ai_jobs` + Edge Function `supabase/functions/loki-worker` (Deno) | Por eventos: un insert → trigger → `pg_net` → la función se despierta → Realtime. Nada escuchando 24/7 |
+| Voz a texto | `supabase/functions/_shared/transcribe.ts` (lo usa `loki-worker`) | `STT_PROVIDER=openai` o `gemini`; sin clave la UI muestra "Transcripción sin configurar" |
+| Push | Firebase **solo** para FCM en el cliente (`src/lib/push/fcm.ts`, `src/lib/push/native.ts`) + Edge Function `supabase/functions/push-send` | Sin config, "Notificaciones no configuradas en este entorno" |
 | Tipos UI | `src/types/` (camelCase) | El adaptador `src/lib/data/*` traduce el snake_case de Postgres |
 
 Firebase no guarda datos: ni Firestore, ni Auth, ni Storage quedan en `src/`.
@@ -19,28 +22,47 @@ Firebase no guarda datos: ni Firestore, ni Auth, ni Storage quedan en `src/`.
 ```mermaid
 flowchart LR
     App["App Next.js\n(web + Capacitor)"] --> SB["Supabase\n(Postgres + Auth + Realtime + Storage)"]
-    App --> Edge["Edge Functions\n(loki-chat, push-send)"]
+    App --> Edge["Edge Functions\n(loki-chat, loki-worker,\npush-send, google-calendar)"]
     Edge --> SB
     Edge --> LLM["Proveedor LLM\n(OpenAI / Anthropic / Gemini)"]
+    Edge --> STT["Proveedor de voz a texto\n(OpenAI / Gemini)"]
     Edge --> FCM["FCM"]
     FCM --> App
 ```
 
-## Estado actual (T34–T36)
+## Estado actual
 
-- **Pulido**: tokens unificados (espaciado 4–32, radios 8/12/16/24/pill,
-  Inter 13/15/17/20/28, lucide 1.75), estados vacíos con acción, skeletons
-  y reintento en todas las listas, menú único de mensaje (long-press 500ms
-  + click derecho: emojis arriba, acciones abajo), todo en español.
-- **Calidad y seguridad**: ARIA/foco/contraste AA, ventanas virtuales en
-  chat y feed, code splitting (búsqueda, visor, diálogos), 10 archivos de
-  tests RLS (incluye `negatives.test.mjs`), rate limiting en Edge
-  (30 req/min, 429 en español), validadores estrictos, texto seguro
-  (enlaces solo http/https), CSP, error boundaries por sección y logger
-  local. CI en `.github/workflows/ci.yml`.
-- **Lanzamiento**: [`docs/DEPLOY.md`](docs/DEPLOY.md), `.env.example`
-  completo, `npm run check-env`, página `/legal`, onboarding de 3 pasos y
-  [`docs/demo-seed.sql`](docs/demo-seed.sql) (plantilla sin ejecutar).
+- **Adjuntos y voz (funcionando de punta a punta)**: el menú `+` ofrece foto/
+  video, cámara, archivo y nota de voz. Cada archivo se sube a los buckets
+  privados `chat-media` y `post-media` (ruta `{workspace_id}/…`, RLS por
+  espacio) con progreso real y cancelación, y se ve en el chat y en las
+  publicaciones. `MediaRecorder` elige el MIME que soporte el navegador
+  (webm/opus en Chrome, mp4 en Safari); en el chat, mantener para grabar y
+  deslizar para cancelar; en escritorio, click para empezar y parar.
+- **Transcripción de notas de voz (bajo demanda)**: cada nota de voz tiene
+  "Ver transcripción". Nada se transcribe hasta que alguien la abre: ahí se
+  encola **un** trabajo en `ai_jobs`, el trigger `wake_ai_worker` despierta a
+  `loki-worker` por `pg_net` y el texto llega por Realtime. La tabla
+  `audio_transcriptions` guarda texto, idioma, duración, proveedor y estado; un
+  archivo, una transcripción (no se vuelve a pagar). La visibilidad es la del
+  mensaje (en un DM, solo sus miembros).
+- **Voz a acción**: el micrófono del chat con Loki y la acción rápida "Dictar a
+  Loki" graban, transcriben y mandan el texto al mismo flujo que escribirlo a
+  mano (analizador determinista primero, modelo después). La transcripción se
+  muestra **siempre** encima de la tarjeta de plan, editable, con "Recalcular
+  con este texto" para corregir errores de dictado antes de confirmar.
+- **Convertir una nota de voz**: "Convertir en…" (tarea, evento o
+  recordatorio) sobre un mensaje con audio transcribe primero y usa la
+  transcripción como texto.
+- **Búsqueda universal**: Cmd/Ctrl+K busca en mensajes, **notas de voz
+  transcritas**, tareas, proyectos, eventos y personas.
+- **Loki IA**: chat privado y @Loki en los chats de grupo, con streaming real,
+  planes multi-acción con confirmación, recordatorios, ítems de lista, avisos
+  y barra de deshacer. Cuota por espacio visible en Configuración.
+- **Push**: insertar en `public.notifications` dispara el push (trigger
+  `maybe_push_notification` → `pg_net` → `push-send`, que respeta
+  `notification_prefs` y el horario de silencio). Web (Service Worker) y
+  Android (FCM nativo) con alternativa clara cuando no hay config.
 
 ## Requisitos
 
@@ -75,9 +97,35 @@ npm run sb:functions   # sirve supabase/functions en local
 ```
 
 Secretos en `supabase/functions/.env` (gitignored; ver
-`supabase/functions/.env.example`): `LLM_PROVIDER=openai|anthropic|gemini`,
-`LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL` (Loki IA) y `FCM_SERVICE_ACCOUNT`
-(push). Sin `LLM_API_KEY`, `loki-chat` responde 503 `{code:'not_configured'}`.
+`supabase/functions/.env.example`):
+
+| Variable | Para qué |
+|---|---|
+| `LLM_PROVIDER`, `LLM_MODEL`, `LLM_MODEL_FAST`, `LLM_MODEL_SMART`, `LLM_API_KEY`, `LLM_BASE_URL` | Loki IA (`loki-chat`, `loki-worker`) |
+| `STT_PROVIDER`, `STT_MODEL`, `STT_API_KEY`, `STT_BASE_URL` | Voz a texto de notas de voz y dictado |
+| `WORKER_KEY` | Clave interna que valida el trigger `wake_ai_worker` (mismo valor que `loki.worker_key` en la base) |
+| `FCM_SERVICE_ACCOUNT` | Push (FCM) |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URL`, `GOOGLE_TOKEN_KEY` | Google Calendar |
+
+Sin `LLM_API_KEY`, `loki-chat` responde 503 `{code:'not_configured'}`. Sin
+`STT_API_KEY`, `loki-worker` responde `{"stt":{"configured":false}}` y la UI
+muestra "Transcripción sin configurar" **sin encolar nada**.
+
+Proveedores de voz a texto soportados (verificados contra su documentación
+oficial, sin inventar parámetros):
+
+- `STT_PROVIDER=openai` → `POST {STT_BASE_URL}/audio/transcriptions`
+  (multipart: `file`, `model`, `response_format=json`; `language` solo con
+  modelos `whisper-*`, porque los `gpt-*-transcribe` lo detectan solos y lo
+  rechazan). Compatible con Groq, OpenRouter, Ollama y otros
+  OpenAI-compatible. Modelo por defecto: `gpt-4o-mini-transcribe`.
+  Ref: <https://platform.openai.com/docs/api-reference/audio/createTranscription>
+- `STT_PROVIDER=gemini` → `POST {base}/v1beta/models/{model}:generateContent`
+  con el audio en `parts[].inline_data` (`mime_type` + base64) y un prompt de
+  transcripción literal, `temperature: 0`. Modelo por defecto:
+  `gemini-2.0-flash`. Refs:
+  <https://ai.google.dev/api/generate-content> ·
+  <https://ai.google.dev/gemini-api/docs/audio>
 
 ## Scripts de test
 
@@ -87,8 +135,8 @@ npm run lint        # eslint .
 npm run check-env   # valida env sin imprimir secretos
 npm run build       # next build
 npm run build:capacitor  # export estático para Capacitor
-npm run test:unit   # parser de menciones + preview del chat (Node, sin runner)
-npm run test:rls    # 55 tests de RLS contra Supabase local (necesita sb:start)
+npm run test:unit   # parser de menciones + preview del chat + intent (Node, sin runner)
+npm run test:rls    # tests de RLS contra Supabase local (necesita sb:start)
 ```
 
 ## Android (Capacitor)
@@ -115,6 +163,22 @@ Deep links a `/invite` (ver `src/components/pwa/deep-links.tsx`): el
 abra la app hay que publicar `https://loki.cl/.well-known/assetlinks.json`
 con el `package_name` `cl.loki.app` y la huella SHA-256 del keystore.
 
+### Micrófono en Android
+
+`android/app/src/main/AndroidManifest.xml` declara `RECORD_AUDIO` y
+`MODIFY_AUDIO_SETTINGS`, más `<uses-feature android:name="android.hardware.microphone"
+android:required="false"/>` para que la app siga instalándose en equipos sin
+micrófono. El `BridgeWebChromeClient` de Capacitor 8 ya reenvía
+`android.webkit.resource.AUDIO_CAPTURE` a la petición de permiso en tiempo de
+ejecución, así que `getUserMedia({ audio: true })` funciona dentro de la WebView
+sin plugin extra. Si el usuario lo niega, la UI lo dice y da la ruta exacta
+para reactivarlo (Ajustes → Apps → Loki → Permisos → Micrófono), y siempre
+queda la alternativa de subir un archivo de audio.
+
+Nota: `getUserMedia` solo existe en contexto seguro. En `http://` que no sea
+`localhost` el navegador no da micrófono; la app usa el esquema `https` de
+Capacitor (`server.androidScheme`), así que en el dispositivo no pasa.
+
 Push nativo (FCM, ver `src/lib/push/native.ts`): descargar el
 `google-services.json` de la consola de Firebase y ponerlo en `android/app/`
 (sin subirlo al repo, está gitignored). Sin ese archivo el push nativo no
@@ -122,11 +186,11 @@ registra token; el push web sigue usando `src/lib/push/fcm.ts`.
 
 ## Qué falta
 
-- **Push de verdad**: `push-send` está desactivada (ningún trigger la llama).
-  Para activarla hay que cablear `pg_net`/webhook sobre mensajes nuevos y
-  poner `FCM_SERVICE_ACCOUNT`, además de las claves web + VAPID en
-  `.env.local` para registrar el token desde Configuración.
-- **Clave de LLM**: sin `LLM_API_KEY` solo funciona el camino "sin configurar".
-- **Adjuntos**: la UI de adjuntos sigue deshabilitada (buckets listos).
-- **Códigos de invitación**: el onboarding solo crea espacios; unirse con
-  código sigue pendiente.
+- **Clave de LLM**: sin `LLM_API_KEY` solo funciona el camino "sin configurar"
+  (más la vía determinista, que es código, no IA).
+- **Clave de voz a texto**: sin `STT_API_KEY` las notas de voz se escuchan pero
+  no se transcriben, y "Dictar a Loki" avisa "Transcripción sin configurar".
+- **FCM real**: falta el `google-services.json` en `android/app/` para el push
+  nativo; el web necesita su config en `.env.local`.
+- **Capacitor en dispositivo**: falta probar en un teléfono real (barra de
+  estado, teclado, micrófono y push).

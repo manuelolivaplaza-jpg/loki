@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { Sparkles } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
-import { MessageAttachments } from "@/components/media/message-attachments";
+import { MessageAttachments, type VoiceContext } from "@/components/media/message-attachments";
 import { SafeText } from "@/components/chat/safe-text";
 import { useAuthorAvatarColor } from "@/hooks/use-avatar-color";
 import { avatarColorFor } from "@/lib/avatar-color";
@@ -77,6 +77,12 @@ type MessageBubbleProps = {
   variant?: "bubble" | "post";
   /** Reloj para el tiempo relativo de la fila de post. */
   now?: Date;
+  /**
+   * Datos del mensaje para las notas de voz: habilita "Ver transcripción"
+   * (que hereda la visibilidad del mensaje). Sin esto el audio se reproduce
+   * igual, pero no se transcribe.
+   */
+  voice?: Omit<VoiceContext, "messageId"> | null;
   /**
    * Cursor de escritura visible (streaming en vivo de la Edge Function).
    * El texto ya viene completo en `message`; esto solo fuerza el cursor.
@@ -224,10 +230,17 @@ export function MessageBubble({
   onRetry,
   variant = "bubble",
   now,
+  voice = null,
   streaming = false,
 }: MessageBubbleProps): React.JSX.Element {
   // Color determinista por autor (el mío sale del perfil).
   const avatarColor = useAuthorAvatarColor(message.authorId);
+  // La transcripción de una nota de voz existe solo en mensajes de chat (no en
+  // posts ni en el chat privado con Loki, que no guarda adjuntos).
+  const voiceCtx = React.useMemo(
+    () => (voice === null ? null : { ...voice, messageId: message.id }),
+    [voice, message.id],
+  );
 
   // T17: fila plana de publicación (no hay burbuja ni lado a lado).
   if (variant === "post") {
@@ -253,7 +266,7 @@ export function MessageBubble({
           </p>
           {message.deleted ? null : (
             <div className="mt-2">
-              <MessageAttachments attachments={message.attachments} tone="flat" />
+              <MessageAttachments attachments={message.attachments} tone="flat" voice={voiceCtx} />
             </div>
           )}
         </div>
@@ -318,7 +331,7 @@ export function MessageBubble({
           </p>
           {hasAttachments ? (
             <div className="w-full">
-              <MessageAttachments attachments={message.attachments} tone="mine" />
+              <MessageAttachments attachments={message.attachments} tone="mine" voice={voiceCtx} />
             </div>
           ) : null}
         </div>
@@ -369,7 +382,7 @@ export function MessageBubble({
             {body}
           </p>
           {deleted ? null : (
-            <MessageAttachments attachments={message.attachments} tone="other" />
+            <MessageAttachments attachments={message.attachments} tone="other" voice={voiceCtx} />
           )}
         </div>
       </div>

@@ -36,6 +36,33 @@ export type UploadOptions = {
   signal?: AbortSignal;
 };
 
+/** Buckets donde se guardan los adjuntos. */
+const MEDIA_BUCKETS: readonly MediaBucket[] = ["chat-media", "post-media"];
+
+/**
+ * Parte el `path` de un adjunto (`{bucket}/{wsId}/{uuid}-{nombre}`) en el
+ * bucket y la ruta del objeto DENTRO del bucket (`{wsId}/{uuid}-{nombre}`).
+ * Devuelve null si el path no tiene esa forma (mensajes viejos sin path, o
+ * un adjunto que vino de otro sitio): quien llama avisa en vez de adivinar.
+ */
+export function splitMediaPath(
+  path: string | undefined,
+): { bucket: MediaBucket; objectPath: string; workspaceId: string } | null {
+  if (path === undefined) return null;
+  const parts = path.split("/").filter((part) => part !== "");
+  if (parts.length < 3) return null;
+  const bucket = parts[0];
+  const workspaceId = parts[1];
+  const objectPath = parts.slice(1).join("/");
+  if (!MEDIA_BUCKETS.includes(bucket as MediaBucket)) return null;
+  // El primer segmento DE LA RUTA es el espacio (helper storage_workspace_id
+  // de la base); si no parece un uuid, no hay transcripción posible.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workspaceId)) {
+    return null;
+  }
+  return { bucket: bucket as MediaBucket, objectPath, workspaceId };
+}
+
 /** Clasifica un archivo por su MIME (sin MIME -> archivo genérico). */
 export function kindFromFile(file: File): AttachmentKind {
   const mime = file.type.toLowerCase();

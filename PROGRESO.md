@@ -12,6 +12,42 @@ Actualizado: 01-10-2026 ~05:40 (hora de Chile, UTC-3).
 ## Fase actual
 Roadmap T1–T36 **completo y commiteado**. Fase actual: integración real y pulido después del roadmap (Google Calendar, push nativo en Android, ajustes de UI). Manu avanza por su cuenta con opencode.
 
+### Lote actual (implementado, SIN commit y SIN verificar)
+
+**Notas de voz que se convierten en cosas** (transcripción + voz a acción):
+
+- **Migración NUEVA** `supabase/migrations/20261008000000_transcriptions.sql`:
+  tabla `audio_transcriptions` (una fila por archivo de audio ya subido, con
+  texto, idioma, duración, proveedor y estado), CHECK
+  `storage_workspace_id(object_path) = workspace_id`, índice único por
+  `(workspace_id, object_path)`, RLS que hereda la visibilidad del mensaje
+  (`can_access_chat`, así en un DM solo sus miembros) y deja el dictado suelto
+  en privado, encolado por evento (`audio_transcriptions_enqueue` -> `ai_jobs`
+  `transcribe_audio` -> `wake_ai_worker` por `pg_net`), `retry_transcription()`
+  y `global_search` reemplazada por la misma firma **con un grupo más**
+  (`transcriptions`).
+- **Edge:** `supabase/functions/_shared/transcribe.ts` (nuevo, sin dependencias
+  externas, imports relativos) con `STT_PROVIDER=openai|gemini`, `STT_MODEL`,
+  `STT_API_KEY`, `STT_BASE_URL`; `loki-worker` implementa `processTranscribe`
+  (verifica membresía y acceso al chat, reserva cuota **antes** de bajar el
+  audio, descarga con la service role y guarda el texto) y un `GET /health` que
+  dice si hay voz a texto configurada.
+- **App:** `src/lib/data/transcriptions.ts`,
+  `src/hooks/use-voice-transcription.ts`,
+  `src/components/media/transcription-panel.tsx` ("Ver transcripción" bajo
+  demanda), `src/components/ai/dictate-sheet.tsx` ("Dictar a Loki"),
+  `src/components/chat/dictation-banner.tsx` (texto editable encima del plan) y
+  `src/components/chat/voice-convert-sheet.tsx` ("Convertir en…" sobre una nota
+  de voz). `VoiceRecorder` gana modo `toggle`, hápticos y corte en segundo plano.
+  Búsqueda: nuevo grupo "Notas de voz" en la paleta. Android: `RECORD_AUDIO` +
+  `MODIFY_AUDIO_SETTINGS` en el manifest (Capacitor 8 ya reenvía
+  `AUDIO_CAPTURE` a la petición en tiempo de ejecución).
+- **Tests:** `tests/rls/transcriptions.test.mjs` (RLS, ciclo, reintento y el
+  grupo nuevo de `global_search`).
+- **Docs:** README, `supabase/README.md` y `src/components/chat/README.md`
+  actualizados (la UI de adjuntos YA funcionaba de punta a punta; el README
+  decía que no).
+
 ## Terminado (hashes)
 - T1–T9 (scaffold, tokens Grok, shell, Firebase inicial, auth, onboarding, espacios, navegación): `5b58d0f` … `ab4fc29`.
 - T10 `df1a73a` · T11 `09ee46d` (Capacitor) · T12 `6598258` · T13 `5b40ce8` · T14 `6f6307d` · T15 `34d9f21`.
@@ -24,8 +60,8 @@ Roadmap T1–T36 **completo y commiteado**. Fase actual: integración real y pul
 ## Tarea en curso
 - Sin tarea de Forja en curso. Lo último de Manu: Android (barra de estado) y push nativo.
 - Hay 2 procesos opencode de Manu activos desde 01-10 04:12 (`opencode` y `opencode serve --service`). **No matarlos.**
-- Migraciones: `20260929000000_init` · `20260930000000_organizer` · `…01_ai_tools` · `…02_storage` · `…03_search` · `…04_negatives_fix` · `…05_gcal` · `20261001000000_push_direct`.
-- Edge Functions: `loki-chat`, `push-send`, `google-calendar` (secretos en `supabase/functions/.env`, gitignored; plantilla `.env.example`).
+- Migraciones: `20260929000000_init` · `20260930000000_organizer` · `…01_ai_tools` · `…02_storage` · `…03_search` · `…04_negatives_fix` · `…05_gcal` · `20261001000000_push_direct` · `20261003000000_ai_infra` · `20261004000000_loki_actions` · `20261005000000_convert_digest` · `20261006000000_lists` · `20261007000000_polls` · `20261008000000_transcriptions`.
+- Edge Functions: `loki-chat`, `loki-worker`, `push-send`, `google-calendar` (secretos en `supabase/functions/.env`, gitignored; plantilla `.env.example`, ahora con `STT_*`).
 
 ## Próximas 5 tareas (criterio de aceptación)
 1. **Regresión completa tras el commit grande `f4eb6c2`:** `npm run sb:reset` aplica las 8 migraciones; `typecheck`, `lint`, `test:unit`, `test:rls`, `build` y `build:capacitor` en 0. Corregir sin romper y hacer commit local.

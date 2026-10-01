@@ -80,4 +80,7 @@ if (pushMissing.length === 0 && pushOptIn === "1") {
   );
 }
 console.log("[check-env] Loki IA: se configura en supabase/functions/.env (no se valida aquí)");
+console.log(
+  "[check-env] Voz a texto: se configura en supabase/functions/.env (STT_API_KEY)",
+);
 console.log("[check-env] OK");

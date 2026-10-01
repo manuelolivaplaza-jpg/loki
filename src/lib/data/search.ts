@@ -46,12 +46,24 @@ export type SearchPersonHit = {
   role: string;
 };
 
+export type SearchTranscriptionHit = {
+  id: string;
+  /** Mensaje con la nota de voz (null si fue un dictado suelto). */
+  messageId: string | null;
+  chatId: string | null;
+  authorName: string;
+  text: string;
+  createdAt: string;
+};
+
 export type SearchResults = {
   messages: SearchMessageHit[];
   tasks: SearchTaskHit[];
   projects: SearchProjectHit[];
   events: SearchEventHit[];
   people: SearchPersonHit[];
+  /** Texto dictado de las notas de voz (bajo demanda, indexado). */
+  transcriptions: SearchTranscriptionHit[];
 };
 
 export const EMPTY_RESULTS: SearchResults = {
@@ -60,6 +72,7 @@ export const EMPTY_RESULTS: SearchResults = {
   projects: [],
   events: [],
   people: [],
+  transcriptions: [],
 };
 
 // --- Parseo del jsonb (defensivo: la RPC siempre devuelve el objeto con
@@ -144,6 +157,19 @@ function parsePerson(item: Record<string, unknown>): SearchPersonHit | null {
   };
 }
 
+function parseTranscription(item: Record<string, unknown>): SearchTranscriptionHit | null {
+  const id = asString(item["id"]);
+  if (id === null) return null;
+  return {
+    id,
+    messageId: asString(item["message_id"]),
+    chatId: asString(item["chat_id"]),
+    authorName: asString(item["author_name"]) ?? "",
+    text: asString(item["text"]) ?? "",
+    createdAt: asString(item["created_at"]) ?? "",
+  };
+}
+
 /**
  * Busca en todo el espacio con la RPC `global_search`. Con menos de 2
  * letras devuelve vacío sin llamar al servidor (igual que la función).
@@ -165,6 +191,7 @@ export async function searchAll(wsId: string, q: string): Promise<SearchResults>
     projects: parseGroup(data["projects"], parseProject),
     events: parseGroup(data["events"], parseEvent),
     people: parseGroup(data["people"], parsePerson),
+    transcriptions: parseGroup(data["transcriptions"], parseTranscription),
   };
 }
 

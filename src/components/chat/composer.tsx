@@ -76,6 +76,15 @@ type ComposerProps = {
    * 1–6 líneas, Enter con puntero fino, `visualViewport`) es el mismo.
    */
   mode?: "chat" | "post";
+  /**
+   * En el chat con Loki el micrófono NO manda una nota de voz (ahí no hay
+   * adjuntos): abre "Dictar a Loki" (grabar → transcribir → el texto entra al
+   * mismo flujo). En los chats de espacio el micrófono manda la nota de voz
+   * de siempre, y esto queda en null.
+   */
+  onDictate?: (() => void) | null;
+  /** El dictado está abierto: el botón queda marcado. */
+  dictating?: boolean;
 };
 
 type MentionState = {
@@ -194,6 +203,8 @@ export function Composer({
   placeholder: placeholderOverride,
   mode = "chat",
   disabled = false,
+  onDictate = null,
+  dictating = false,
 }: ComposerProps): React.JSX.Element {
   const [value, setValue] = React.useState("");
   const [attachOpen, setAttachOpen] = React.useState(false);
@@ -355,9 +366,11 @@ export function Composer({
       if (option === "photo") photoRef.current?.click();
       else if (option === "camera") cameraRef.current?.click();
       else if (option === "file") fileRef.current?.click();
+      // En el chat con Loki el micrófono dicta en vez de mandar un adjunto.
+      else if (onDictate !== null) onDictate();
       else setRecording(true);
     },
-    [],
+    [onDictate],
   );
 
   const handleVoiceSend = React.useCallback(
@@ -760,6 +773,10 @@ export function Composer({
             >
               <Icon icon={ImageIcon} size={22} />
             </button>
+          ) : onDictate !== null ? (
+            // Chat con Loki: no hay adjuntos (el dictado es el micrófono de
+            // la pastilla), así que el botón + no aparece.
+            null
           ) : (
             <div className="relative shrink-0">
               <AnimatePresence>
@@ -841,13 +858,27 @@ export function Composer({
               )}
               style={{ maxHeight: 120 }}
             />
-            {!hasText && !isPost && readyAttachments.length === 0 ? (
+            {!isPost && (onDictate !== null || (!hasText && readyAttachments.length === 0)) ? (
               <button
                 type="button"
-                onClick={() => setRecording((active) => !active)}
-                title="Nota de voz"
-                aria-label={recording ? "Cerrar grabadora" : "Grabar nota de voz"}
-                aria-expanded={recording}
+                onClick={() => {
+                  // Loki: dictado a voz (el audio se transcribe y el texto
+                  // entra al chat). Chats de espacio: nota de voz de siempre.
+                  if (onDictate !== null) onDictate();
+                  else setRecording((active) => !active);
+                }}
+                title={onDictate !== null ? "Dictar a Loki" : "Nota de voz"}
+                aria-label={
+                  onDictate !== null
+                    ? dictating
+                      ? "Cerrar dictado a Loki"
+                      : "Dictar a Loki"
+                    : recording
+                      ? "Cerrar grabadora"
+                      : "Grabar nota de voz"
+                }
+                aria-expanded={onDictate !== null ? dictating : recording}
+                aria-keyshortcuts={onDictate !== null ? "Control+Shift+D Meta+Shift+D" : undefined}
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none interactive active:bg-surface"
               >
                 <Icon icon={Mic} size={20} />

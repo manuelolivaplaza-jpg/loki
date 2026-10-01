@@ -15,12 +15,17 @@ import {
   type SpaceUsageTotals,
   type UsageSlice,
 } from "@/lib/data/ai-usage";
+import {
+  getSttHealth,
+  TRANSCRIPTION_NOT_CONFIGURED,
+} from "@/lib/data/transcriptions";
 import { useMembers } from "@/hooks/use-chat";
 import { cn } from "@/lib/utils";
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   chat: "Chat",
   chat_summary: "Resúmenes",
+  chat_digest: "Resumen de no leídos",
   day_digest: "Resumen del día",
   redact_highlights: "Destacados",
   transcribe_audio: "Transcripciones",
@@ -68,6 +73,7 @@ export function AiUsageSection({
   const [byMember, setByMember] = React.useState<MemberUsage[]>([]);
   const [limits, setLimits] = React.useState<SpaceLimits | null>(null);
   const [configured, setConfigured] = React.useState<boolean | null>(null);
+  const [sttConfigured, setSttConfigured] = React.useState<boolean | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [dailyInput, setDailyInput] = React.useState("");
@@ -91,6 +97,9 @@ export function AiUsageSection({
         setLimits(lim);
         setDailyInput(lim.dailyUnits === null ? "" : String(lim.dailyUnits));
         setConfigured(status.configured);
+        // Voz a texto: mismo aviso de "sin configurar" que el chat, para
+        // que se sepa por qué las notas de voz no se transcriben.
+        void getSttHealth().then((stt) => setSttConfigured(stt.configured));
         if (isAdmin) {
           const bm = await getUsageByMember(wsId);
           if (!cancelled) setByMember(bm);
@@ -161,6 +170,31 @@ export function AiUsageSection({
                 : configured
                   ? "Disponible"
                   : LOKI_NOT_CONFIGURED_TITLE}
+            </span>
+          </CardRow>
+          <CardDivider />
+          <CardRow>
+            <span className="min-w-0 flex-1">
+              <span className="block text-body leading-6 text-foreground">
+                Transcripción de notas de voz
+              </span>
+              <span className="block text-body-sm leading-5 text-muted-foreground">
+                1 unidad por minuto de audio, del mismo presupuesto
+              </span>
+            </span>
+            <span
+              className={cn(
+                "shrink-0 rounded-full px-2.5 py-1 text-meta leading-4",
+                sttConfigured === true
+                  ? "bg-success/15 text-success"
+                  : "bg-surface text-muted-foreground",
+              )}
+            >
+              {sttConfigured === null
+                ? "Comprobando…"
+                : sttConfigured
+                  ? "Disponible"
+                  : TRANSCRIPTION_NOT_CONFIGURED}
             </span>
           </CardRow>
           <CardDivider />

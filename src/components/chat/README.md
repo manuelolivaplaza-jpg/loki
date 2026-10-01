@@ -20,8 +20,8 @@ con Loki IA (Edge Function `loki-chat` con streaming real).
 | `PostsView` | `posts-view.tsx` | `/chat/publicaciones`: composer arriba (sticky bajo el header, columna de 760px), feed y estado vacío. `usePosts` + `usePublishPost`; errores y reintento con el mismo id de cliente. |
 | `PostRow` | `post-row.tsx` | Fila plana estilo X separada por `border-divider`: `MessageBubble variant="post"` + acciones Me gusta (Heart relleno/`text-danger`/`aria-pressed` con contador) y Comentar (MessageCircle + `threadCount`). Exporta `usePostClock`, un único reloj para todos los tiempos relativos. |
 | `DaySeparator` | `day-separator.tsx` | `Hoy` / `Ayer` / `lunes 21 de septiembre`, 13px muted. |
-| `Composer` | `composer.tsx` | Botón `+` 44px + pastilla con textarea 1–6 líneas, mic deshabilitado, enviar 36px solo con texto (spring). Enter envía solo con puntero fino; `visualViewport` + `safe-area` para el teclado. Acepta `replyTo` (barra de cita con X), `edit` (precarga el texto y Enter guarda), `placeholder` y `disabled` (Loki sin configurar). `mode="post"` lo convierte en el composer superior del feed. |
-| `AttachMenu` | `attach-menu.tsx` | `MenuCard` con 3 opciones deshabilitadas + aviso `Los adjuntos llegan pronto`. Cierra con click afuera o Escape. `+` rota a ×. |
+| `Composer` | `composer.tsx` | Botón `+` 44px + pastilla con textarea 1–6 líneas, micrófono y enviar 36px (spring). Enter envía solo con puntero fino; `visualViewport` + `safe-area` para el teclado. Acepta `replyTo` (barra de cita con X), `edit` (precarga el texto y Enter guarda), `placeholder`, `disabled`, `wsId`/`mediaBucket` (subida de adjuntos) y `onDictate` (en el chat con Loki el micrófono dicta en vez de mandar un adjunto). `mode="post"` lo convierte en el composer superior del feed. |
+| `AttachMenu` | `attach-menu.tsx` | `MenuCard` con 4 opciones reales: Foto o video, Cámara, Archivo y Nota de voz. Cierra con click afuera o Escape. `+` rota a ×. |
 | `NewMessagesPill` | `new-messages-pill.tsx` | Pastilla flotante `Nuevos mensajes` + flecha, baja con scroll suave. |
 | `TypingIndicator` | `typing-indicator.tsx` | `X está escribiendo…` / `X e Y están…` / `Varias personas…` debajo de los mensajes (`aria-live=polite`). Nada si nadie escribe. |
 
@@ -110,6 +110,48 @@ typing, paging, reacciones ni hilos (todo eso es de los chats de espacio).
 |---|---|---|
 | `AiSuggestions` | `ai-suggestions.tsx` | Los tres chips de arranque, solo con el chat vacío y configurado. `onPick(text)` envía el texto como mensaje del usuario. |
 | `AiConnecting` | `ai-connecting.tsx` | Línea "Conectando con Loki…" (Sparkles + muted) mientras genera la Edge Function. |
+| `AiToolCard` | `ai-tool-card.tsx` | Tarjeta de confirmación: una acción o un plan con casilla por acción, cada una editable (título, fecha/hora, responsable, proyecto, ítems de lista). Enter confirma y Escape cancela. `UndoBar` debajo tras ejecutar. |
+| `ConvertSheet` | `convert-sheet.tsx` | Mensaje (o transcripción de una nota de voz) → tarea/evento/recordatorio, con prefill del analizador determinista y "Mejorar con Loki". |
+| `VoiceConvertSheet` | `voice-convert-sheet.tsx` | "Convertir en…" sobre una nota de voz: pide la transcripción y, cuando llega, abre el `ConvertSheet` con ese texto. |
+| `DictationBanner` | `dictation-banner.tsx` | El texto dictado, editable, encima de la tarjeta de plan, con "Recalcular con este texto". |
+| `DictateSheet` | `../ai/dictate-sheet.tsx` | Grabar (o subir un archivo) → subir a Storage → transcribir → revisar y enviar a Loki. |
+
+## Notas de voz y transcripción
+
+- **Grabar**: `src/components/media/voice-recorder.tsx` con dos modos.
+  `hold` (chat): mantener para grabar, soltar para enviar, deslizar a la
+  izquierda (>80 px) para cancelar. `toggle` (diálogos y escritorio): un click
+  empieza y el siguiente para. El MIME lo elige `pickVoiceMimeType()` (webm/opus
+  en Chrome, mp4 en Safari), con onda en vivo por `AnalyserNode`, cronómetro,
+  háptico al empezar y al terminar, tope de 5 minutos y corte automático si la
+  app pasa a segundo plano. Si el permiso se niega, el mensaje dice cómo
+  reactivarlo y siempre queda subir un archivo de audio.
+- **Subir**: `src/lib/media/upload.ts` sube a `chat-media` con progreso real y
+  cancelación, y guarda en el adjunto `path = {bucket}/{wsId}/{uuid}-{nombre}`.
+  Ese `path` es lo que permite transcribir después sin volver a subir nada.
+- **Transcribir (bajo demanda)**: `src/components/media/transcription-panel.tsx`
+  pinta "Ver transcripción" bajo cada nota de voz. Al tocarlo:
+  1. se busca si ya existe (no se vuelve a pagar);
+  2. si no, se comprueba `GET /health` de `loki-worker`; sin proveedor se
+     muestra "Transcripción sin configurar" **sin encolar nada**;
+  3. se inserta una fila en `audio_transcriptions`, y el trigger
+     `audio_transcriptions_enqueue` + `wake_ai_worker` despiertan a la Edge por
+     `pg_net`;
+  4. el texto llega por Realtime sobre la fila.
+- **Visibilidad**: la transcripción lleva `message_id` + `chat_id`, así que la
+  RLS la filtra con `can_access_chat` (en un DM, solo sus miembros). El CHECK
+  `storage_workspace_id(object_path) = workspace_id` ata cada transcripción al
+  espacio real del archivo.
+- **Dictar a Loki**: `src/components/ai/dictate-sheet.tsx` (botón del
+  composer en `/chat/loki-ia`, acción rápida "Dictar a Loki" con
+  `?dictar=1`, o `Ctrl/Cmd+Shift+D`). El texto transcrito entra por
+  `sendToLoki`, el mismo camino que escribirlo, y `DictationBanner` lo muestra
+  encima del plan para corregirlo antes de confirmar.
+- **Convertir una nota de voz**: "Convertir en…" detecta el adjunto de audio
+  (`firstTranscribable`) y abre `VoiceConvertSheet`, que transcribe y luego
+  convierte.
+- **Buscar**: `global_search` devuelve además el grupo `transcriptions`, que la
+  paleta pinta como "Notas de voz".
 
 ### Unitarios
 

@@ -152,16 +152,12 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
     );
   }
 
-  // Cabecera general: pastilla del espacio al centro + avatar a la derecha.
-  // En la lista de chats, avatar a la izquierda y Buscar/+ a la derecha.
+  // Cabecera general: avatar a la izquierda en todas las páginas,
+  // pastilla del espacio al centro y acciones a la derecha.
   return (
     <header className="sticky top-0 z-40 bg-gradient-to-b from-background via-background/70 to-transparent md:hidden">
       <div className="flex h-[68px] items-center justify-between gap-2 px-3">
-        {isChatList ? (
-          <ProfileMenu size={44} />
-        ) : (
-          <span aria-hidden="true" className="h-11 w-11 shrink-0" />
-        )}
+        <ProfileMenu size={44} />
         <div className="flex min-w-0 flex-1 justify-center">
           <MobileWorkspaceSwitcher />
         </div>
@@ -190,7 +186,6 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
         ) : (
           <div className="flex shrink-0 items-center">
             <NotificationsBell />
-            <ProfileMenu size={44} />
           </div>
         )}
       </div>

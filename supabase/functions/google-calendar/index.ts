@@ -736,6 +736,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const same = current.title === item.summary.slice(0, 120) &&
           current.description === item.description &&
           current.location === item.location &&
+          current.all_day === item.allDay &&
           new Date(current.starts_at).toISOString() === startsAt &&
           new Date(current.ends_at).toISOString() === endsAt;
         if (same) continue;
@@ -750,6 +751,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
               location: item.location,
               starts_at: startsAt,
               ends_at: endsAt,
+              all_day: item.allDay,
             },
           },
         );
@@ -764,7 +766,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
             description: item.description,
             starts_at: startsAt,
             ends_at: endsAt,
-            all_day: false,
+            all_day: item.allDay,
             location: item.location,
             created_by: uid,
             external_id: item.id,

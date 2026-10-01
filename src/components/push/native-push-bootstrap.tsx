@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { isNativePlatform, registerNativePush } from "@/lib/push/native";
+import { isNativePlatform, registerNativePush, setupNativeChrome } from "@/lib/push/native";
 import { useSessionStore } from "@/stores/session-store";
 
 /**
@@ -15,6 +15,18 @@ export function NativePushBootstrap(): React.JSX.Element | null {
   const router = useRouter();
   const uid = useSessionStore((state) => state.user?.uid ?? null);
   const doneRef = React.useRef(false);
+
+  // Marco del sistema (barra de estado): apenas monta, con o sin sesión.
+  React.useEffect(() => {
+    let cancelled = false;
+    void isNativePlatform().then((native) => {
+      if (!native || cancelled) return;
+      void setupNativeChrome().catch(() => undefined);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   React.useEffect(() => {
     if (uid === null || doneRef.current) return;

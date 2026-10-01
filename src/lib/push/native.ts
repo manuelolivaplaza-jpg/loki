@@ -63,6 +63,37 @@ export async function isNativePlatform(): Promise<boolean> {
   }
 }
 
+function rgbToHex(rgb: string): string | null {
+  const match = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/.exec(rgb);
+  if (match === null) return null;
+  const toHex = (n: number): string =>
+    Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0");
+  return `#${toHex(Number(match[1]))}${toHex(Number(match[2]))}${toHex(Number(match[3]))}`;
+}
+
+/**
+ * Marco nativo (Android): la barra de estado no se monta sobre la app
+ * (`overlay: false`, el WebView empieza debajo de la batería/hora) y toma
+ * el color de fondo del tema actual. Sin esto el `env(safe-area-inset-top)`
+ * vale 0 en el WebView y el contenido queda tapado.
+ */
+export async function setupNativeChrome(): Promise<void> {
+  const { Capacitor } = await import("@capacitor/core");
+  if (!Capacitor.isNativePlatform() || typeof document === "undefined") return;
+  const { StatusBar, Style } = await import("@capacitor/status-bar");
+  await StatusBar.setOverlaysWebView({ overlay: false });
+  const dark = document.documentElement.classList.contains("dark");
+  await StatusBar.setStyle({ style: dark ? Style.Dark : Style.Light });
+  const bg = rgbToHex(getComputedStyle(document.body).backgroundColor);
+  if (bg !== null) {
+    try {
+      await StatusBar.setBackgroundColor({ color: bg });
+    } catch {
+      // Versiones viejas sin soporte: el fondo del config basta.
+    }
+  }
+}
+
 /**
  * Registra el push nativo y deja los listeners puestos. Lanza en español si
  * no es nativo, si no hay permiso o si no hay sesión.

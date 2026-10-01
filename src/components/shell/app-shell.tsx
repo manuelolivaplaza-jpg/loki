@@ -90,7 +90,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
               className={cn(
                 hideBottomNav
                   ? "min-h-[calc(100dvh-48px)] pb-0 md:min-h-dvh"
-                  : "min-h-[calc(100dvh-48px)] pb-[calc(96px+env(safe-area-inset-bottom))] md:min-h-dvh",
+                  : "min-h-[calc(100dvh-48px)] pb-[calc(90px+env(safe-area-inset-bottom))] md:min-h-dvh",
                 // Rutas de chat: columnas a alto fijo con su propio scroll
                 // (una sola barra por columna, sin scroll de página).
                 isChatRoute ? "md:pb-0" : "md:pb-6",

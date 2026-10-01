@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   CalendarPlus,
@@ -29,14 +30,16 @@ export type QuickAction = {
   title: string;
   description: string;
   icon: LucideIcon;
+  /** Destino real en la app (invitar abre su diálogo en vez de navegar). */
+  href: string | null;
 };
 
 export const QUICK_ACTIONS: readonly QuickAction[] = [
-  { key: "idea", title: "Nueva idea", description: "Anota algo antes de olvidarlo", icon: Lightbulb },
-  { key: "evento", title: "Nuevo evento o fecha", description: "Agenda en el calendario", icon: CalendarPlus },
-  { key: "proyecto", title: "Nuevo proyecto", description: "Organiza tareas en un espacio", icon: FolderPlus },
-  { key: "post", title: "Compartir algo", description: "Publica un post en el espacio", icon: Send },
-  { key: "invitar", title: "Invitar miembro", description: "Suma a alguien a tu espacio", icon: UserPlus },
+  { key: "idea", title: "Nueva idea", description: "Anota algo antes de olvidarlo", icon: Lightbulb, href: "/ideas" },
+  { key: "evento", title: "Nuevo evento o fecha", description: "Agenda en el calendario", icon: CalendarPlus, href: "/calendario" },
+  { key: "proyecto", title: "Nuevo proyecto", description: "Organiza tareas en un espacio", icon: FolderPlus, href: "/proyectos" },
+  { key: "post", title: "Compartir algo", description: "Publica un post en el espacio", icon: Send, href: "/chat/publicaciones" },
+  { key: "invitar", title: "Invitar miembro", description: "Suma a alguien a tu espacio", icon: UserPlus, href: null },
 ];
 
 export function QuickActionsList({
@@ -134,6 +137,7 @@ export function QuickActionsMobileMenu({
   open: boolean;
   onClose: () => void;
 }): React.JSX.Element | null {
+  const router = useRouter();
   const [mounted, setMounted] = React.useState(false);
   const [selected, setSelected] = React.useState<QuickAction | null>(null);
 
@@ -177,12 +181,14 @@ export function QuickActionsMobileMenu({
               animate="show"
               exit="exit"
               style={{ transformOrigin: "50% 100%" }}
-              className="glass-sheet absolute inset-x-3 bottom-[calc(84px+env(safe-area-inset-bottom))] rounded-xl p-2 shadow-float"
+              className="glass-sheet absolute inset-x-3 bottom-[calc(78px+env(safe-area-inset-bottom))] rounded-xl p-2 shadow-float"
             >
               <QuickActionsList
                 onSelect={(action) => {
                   onClose();
-                  setSelected(action);
+                  // Invitar abre su diálogo; el resto navega a su sección.
+                  if (action.href === null) setSelected(action);
+                  else router.push(action.href);
                 }}
               />
             </motion.div>

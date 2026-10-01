@@ -70,7 +70,7 @@ export function BottomNav(): React.JSX.Element | null {
     <>
       <nav
         aria-label="Navegación principal"
-        className="fixed inset-x-3 bottom-[calc(12px+env(safe-area-inset-bottom))] z-40 md:hidden"
+        className="fixed inset-x-3 bottom-[calc(6px+env(safe-area-inset-bottom))] z-40 md:hidden"
       >
         <ul className="glass-bar grid h-15 grid-cols-5 items-center px-3">
           {left.map((item) => (

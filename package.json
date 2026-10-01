@@ -19,7 +19,8 @@
     "test:rls": "node scripts/test-rls.mjs",
     "test:mentions": "node tests/mentions.test.mjs",
     "test:preview": "node tests/preview.test.mjs",
-    "test:unit": "npm run test:mentions && npm run test:preview"
+    "test:intent": "node tests/intent.test.mjs",
+    "test:unit": "npm run test:mentions && npm run test:preview && npm run test:intent"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

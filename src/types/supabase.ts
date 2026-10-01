@@ -216,6 +216,51 @@ type AiMessageRow = {
   created_at: string;
 };
 
+type AiJobRow = {
+  id: string;
+  workspace_id: string;
+  requested_by: string | null;
+  type: string;
+  payload: Json;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  idempotency_key: string | null;
+  result: Json | null;
+  error: string | null;
+  run_after: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type AiSpaceUsageRow = {
+  workspace_id: string;
+  day: string;
+  units: number;
+  calls: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type AiSpaceUsageDetailRow = {
+  workspace_id: string;
+  day: string;
+  user_id: string | null;
+  job_type: string;
+  units: number;
+  calls: number;
+};
+
+type AiSpaceLimitRow = {
+  workspace_id: string;
+  daily_units: number | null;
+  monthly_units: number | null;
+  updated_by: string | null;
+  updated_at: string;
+};
+
 type PushTokenRow = {
   user_id: string;
   token: string;
@@ -287,6 +332,104 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      ai_jobs: {
+        Row: AiJobRow;
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          requested_by?: string | null;
+          type: string;
+          payload?: Json;
+          status?: string;
+          attempts?: number;
+          max_attempts?: number;
+          idempotency_key?: string | null;
+          result?: Json | null;
+          error?: string | null;
+          run_after?: string | null;
+          started_at?: string | null;
+          finished_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          requested_by?: string | null;
+          type?: string;
+          payload?: Json;
+          status?: string;
+          attempts?: number;
+          max_attempts?: number;
+          idempotency_key?: string | null;
+          result?: Json | null;
+          error?: string | null;
+          run_after?: string | null;
+          started_at?: string | null;
+          finished_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      ai_space_limits: {
+        Row: AiSpaceLimitRow;
+        Insert: {
+          workspace_id: string;
+          daily_units?: number | null;
+          monthly_units?: number | null;
+          updated_by?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          workspace_id?: string;
+          daily_units?: number | null;
+          monthly_units?: number | null;
+          updated_by?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      ai_space_usage: {
+        Row: AiSpaceUsageRow;
+        Insert: {
+          workspace_id: string;
+          day?: string;
+          units?: number;
+          calls?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          workspace_id?: string;
+          day?: string;
+          units?: number;
+          calls?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      ai_space_usage_detail: {
+        Row: AiSpaceUsageDetailRow;
+        Insert: {
+          workspace_id: string;
+          day?: string;
+          user_id?: string | null;
+          job_type?: string;
+          units?: number;
+          calls?: number;
+        };
+        Update: {
+          workspace_id?: string;
+          day?: string;
+          user_id?: string | null;
+          job_type?: string;
+          units?: number;
+          calls?: number;
+        };
+        Relationships: [];
       };
       chat_reads: {
         Row: ChatReadRow;
@@ -932,6 +1075,21 @@ export type Database = {
       is_owner: {
         Args: {
           p_workspace_id: string;
+        };
+        Returns: boolean;
+      };
+      reserve_ai_quota: {
+        Args: {
+          p_workspace_id: string;
+          p_user_id: string;
+          p_job_type: string;
+          p_units: number;
+        };
+        Returns: Json;
+      };
+      retry_ai_job: {
+        Args: {
+          p_job_id: string;
         };
         Returns: boolean;
       };

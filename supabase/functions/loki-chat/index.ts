@@ -15,6 +15,11 @@
 //   LLM_PROVIDER=openai|anthropic|gemini, LLM_MODEL, LLM_API_KEY,
 //   LLM_BASE_URL (solo openai-compatible: Groq, OpenRouter, Ollama),
 //   AI_DAILY_LIMIT (default 50).
+// Niveles por tarea (caen a LLM_MODEL si no se configuran):
+//   LLM_MODEL_FAST  (barato y rápido: intenciones, resúmenes cortos)
+//   LLM_MODEL_SMART (potente: respuestas con datos, resúmenes largos)
+// Regla: determinista primero, barato después, potente solo si la tarea
+// lo exige (datos que razonar, texto largo).
 // Sin clave: 503 { code: "not_configured" }. Cuota superada: 429 {code:"limit"}.
 //
 // Protocolo SSE extendido: además de {delta}, una acción que modifica datos
@@ -28,12 +33,16 @@
 // SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY.
 // =============================================================================
 
+import { analyzeIntent } from "../_shared/intent.ts";
+
 const SUPABASE_URL = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 const PROVIDER = (Deno.env.get("LLM_PROVIDER") ?? "").trim().toLowerCase();
 const MODEL = (Deno.env.get("LLM_MODEL") ?? "").trim();
+const MODEL_FAST = (Deno.env.get("LLM_MODEL_FAST") ?? "").trim() || MODEL;
+const MODEL_SMART = (Deno.env.get("LLM_MODEL_SMART") ?? "").trim() || MODEL;
 const API_KEY = (Deno.env.get("LLM_API_KEY") ?? "").trim();
 const BASE_URL = (Deno.env.get("LLM_BASE_URL") ?? "https://api.openai.com/v1").replace(
   /\/+$/,
@@ -58,6 +67,17 @@ const SSE_HEADERS: Record<string, string> = {
   "cache-control": "no-cache",
   connection: "keep-alive",
 };
+
+type ModelTier = "fast" | "smart";
+
+/**
+ * Modelo según nivel: barato para clasificar/resumir poco, potente para
+ * razonar sobre datos o texto largo. Cada nivel cae a LLM_MODEL.
+ */
+function modelFor(tier: ModelTier, fallback: string): string {
+  const pick = tier === "smart" ? MODEL_SMART : MODEL_FAST;
+  return pick === "" ? fallback : pick;
+}
 
 // --- Límite de peticiones (T35) -------------------------------------------------
 // Cubo en memoria por IP+JWT: 30 req/min. Al superarlas, 429 amable en
@@ -238,6 +258,39 @@ async function bumpUsage(uid: string): Promise<UsageResult> {
   } catch {
     // Sin base disponible no se bloquea la conversación.
     return { allowed: true, count: 0 };
+  }
+}
+
+type QuotaResult = { allowed: boolean; reason: string };
+
+/**
+ * Reserva cuota antes de llamar al LLM: espacio (día/mes) + usuario (día).
+ * 1 unidad ≈ 250 caracteres de ida. Sin base disponible no bloquea.
+ */
+async function reserveQuota(
+  workspaceId: string | null,
+  uid: string,
+  units: number,
+): Promise<QuotaResult> {
+  if (workspaceId === null) return { ...(await bumpUsage(uid)), reason: "ok" };
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/reserve_ai_quota`, {
+      method: "POST",
+      headers: svcHeaders(),
+      body: JSON.stringify({
+        p_workspace_id: workspaceId,
+        p_user_id: uid,
+        p_job_type: "chat",
+        p_units: units,
+      }),
+    });
+    if (!res.ok) return { allowed: true, reason: "ok" };
+    const body: unknown = await res.json();
+    if (!isRecord(body)) return { allowed: true, reason: "ok" };
+    const reason = typeof body["reason"] === "string" ? body["reason"] : "ok";
+    return { allowed: body["allowed"] === true, reason };
+  } catch {
+    return { allowed: true, reason: "ok" };
   }
 }
 
@@ -686,7 +739,7 @@ async function openAiFirstPass(messages: ChatMessage[]): Promise<{ text: string;
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${API_KEY}` },
     body: JSON.stringify({
-      model: MODEL === "" ? "gpt-4o-mini" : MODEL,
+      model: modelFor("fast", "gpt-4o-mini"),
       messages,
       tools: openAiTools(),
       tool_choice: "auto",
@@ -724,7 +777,7 @@ async function anthropicFirstPass(messages: ChatMessage[]): Promise<{ text: stri
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: MODEL === "" ? "claude-3-5-haiku-latest" : MODEL,
+      model: modelFor("fast", "claude-3-5-haiku-latest"),
       max_tokens: 1024,
       system: system === "" ? SYSTEM_PROMPT : system,
       messages: rest,
@@ -758,7 +811,7 @@ async function geminiFirstPass(messages: ChatMessage[]): Promise<{ text: string;
   const contents = messages
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
-  const model = MODEL === "" ? "gemini-2.0-flash" : MODEL;
+  const model = modelFor("fast", "gemini-2.0-flash");
   const base = BASE_URL === "https://api.openai.com/v1"
     ? "https://generativelanguage.googleapis.com"
     : BASE_URL;
@@ -832,7 +885,7 @@ async function completeText(messages: ChatMessage[]): Promise<string> {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: MODEL === "" ? "claude-3-5-haiku-latest" : MODEL,
+        model: modelFor("fast", "claude-3-5-haiku-latest"),
         max_tokens: 256,
         system,
         messages: rest,
@@ -855,7 +908,7 @@ async function completeText(messages: ChatMessage[]): Promise<string> {
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     }));
-    const model = MODEL === "" ? "gemini-2.0-flash" : MODEL;
+    const model = modelFor("fast", "gemini-2.0-flash");
     const base = BASE_URL === "https://api.openai.com/v1"
       ? "https://generativelanguage.googleapis.com"
       : BASE_URL;
@@ -885,7 +938,7 @@ async function completeText(messages: ChatMessage[]): Promise<string> {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${API_KEY}` },
     body: JSON.stringify({
-      model: MODEL === "" ? "gpt-4o-mini" : MODEL,
+      model: modelFor("fast", "gpt-4o-mini"),
       messages,
       max_tokens: 256,
     }),
@@ -1091,7 +1144,11 @@ function openAiDelta(payload: string, onDelta: DeltaHandler): void {
   }
 }
 
-async function streamOpenAi(messages: ChatMessage[], onDelta: DeltaHandler): Promise<void> {
+async function streamOpenAi(
+  messages: ChatMessage[],
+  onDelta: DeltaHandler,
+  tier: ModelTier = "fast",
+): Promise<void> {
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -1099,7 +1156,7 @@ async function streamOpenAi(messages: ChatMessage[], onDelta: DeltaHandler): Pro
       authorization: `Bearer ${API_KEY}`,
     },
     body: JSON.stringify({
-      model: MODEL === "" ? "gpt-4o-mini" : MODEL,
+      model: modelFor(tier, "gpt-4o-mini"),
       messages,
       stream: true,
     }),
@@ -1113,6 +1170,7 @@ async function streamOpenAi(messages: ChatMessage[], onDelta: DeltaHandler): Pro
 async function streamAnthropic(
   messages: ChatMessage[],
   onDelta: DeltaHandler,
+  tier: ModelTier = "fast",
 ): Promise<void> {
   const system = messages
     .filter((m) => m.role === "system")
@@ -1129,7 +1187,7 @@ async function streamAnthropic(
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: MODEL === "" ? "claude-3-5-haiku-latest" : MODEL,
+      model: modelFor(tier, "claude-3-5-haiku-latest"),
       max_tokens: 1024,
       system: system === "" ? SYSTEM_PROMPT : system,
       messages: rest,
@@ -1157,6 +1215,7 @@ async function streamAnthropic(
 async function streamGemini(
   messages: ChatMessage[],
   onDelta: DeltaHandler,
+  tier: ModelTier = "fast",
 ): Promise<void> {
   const system = messages
     .filter((m) => m.role === "system")
@@ -1165,7 +1224,7 @@ async function streamGemini(
   const contents = messages
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
-  const model = MODEL === "" ? "gemini-2.0-flash" : MODEL;
+  const model = modelFor(tier, "gemini-2.0-flash");
   const base = BASE_URL === "https://api.openai.com/v1"
     ? "https://generativelanguage.googleapis.com"
     : BASE_URL;
@@ -1202,15 +1261,16 @@ async function streamFromProvider(
   history: ChatMessage[],
   prompt: string,
   onDelta: DeltaHandler,
+  tier: ModelTier = "fast",
 ): Promise<void> {
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM_PROMPT },
     ...history,
     { role: "user", content: prompt },
   ];
-  if (PROVIDER === "anthropic") return streamAnthropic(messages, onDelta);
-  if (PROVIDER === "gemini") return streamGemini(messages, onDelta);
-  return streamOpenAi(messages, onDelta);
+  if (PROVIDER === "anthropic") return streamAnthropic(messages, onDelta, tier);
+  if (PROVIDER === "gemini") return streamGemini(messages, onDelta, tier);
+  return streamOpenAi(messages, onDelta, tier);
 }
 
 // --- Handler ------------------------------------------------------------------
@@ -1323,6 +1383,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       configured: isConfigured(),
       provider: isConfigured() ? PROVIDER : "none",
       model: isConfigured() ? MODEL : "",
+      fast: isConfigured() ? MODEL_FAST : "",
+      smart: isConfigured() ? MODEL_SMART : "",
     });
   }
   if (req.method !== "POST") {
@@ -1386,9 +1448,63 @@ Deno.serve(async (req: Request): Promise<Response> => {
     });
   }
 
-  // --- Primer POST: cuota diaria ------------------------------------------------
-  const usage = await bumpUsage(uid);
-  if (!usage.allowed) {
+  // --- Vía determinista (sin modelo): verbo + fecha clara en español ---------
+  // Si el analizador está seguro (p. ej. "recuérdame mañana a las 9 sacar
+  // la basura"), se arma la herramienta directo y no se gasta cuota ni LLM.
+  if (input.confirm === undefined) {
+    const quick = analyzeIntent(input.text);
+    if (
+      quick !== null && quick.confident && quick.dateISO !== null &&
+      (quick.action === "remind" || quick.action === "create_event")
+    ) {
+      if (input.mode === "mention") {
+        const member = await isMember(input.workspaceId, uid);
+        if (!member) return json(403, { code: "forbidden" });
+      }
+      const tool = quick.action === "remind"
+        ? {
+          name: "create_reminder",
+          args: { title: quick.title, remindAt: quick.dateISO },
+        }
+        : {
+          name: "create_event",
+          args: { title: quick.title, startsAt: quick.dateISO },
+        };
+      const pending = {
+        id: crypto.randomUUID(),
+        action: tool.name,
+        label: actionLabel(tool.name),
+        params: pendingParams(tool.args, {
+          workspaceId: input.mode === "mention" ? input.workspaceId : undefined,
+          chatId: input.mode === "mention" ? input.chatId : undefined,
+        }),
+      };
+      return sseReplyStream(null, async (_send, sendPending) => {
+        sendPending(pending);
+      });
+    }
+  }
+
+  // --- Primer POST: cuota (espacio + usuario) ---------------------------------
+  const quotaWs = input.mode === "mention"
+    ? input.workspaceId
+    : await defaultWorkspaceId(uid, token);
+  const quotaUnits = Math.max(1, Math.ceil(input.text.length / 250));
+  const quota = await reserveQuota(quotaWs, uid, quotaUnits);
+  if (!quota.allowed) {
+    if (quota.reason === "space_daily") {
+      return json(429, {
+        code: "limit",
+        message:
+          "Este espacio llegó a su límite de IA de hoy. Lo simple (recordatorios con fecha clara) sigue funcionando.",
+      });
+    }
+    if (quota.reason === "space_monthly") {
+      return json(429, {
+        code: "limit",
+        message: "Este espacio llegó a su límite de IA del mes.",
+      });
+    }
     return json(429, {
       code: "limit",
       message: "Llegaste al límite diario de Loki IA. Vuelve mañana.",
@@ -1453,13 +1569,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   // --- Sin herramienta: stream directo -------------------------------------------
+  // Charla corta con el barato; texto largo (razonar) con el potente.
+  const plainTier: ModelTier = prompt.length > 1500 ? "smart" : "fast";
   if (first.tool === null) {
     return sseReplyStream(save, async (send) => {
       if (first.text !== "") {
         send(first.text);
         return;
       }
-      await streamFromProvider(context, prompt, send);
+      await streamFromProvider(context, prompt, send, plainTier);
     }, scheduleSummary);
   }
 
@@ -1467,7 +1585,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const known = TOOLS.some((t) => t.name === tool.name);
   if (!known) {
     return sseReplyStream(save, async (send) => {
-      await streamFromProvider(context, prompt, send);
+      await streamFromProvider(context, prompt, send, plainTier);
     });
   }
 
@@ -1506,9 +1624,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   // --- Lectura: ejecuta con el JWT y responde con los datos -----------------------
+  // Razonar sobre datos reales pide el modelo potente.
   const toolResult = await execReadTool(tool.name, toolArgs, token);
   const enriched = `${prompt}\n\n[Datos de ${tool.name}: ${toolResult}]`;
   return sseReplyStream(save, async (send) => {
-    await streamFromProvider(context, enriched, send);
+    await streamFromProvider(context, enriched, send, "smart");
   }, scheduleSummary);
 });

@@ -15,6 +15,9 @@ import { isPushConfigured, registerPushToken } from "@/lib/push/fcm";
 import { isNativePlatform, registerNativePush } from "@/lib/push/native";
 import { DEFAULT_PREFS } from "@/lib/data/notifications";
 import { GcalSection } from "@/components/calendar/gcal-section";
+import { AiUsageSection } from "@/components/ai/ai-usage-section";
+import { useMembers } from "@/hooks/use-chat";
+import { useWorkspaces } from "@/stores/workspace-store";
 import { MembersSection } from "@/components/members/members-section";
 import {
   useNotificationPrefs,
@@ -46,6 +49,10 @@ export default function ConfiguracionPage(): React.JSX.Element {
   // "Sin configurar". De solo lectura desde el cliente.
   const [lokiConfigured, setLokiConfigured] = React.useState<boolean | null>(null);
   const user = useSessionStore((state) => state.user);
+  const { currentWorkspaceId } = useWorkspaces();
+  const membersQuery = useMembers(currentWorkspaceId);
+  const myRole = (membersQuery.data ?? []).find((m) => m.uid === user?.uid)?.role ?? "member";
+  const isSpaceAdmin = myRole === "owner" || myRole === "admin";
   const prefsQuery = useNotificationPrefs(user?.uid ?? null);
   const savePrefs = useSaveNotificationPrefs();
   const [prefsError, setPrefsError] = React.useState<string | null>(null);
@@ -307,6 +314,14 @@ export default function ConfiguracionPage(): React.JSX.Element {
       </section>
 
       <GcalSection />
+
+      {user !== null && currentWorkspaceId !== null ? (
+        <AiUsageSection
+          wsId={currentWorkspaceId}
+          uid={user.uid}
+          isAdmin={isSpaceAdmin}
+        />
+      ) : null}
 
       <MembersSection />
 

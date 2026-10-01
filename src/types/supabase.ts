@@ -137,6 +137,8 @@ type NotificationPrefsRow = {
   event_reminder: boolean;
   invite: boolean;
   ai_alert: boolean;
+  list: boolean;
+  poll: boolean;
   quiet_start: string | null;
   quiet_end: string | null;
   updated_at: string;
@@ -328,6 +330,42 @@ type PushTokenRow = {
   token: string;
   platform: string;
   updated_at: string;
+};
+
+type PollRow = {
+  id: string;
+  message_id: string;
+  workspace_id: string;
+  chat_id: string;
+  question: string;
+  kind: string;
+  settings: Json;
+  closes_at: string | null;
+  closed_at: string | null;
+  closed_by: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type PollOptionRow = {
+  id: string;
+  poll_id: string;
+  workspace_id: string;
+  text: string;
+  starts_at: string | null;
+  ends_at: string | null;
+  position: number;
+  added_by: string | null;
+  created_at: string;
+};
+
+type PollVoteRow = {
+  id: string;
+  poll_id: string;
+  option_id: string;
+  user_id: string;
+  created_at: string;
 };
 
 type UserPresenceRow = {
@@ -1037,6 +1075,8 @@ export type Database = {
           event_reminder?: boolean;
           invite?: boolean;
           ai_alert?: boolean;
+          list?: boolean;
+          poll?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
@@ -1051,9 +1091,89 @@ export type Database = {
           event_reminder?: boolean;
           invite?: boolean;
           ai_alert?: boolean;
+          list?: boolean;
+          poll?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
+        };
+        Relationships: [];
+      };
+      polls: {
+        Row: PollRow;
+        Insert: {
+          id?: string;
+          message_id: string;
+          workspace_id: string;
+          chat_id: string;
+          question: string;
+          kind?: string;
+          settings?: Json;
+          closes_at?: string | null;
+          closed_at?: string | null;
+          closed_by?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          message_id?: string;
+          workspace_id?: string;
+          chat_id?: string;
+          question?: string;
+          kind?: string;
+          settings?: Json;
+          closes_at?: string | null;
+          closed_at?: string | null;
+          closed_by?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      poll_options: {
+        Row: PollOptionRow;
+        Insert: {
+          id?: string;
+          poll_id: string;
+          workspace_id: string;
+          text: string;
+          starts_at?: string | null;
+          ends_at?: string | null;
+          position?: number;
+          added_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          poll_id?: string;
+          workspace_id?: string;
+          text?: string;
+          starts_at?: string | null;
+          ends_at?: string | null;
+          position?: number;
+          added_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      poll_votes: {
+        Row: PollVoteRow;
+        Insert: {
+          id?: string;
+          poll_id: string;
+          option_id: string;
+          user_id?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          poll_id?: string;
+          option_id?: string;
+          user_id?: string;
+          created_at?: string;
         };
         Relationships: [];
       };
@@ -1302,6 +1422,31 @@ export type Database = {
       retry_ai_job: {
         Args: {
           p_job_id: string;
+        };
+        Returns: boolean;
+      };
+      poll_results: {
+        Args: {
+          p_poll_id: string;
+        };
+        Returns: Json;
+      };
+      cast_poll_vote: {
+        Args: {
+          p_poll_id: string;
+          p_option_ids: string[];
+        };
+        Returns: boolean;
+      };
+      poll_option_busy: {
+        Args: {
+          p_poll_id: string;
+        };
+        Returns: Json;
+      };
+      close_poll: {
+        Args: {
+          p_poll_id: string;
         };
         Returns: boolean;
       };

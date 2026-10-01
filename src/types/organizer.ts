@@ -95,7 +95,9 @@ export type NotificationType =
   | "task_due"
   | "event_reminder"
   | "invite"
-  | "ai_alert";
+  | "ai_alert"
+  | "list"
+  | "poll";
 
 export interface NotificationItem {
   id: string;
@@ -117,7 +119,9 @@ export type NotificationTypeKey =
   | "task_due"
   | "event_reminder"
   | "invite"
-  | "ai_alert";
+  | "ai_alert"
+  | "list"
+  | "poll";
 
 export interface NotificationPrefs {
   mention: boolean;
@@ -128,6 +132,8 @@ export interface NotificationPrefs {
   event_reminder: boolean;
   invite: boolean;
   ai_alert: boolean;
+  list: boolean;
+  poll: boolean;
   quietStart: string | null;
   quietEnd: string | null;
 }
@@ -188,4 +194,95 @@ export interface ListWatcher {
   listId: string;
   onAdd: boolean;
   onComplete: boolean;
+}
+
+// --- Encuestas (polls) ------------------------------------------------------------
+
+/** Opción única, múltiple, sí/no rápido o elegir fecha. */
+export type PollKind = "single" | "multiple" | "yesno" | "date";
+
+/** Quién puede cerrar la encuesta además del creador y los admins. */
+export type PollCloseBy = "creator" | "anyone";
+
+export interface PollSettings {
+  /** Las barras se ven igual, pero nunca quién votó. */
+  anonymous: boolean;
+  /** Que el resto pueda agregar opciones mientras esté abierta. */
+  allowSuggestions: boolean;
+  /** Aviso único a quien no vote antes del cierre. */
+  remindMissing: boolean;
+  closeBy: PollCloseBy;
+}
+
+export interface PollOptionView {
+  id: string;
+  text: string;
+  /** Rango propuesto (solo kind 'date'). */
+  startsAt: Timestamp | null;
+  endsAt: Timestamp | null;
+  position: number;
+  addedBy: string | null;
+  votes: number;
+  /** True si esta opción es la que elegí (siempre, también en las anónimas). */
+  mine: boolean;
+  /** Uids que voting: vacío en las anónimas (ni la RLS ni la RPC lo dan). */
+  voters: string[];
+  /** Miembros con algo agendado a esa hora (kind 'date'); null si no aplica. */
+  busy: number | null;
+}
+
+/**
+ * Estado completo de la encuesta que devuelve `poll_results`: lo que la tarjeta
+ * pinta. El resultado sale de los votos al leer; como al cerrar ya no se puede
+ * votar, queda fijado sin desnormalizar nada.
+ */
+export interface PollView {
+  id: string;
+  messageId: string;
+  workspaceId: string;
+  chatId: string;
+  question: string;
+  kind: PollKind;
+  settings: PollSettings;
+  closesAt: Timestamp | null;
+  closedAt: Timestamp | null;
+  closedBy: string | null;
+  createdBy: string | null;
+  createdAt: Timestamp;
+  anonymous: boolean;
+  allowSuggestions: boolean;
+  remindMissing: boolean;
+  closeBy: PollCloseBy;
+  isOpen: boolean;
+  /** Puedo cerrar/editar (creador, admin o closeBy = anyone). */
+  canManage: boolean;
+  /** Puedo agregar opciones ahora mismo. */
+  canSuggest: boolean;
+  options: PollOptionView[];
+  maxVotes: number;
+  /** Ids ganadores (vacío si no hay votos o hay empate). */
+  winners: string[];
+  /** Empate con votos: lo muestra, decide quien creó la encuesta. */
+  tied: boolean;
+  totalVotes: number;
+  membersCount: number;
+  /** Cuántos del padrón todavía no han votado. */
+  missingCount: number;
+  /** Uids que faltan (vacío en las anónimas). */
+  missing: string[];
+}
+
+/** Opción en construcción (crear encuesta o editar). */
+export interface PollDraftOption {
+  text: string;
+  startsAt: Date | null;
+  endsAt: Date | null;
+}
+
+export interface NewPollInput {
+  question: string;
+  kind: PollKind;
+  settings: PollSettings;
+  closesAt: Date | null;
+  options: PollDraftOption[];
 }

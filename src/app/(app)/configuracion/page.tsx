@@ -108,6 +108,27 @@ export default function ConfiguracionPage(): React.JSX.Element {
 
   React.useEffect(() => {
     setMounted(true);
+    // El interruptor refleja el estado real: permiso ya otorgado antes.
+    void (async () => {
+      try {
+        if (await isNativePlatform()) {
+          const { PushNotifications } = await import("@capacitor/push-notifications");
+          const current = await PushNotifications.checkPermissions();
+          if (current.receive === "granted") setPushEnabled(true);
+          return;
+        }
+      } catch {
+        return;
+      }
+      if (
+        typeof window !== "undefined" &&
+        "Notification" in window &&
+        Notification.permission === "granted" &&
+        isPushConfigured()
+      ) {
+        setPushEnabled(true);
+      }
+    })();
   }, []);
 
   const themeLabel =

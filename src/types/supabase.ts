@@ -78,6 +78,7 @@ type ProjectRow = {
   status: string;
   due_date: string | null;
   created_by: string | null;
+  is_system: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -717,6 +718,7 @@ export type Database = {
           status?: string;
           due_date?: string | null;
           created_by?: string | null;
+          is_system?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -730,6 +732,7 @@ export type Database = {
           status?: string;
           due_date?: string | null;
           created_by?: string | null;
+          is_system?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -1056,6 +1059,22 @@ export type Database = {
       ensure_posts_chat: {
         Args: {
           p_workspace_id: string;
+        };
+        Returns: boolean;
+      };
+      ensure_inbox_project: {
+        Args: {
+          p_workspace_id: string;
+        };
+        Returns: string;
+      };
+      log_loki_action: {
+        Args: {
+          p_workspace_id: string;
+          p_actor_id: string;
+          p_target_id: string;
+          p_action: string;
+          p_limit_hour: number;
         };
         Returns: boolean;
       };

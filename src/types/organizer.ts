@@ -46,6 +46,8 @@ export interface ProjectItem {
   createdBy: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+  /** True en la Bandeja del espacio (no se borra ni se archiva). */
+  isSystem: boolean;
   /** Hechas/total de tareas raíz (viene de `project_progress`). */
   done: number;
   total: number;

@@ -83,7 +83,7 @@ function toIdea(row: IdeaRow): IdeaItem {
 // --- Proyectos -----------------------------------------------------------------
 
 const PROJECT_COLUMNS =
-  "id, workspace_id, name, description, emoji, color, status, due_date, created_by, created_at, updated_at";
+  "id, workspace_id, name, description, emoji, color, status, due_date, created_by, is_system, created_at, updated_at";
 
 function toProject(
   row: ProjectRow,
@@ -102,6 +102,7 @@ function toProject(
     createdBy: row.created_by ?? "",
     createdAt: toTimestamp(row.created_at),
     updatedAt: toTimestamp(row.updated_at),
+    isSystem: row.is_system ?? false,
     done: entry?.done ?? 0,
     total: entry?.total ?? 0,
   };
@@ -113,6 +114,8 @@ export async function listProjects(wsId: string): Promise<ProjectItem[]> {
     .from("projects")
     .select(PROJECT_COLUMNS)
     .eq("workspace_id", wsId)
+    // La Bandeja primero, luego por creación.
+    .order("is_system", { ascending: false })
     .order("created_at", { ascending: true });
   if (error !== null) {
     throw new Error("No se pudieron cargar los proyectos.");

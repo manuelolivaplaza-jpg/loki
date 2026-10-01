@@ -4,7 +4,7 @@ import * as React from "react";
 import { MessageCircle, Sparkles } from "lucide-react";
 import { AiConnecting } from "@/components/chat/ai-connecting";
 import { AiSuggestions } from "@/components/chat/ai-suggestions";
-import { AiToolCard } from "@/components/chat/ai-tool-card";
+import { AiToolCard, UndoBar, type CardConfirmPayload } from "@/components/chat/ai-tool-card";
 import { Composer } from "@/components/chat/composer";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { MessageList } from "@/components/chat/message-list";
@@ -48,13 +48,18 @@ import {
 import {
   getLokiStatus,
   LOKI_NOT_CONFIGURED_TITLE,
+  LokiError,
 } from "@/lib/ai/loki";
 import {
   confirmLokiAction,
   sendLokiWithTools,
   type AiPendingAction,
+  type CreatedResult,
   type LokiConfirmInput,
+  type UndoItem,
 } from "@/lib/ai/tools-client";
+import { useProjects } from "@/hooks/use-organizer";
+import { getSupabaseClient } from "@/lib/supabase/client";
 import { useMessageStatusStore } from "@/lib/chat/message-status";
 import { Timestamp } from "@/lib/timestamp";
 import { useProfileStore } from "@/stores/profile-store";
@@ -84,7 +89,7 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   // El chat de Loki no tiene typing de otras personas: la lista y los hilos
   // son de los chats de espacio (T14).
   const isLoki = chatId === AI_CHAT_ID;
-  const { currentWorkspaceId } = useWorkspaces();
+  const { currentWorkspaceId, workspaces } = useWorkspaces();
   const user = useSessionStore((state) => state.user);
   const profile = useProfileStore((state) => state.profile);
   const chatsQuery = useChats(isLoki ? null : currentWorkspaceId);
@@ -119,6 +124,8 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   // espacio (el contexto para el segundo POST vive en `toolCtxRef`).
   const [toolPending, setToolPending] = React.useState<AiPendingAction | null>(null);
   const [toolSending, setToolSending] = React.useState(false);
+  // Resultado con enlaces + deshacer tras confirmar (protocolo `created`).
+  const [created, setCreated] = React.useState<CreatedResult | null>(null);
   type ToolCtx =
     | { mode: "personal" }
     | { mode: "mention"; workspaceId: string; chatId: string; threadParentId?: string };
@@ -344,18 +351,37 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
 
   /** Confirma o cancela la acción pendiente (segundo POST con `confirm`). */
   const handleToolConfirm = React.useCallback(
-    (ok: boolean) => {
+    (ok: boolean, payload?: CardConfirmPayload) => {
       const pending = toolPending;
       const ctx = toolCtxRef.current;
       if (pending === null || ctx === null) return;
       setToolPending(null);
       setToolSending(true);
+      setCreated(null);
       if (isLoki) setStreamingText("");
+      // Espacio cambiado en la tarjeta (modo personal): se inyecta en los
+      // parámetros de la acción única y de cada acción incluida del plan.
+      const overrideWs = payload?.workspaceId;
+      const withWs = (
+        params: Record<string, unknown>,
+      ): Record<string, unknown> =>
+        overrideWs === undefined || overrideWs === ""
+          ? params
+          : { ...params, workspaceId: overrideWs };
       const confirm = {
         id: pending.id,
         action: pending.action,
-        params: pending.params,
+        params: withWs(payload?.params ?? pending.params),
         ok,
+        ...(payload?.actions !== undefined
+          ? {
+            actions: payload.actions.map((item) => ({
+              action: item.action,
+              params: withWs(item.params),
+              include: item.include,
+            })),
+          }
+          : {}),
       };
       const input: LokiConfirmInput =
         ctx.mode === "mention"
@@ -387,6 +413,47 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
     [toolPending, isLoki],
   );
 
+  /** Deshace lo recién creado por Loki (tarea, evento o aviso). */
+  const handleUndo = React.useCallback(
+    async (items: UndoItem[]) => {
+      const client = getSupabaseClient();
+      for (const item of items) {
+        if (item.kind === "task") {
+          const { error } = await client.from("tasks").delete().eq("id", item.id);
+          if (error !== null) {
+            setSendError("No se pudo deshacer todo. Revisa la pantalla correspondiente.");
+            return;
+          }
+        } else if (item.kind === "event") {
+          const { error } = await client.from("events").delete().eq("id", item.id);
+          if (error !== null) {
+            setSendError("No se pudo deshacer todo. Revisa la pantalla correspondiente.");
+            return;
+          }
+        } else {
+          const { error } = await client
+            .from("messages")
+            .update({ deleted: true })
+            .eq("id", item.id);
+          if (error !== null) {
+            setSendError("No se pudo deshacer todo. Revisa la pantalla correspondiente.");
+            return;
+          }
+        }
+      }
+    },
+    [],
+  );
+
+  /** Datos para los selectores de la tarjeta (responsables y proyectos). */
+  const toolWsId = React.useMemo(() => {
+    if (toolCtxRef.current?.mode === "mention") return toolCtxRef.current.workspaceId;
+    const fromParams = toolPending?.params["workspaceId"];
+    if (typeof fromParams === "string" && fromParams !== "") return fromParams;
+    return currentWorkspaceId;
+  }, [toolPending, currentWorkspaceId]);
+  const toolProjectsQuery = useProjects(toolPending === null ? null : toolWsId);
+
   const handleSend = React.useCallback(
     (text: string, mentions: string[], attachments?: MessageAttachment[]) => {
       setSendError(null);
@@ -411,11 +478,8 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
                 if (el !== null) scrollToBottom(el, false);
               });
               void (async () => {
-                const configured = await ensureLokiConfigured();
-                if (!configured) {
-                  setSendError(LOKI_NOT_CONFIGURED_TITLE);
-                  return;
-                }
+                // Sin proveedor solo sale la vía determinista (la Edge la
+                // ofrece igual); el resto responde 503 y se avisa.
                 setAiConnecting(true);
                 setStreamingText("");
                 try {
@@ -429,12 +493,19 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
                         toolCtxRef.current = { mode: "personal" };
                         setToolPending(action);
                       },
+                      onCreated: (result) => {
+                        setCreated(result);
+                      },
                     },
                   );
                 } catch (error: unknown) {
-                  setSendError(
-                    error instanceof Error ? error.message : "Loki no pudo responder.",
-                  );
+                  if (error instanceof LokiError && error.code === "not_configured") {
+                    setSendError(LOKI_NOT_CONFIGURED_TITLE);
+                  } else {
+                    setSendError(
+                      error instanceof Error ? error.message : "Loki no pudo responder.",
+                    );
+                  }
                 } finally {
                   setAiConnecting(false);
                   setStreamingText(null);
@@ -484,23 +555,6 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
               const mentionWsId = wsForLive;
               const mentionChatId = chatForLive;
               void (async () => {
-                const configured = await ensureLokiConfigured();
-                if (!configured) {
-                  const aviso = buildLokiDisabledMessage(currentUid, authorName);
-                  sendMutation.mutate(
-                    {
-                      authorId: aviso.authorId,
-                      authorName: aviso.authorName,
-                      text: aviso.text,
-                      mentions: aviso.mentions,
-                      type: aviso.type,
-                    },
-                    {
-                      onError: (error) => setSendError(error.message),
-                    },
-                  );
-                  return;
-                }
                 try {
                   // El hilo abierto es el contexto de @loki: la respuesta se
                   // guarda en ese hilo (threadParentId).
@@ -524,9 +578,31 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
                         };
                         setToolPending(action);
                       },
+                      onCreated: (result) => {
+                        setCreated(result);
+                      },
                     },
                   );
                 } catch (error: unknown) {
+                  // Sin proveedor, aviso de sistema sutil (type "system": lo
+                  // único escribible por el cliente). La vía determinista no
+                  // necesita proveedor y llega como tarjeta igual.
+                  if (error instanceof LokiError && error.code === "not_configured") {
+                    const aviso = buildLokiDisabledMessage(currentUid, authorName);
+                    sendMutation.mutate(
+                      {
+                        authorId: aviso.authorId,
+                        authorName: aviso.authorName,
+                        text: aviso.text,
+                        mentions: aviso.mentions,
+                        type: aviso.type,
+                      },
+                      {
+                        onError: (error) => setSendError(error.message),
+                      },
+                    );
+                    return;
+                  }
                   setSendError(
                     error instanceof Error ? error.message : "Loki no pudo responder.",
                   );
@@ -711,8 +787,9 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
     [handleSend],
   );
 
-  // Sin proveedor no hay chips que enviar: el aviso + composer deshabilitado.
-  const showSuggestions = lokiConfigured !== false;
+  // Los chips siempre se muestran: los de acción van por la vía
+  // determinista aunque no haya proveedor.
+  const showSuggestions = true;
 
   return (
     <div className="flex h-[calc(100dvh-68px)] flex-col md:h-dvh">
@@ -791,13 +868,6 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
 
       {!isLoki ? <TypingIndicator names={typingNames} /> : null}
       {isLoki && aiConnecting ? <AiConnecting /> : null}
-      {isLoki && lokiConfigured === false ? (
-        <div className="mx-auto w-full max-w-[760px] px-4 pb-1">
-          <p role="status" className="text-center text-body-sm text-muted-foreground">
-            {LOKI_NOT_CONFIGURED_TITLE}
-          </p>
-        </div>
-      ) : null}
       <div className="relative bg-gradient-to-t from-background via-background/85 to-transparent">
         <div className="absolute -top-12 left-0 right-0 flex justify-center">
           <NewMessagesPill visible={showNewPill} onClick={handlePillClick} />
@@ -820,8 +890,34 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
             <AiToolCard
               pending={toolPending}
               sending={toolSending}
-              onConfirm={() => handleToolConfirm(true)}
+              members={(membersQuery.data ?? []).map((member) => ({
+                uid: member.uid,
+                name: member.displayName,
+              }))}
+              projects={(toolProjectsQuery.data ?? [])
+                .filter((project) => project.status === "active")
+                .map((project) => ({
+                  id: project.id,
+                  name: project.name,
+                  isSystem: project.isSystem,
+                }))}
+              workspaces={isLoki ? workspaces.map((ws) => ({ id: ws.wsId, name: ws.name })) : undefined}
+              initialWorkspaceId={
+                typeof toolPending.params["workspaceId"] === "string"
+                  ? (toolPending.params["workspaceId"] as string)
+                  : undefined
+              }
+              onConfirm={(payload) => handleToolConfirm(true, payload)}
               onCancel={() => handleToolConfirm(false)}
+            />
+          </div>
+        ) : null}
+        {created !== null && created.undo.length > 0 ? (
+          <div className="mx-auto w-full max-w-[760px] px-4 pb-2">
+            <UndoBar
+              items={created.undo}
+              onUndo={(items) => void handleUndo(items)}
+              onDone={() => setCreated(null)}
             />
           </div>
         ) : null}
@@ -829,7 +925,9 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           chatName={chatName}
           isLoki={isLoki}
           sending={isLoki ? sendAiUser.isPending || aiConnecting : sendMutation.isPending}
-          disabled={isLoki && lokiConfigured === false}
+          // El composer siempre habilitado: sin proveedor la vía
+          // determinista igual ofrece su tarjeta; el resto avisa.
+          disabled={false}
           placeholder={isLoki ? AI_PLACEHOLDER : undefined}
           members={mentionMembers}
           onSend={handleSend}

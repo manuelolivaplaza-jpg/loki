@@ -135,7 +135,12 @@ const SYSTEM_PROMPT =
   "Tienes herramientas para consultar el resumen de hoy, eventos, tareas, " +
   "proyectos y mensajes del espacio. Úsalas antes de responder sobre datos " +
   "reales. Si te piden crear o completar algo, llama a la herramienta de " +
-  "escritura: el sistema pide confirmación antes de ejecutar.";
+  "escritura: el sistema pide confirmación antes de ejecutar. " +
+  "Sin proyecto explícito usa la Bandeja (omite projectId: el sistema la " +
+  "resuelve). Si el pedido trae 2+ cosas usa propose_plan con una acción " +
+  "por cosa. Resuelve personas contra los miembros (pide user_id por nombre " +
+  "solo si es único; si hay dos iguales, dilo y no adivines) y fechas con " +
+  "la herramienta tal cual te las dicen en ISO (mañana, el viernes, etc.).";
 
 const SYSTEM_PROMPT_SUMMARY =
   "Resume la conversación en 2 líneas en español, solo lo esencial " +
@@ -521,17 +526,109 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "create_task",
-    description: "Crea una tarea en un proyecto. Requiere confirmación.",
+    description: "Crea una tarea en un proyecto (sin proyecto usa la Bandeja). Requiere confirmación.",
     parameters: {
       type: "object",
       properties: {
         workspaceId: { type: "string" },
-        projectId: { type: "string" },
+        projectId: { type: "string", description: "Opcional: sin él va a la Bandeja" },
         title: { type: "string" },
         dueAt: { type: "string", description: "ISO 8601" },
         notes: { type: "string" },
+        assigneeIds: { type: "array", items: { type: "string" }, description: "uids responsables" },
       },
-      required: ["workspaceId", "projectId", "title"],
+      required: ["workspaceId", "title"],
+    },
+  },
+  {
+    name: "update_task",
+    description: "Edita una tarea existente (título, fecha, responsables, estado, proyecto). Requiere confirmación.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        taskId: { type: "string" },
+        title: { type: "string" },
+        dueAt: { type: "string", description: "ISO 8601" },
+        notes: { type: "string" },
+        status: { type: "string", enum: ["todo", "doing", "done"] },
+        projectId: { type: "string" },
+        assigneeIds: { type: "array", items: { type: "string" } },
+      },
+      required: ["workspaceId", "taskId"],
+    },
+  },
+  {
+    name: "update_event",
+    description: "Edita o mueve un evento existente (título, fechas, ubicación). Requiere confirmación.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        eventId: { type: "string" },
+        title: { type: "string" },
+        startsAt: { type: "string", description: "ISO 8601" },
+        endsAt: { type: "string", description: "ISO 8601" },
+        location: { type: "string" },
+      },
+      required: ["workspaceId", "eventId"],
+    },
+  },
+  {
+    name: "create_post",
+    description: "Publica un aviso en Publicaciones del espacio. Requiere confirmación.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        text: { type: "string" },
+      },
+      required: ["workspaceId", "text"],
+    },
+  },
+  {
+    name: "create_list_item",
+    description: "Agrega un ítem a una lista (punto de extensión: las listas llegan después).",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        list: { type: "string" },
+        item: { type: "string" },
+      },
+      required: ["workspaceId", "item"],
+    },
+  },
+  {
+    name: "propose_plan",
+    description:
+      "Plan de varias acciones de escritura (evento + tarea + recordatorio…). Úsala cuando el pedido trae 2+ cosas. Requiere confirmación única.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        actions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              action: {
+                type: "string",
+                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task"],
+              },
+              title: { type: "string" },
+              startsAt: { type: "string" },
+              projectId: { type: "string" },
+              taskId: { type: "string" },
+              remindAt: { type: "string" },
+              text: { type: "string" },
+              assigneeIds: { type: "array", items: { type: "string" } },
+            },
+            required: ["action"],
+          },
+        },
+      },
+      required: ["actions"],
     },
   },
   {
@@ -567,15 +664,16 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "create_reminder",
-    description: "Crea un recordatorio (tarea con hora de aviso). Requiere confirmación.",
+    description: "Crea un recordatorio (tarea con hora de aviso, para mí o para alguien con assigneeIds; sin proyecto va a la Bandeja). Requiere confirmación.",
     parameters: {
       type: "object",
       properties: {
         workspaceId: { type: "string" },
-        projectId: { type: "string" },
+        projectId: { type: "string", description: "Opcional: sin él va a la Bandeja" },
         taskId: { type: "string", description: "Si existe, solo le pone el aviso" },
         title: { type: "string" },
         remindAt: { type: "string", description: "ISO 8601" },
+        assigneeIds: { type: "array", items: { type: "string" }, description: "uids a avisar" },
       },
       required: ["workspaceId", "remindAt"],
     },
@@ -588,6 +686,11 @@ const WRITE_ACTIONS: ReadonlySet<string> = new Set([
   "create_task",
   "complete_task",
   "create_reminder",
+  "update_task",
+  "update_event",
+  "create_post",
+  "create_list_item",
+  "propose_plan",
 ]);
 
 const ACTION_LABELS: Record<string, string> = {
@@ -595,6 +698,11 @@ const ACTION_LABELS: Record<string, string> = {
   create_task: "Crear tarea",
   complete_task: "Completar tarea",
   create_reminder: "Crear recordatorio",
+  update_task: "Editar tarea",
+  update_event: "Editar evento",
+  create_post: "Publicar aviso",
+  create_list_item: "Agregar a la lista",
+  propose_plan: "Plan de acciones",
 };
 
 function actionLabel(action: string): string {
@@ -708,6 +816,143 @@ function pendingParams(
     params["chatId"] = fallback.chatId;
   }
   return params;
+}
+
+type SpaceMember = { uid: string; name: string };
+
+/** Miembros del espacio (display_name) con el JWT: para resolver "a Pedro". */
+async function listSpaceMembers(workspaceId: string, jwt: string): Promise<SpaceMember[]> {
+  const res = await userRest(
+    `/workspace_members?workspace_id=eq.${encodeURIComponent(workspaceId)}&select=user_id,display_name&limit=100`,
+    jwt,
+  );
+  if (!res.ok || !Array.isArray(res.data)) return [];
+  const out: SpaceMember[] = [];
+  for (const row of res.data) {
+    if (!isRecord(row)) continue;
+    const uid = asString(row["user_id"]);
+    const name = asString(row["display_name"]) ?? "Miembro";
+    if (uid !== null) out.push({ uid, name });
+  }
+  return out;
+}
+
+function normName(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+/**
+ * Resuelve "a Pedro" entre los miembros: match por nombre completo o primer
+ * nombre. Devuelve el uid, la lista ambigua, o null si nadie coincide.
+ */
+function resolvePerson(
+  query: string,
+  members: SpaceMember[],
+  selfUid: string,
+): { uid: string } | { ambiguous: SpaceMember[] } | null {
+  const q = normName(query);
+  if (q === "") return null;
+  const matches = members.filter((m) => {
+    const full = normName(m.name);
+    const first = full.split(/\s+/)[0] ?? "";
+    return full === q || full.replace(/\s+/g, "") === q.replace(/\s+/g, "") || first === q;
+  }).filter((m) => m.uid !== selfUid);
+  if (matches.length === 1) return { uid: matches[0]?.uid ?? "" };
+  if (matches.length > 1) return { ambiguous: matches };
+  return null;
+}
+
+/** Bandeja del espacio vía RPC (con el JWT: exige membresía). */
+async function ensureInbox(workspaceId: string, jwt: string): Promise<string | null> {
+  const res = await userRest("/rpc/ensure_inbox_project", jwt, {
+    method: "POST",
+    body: { p_workspace_id: workspaceId },
+  });
+  if (!res.ok || typeof res.data !== "string" || res.data === "") return null;
+  return res.data;
+}
+
+/**
+ * Anti-spam de avisos a terceros: tope 10/hora por destinatario. Devuelve
+ * true si se puede avisar.
+ */
+async function allowThirdPartyPing(
+  workspaceId: string,
+  actorId: string,
+  targetId: string,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/log_loki_action`, {
+      method: "POST",
+      headers: svcHeaders(),
+      body: JSON.stringify({
+        p_workspace_id: workspaceId,
+        p_actor_id: actorId,
+        p_target_id: targetId,
+        p_action: "remind_other",
+        p_limit_hour: 10,
+      }),
+    });
+    if (!res.ok) return true;
+    const body: unknown = await res.json();
+    return body === true;
+  } catch {
+    return true;
+  }
+}
+
+type Precheck = { ok: boolean; message: string };
+
+/**
+ * Revisa ANTES de confirmar si la acción pasaría la RLS (editar evento
+ * ajeno, tarea de otro, etc.). La tarjeta muestra el aviso y no deja
+ * confirmar lo bloqueado.
+ */
+async function precheckAction(
+  action: string,
+  params: Record<string, unknown>,
+  ctx: { uid: string; jwt: string },
+): Promise<Precheck> {
+  const ok: Precheck = { ok: true, message: "" };
+  const workspaceId = paramStr(params, "workspaceId");
+  if (action === "update_event") {
+    const eventId = paramStr(params, "eventId");
+    if (workspaceId === null || eventId === null) {
+      return { ok: false, message: "Falta el evento a editar." };
+    }
+    const res = await userRest(
+      `/events?id=eq.${encodeURIComponent(eventId)}&select=id,created_by&limit=1`,
+      ctx.jwt,
+    );
+    const row = Array.isArray(res.data) && isRecord(res.data[0]) ? res.data[0] : null;
+    if (row === null) return { ok: false, message: "Ese evento ya no existe." };
+    if (row["created_by"] !== ctx.uid) {
+      const admin = await userRest(
+        `/workspace_members?workspace_id=eq.${encodeURIComponent(workspaceId)}&user_id=eq.${ctx.uid}&select=role&limit=1`,
+        ctx.jwt,
+      );
+      const role = Array.isArray(admin.data) && isRecord(admin.data[0])
+        ? asString(admin.data[0]["role"])
+        : null;
+      if (role !== "owner" && role !== "admin") {
+        return { ok: false, message: "Solo quien creó el evento o un admin puede editarlo." };
+      }
+    }
+    return ok;
+  }
+  if (action === "update_task" || action === "complete_task") {
+    const taskId = paramStr(params, "taskId") ?? paramStr(params, "task_id");
+    if (taskId !== null && workspaceId !== null) {
+      const res = await userRest(
+        `/tasks?id=eq.${encodeURIComponent(taskId)}&select=id&limit=1`,
+        ctx.jwt,
+      );
+      const exists = Array.isArray(res.data) && res.data.length > 0;
+      if (!exists) return { ok: false, message: "Esa tarea ya no existe." };
+    }
+    return ok;
+  }
+  return ok;
 }
 
 // --- Primera pasada con tools (no streaming) ------------------------------------
@@ -994,22 +1239,49 @@ function paramStr(params: Record<string, unknown>, key: string): string | null {
   return asString(params[key]);
 }
 
+export type UndoItem = {
+  kind: "task" | "event" | "post";
+  id: string;
+  label: string;
+  workspaceId: string;
+  projectId?: string;
+};
+
 /**
  * Ejecuta una acción de escritura confirmada con el JWT (RLS del usuario).
- * Devuelve el texto final en español para el stream.
+ * Devuelve el texto final en español para el stream, más lo creado (links y
+ * deshacer). Todo escribe con el JWT: nunca con service_role.
  */
 async function execConfirmedAction(
   action: string,
   params: Record<string, unknown>,
   ctx: { uid: string; jwt: string; workspaceId?: string },
-): Promise<{ ok: boolean; text: string }> {
+): Promise<{ ok: boolean; text: string; links: string[]; undo: UndoItem[] }> {
+  const done = (
+    text: string,
+    links: string[] = [],
+    undo: UndoItem[] = [],
+  ): { ok: boolean; text: string; links: string[]; undo: UndoItem[] } => ({
+    ok: true,
+    text,
+    links,
+    undo,
+  });
+  const fail = (
+    text: string,
+  ): { ok: boolean; text: string; links: string[]; undo: UndoItem[] } => ({
+    ok: false,
+    text,
+    links: [],
+    undo: [],
+  });
   const workspaceId = paramStr(params, "workspaceId") ?? ctx.workspaceId ?? null;
 
   if (action === "create_event") {
     const title = paramStr(params, "title");
     const startsAt = paramStr(params, "startsAt") ?? paramStr(params, "starts_at");
     if (workspaceId === null || title === null || startsAt === null) {
-      return { ok: false, text: "Me faltan datos para crear el evento (título y fecha). Dímelos y lo creo." };
+      return fail("Me faltan datos para crear el evento (título y fecha). Dímelos y lo creo.");
     }
     const endsAt = paramStr(params, "endsAt") ?? paramStr(params, "ends_at") ?? startsAt;
     const res = await userRest("/events", ctx.jwt, {
@@ -1024,17 +1296,37 @@ async function execConfirmedAction(
         created_by: ctx.uid,
       },
     });
-    if (!res.ok) return { ok: false, text: "No pude crear el evento. Revisa la fecha e inténtalo de nuevo." };
-    return { ok: true, text: `Listo: creé el evento “${title.slice(0, 100)}”.` };
+    if (!res.ok || !isRecord(res.data)) {
+      return fail("No pude crear el evento. Revisa la fecha e inténtalo de nuevo.");
+    }
+    const id = asString(res.data["id"]) ?? "";
+    return done(
+      `Listo: creé el evento “${title.slice(0, 100)}”.`,
+      [`/calendario`],
+      id === "" ? [] : [{ kind: "event", id, label: title.slice(0, 100), workspaceId }],
+    );
+  }
+
+  // Proyecto destino: el dicho o la Bandeja (nunca "me falta el proyecto").
+  async function targetProject(projectId: string | null): Promise<string | null> {
+    if (projectId !== null) return projectId;
+    if (workspaceId === null) return null;
+    return ensureInbox(workspaceId, ctx.jwt);
   }
 
   if (action === "create_task") {
     const title = paramStr(params, "title");
-    const projectId = paramStr(params, "projectId") ?? paramStr(params, "project_id");
-    if (workspaceId === null || title === null || projectId === null) {
-      return { ok: false, text: "Me faltan datos para crear la tarea (proyecto y título). Dímelos y la creo." };
+    if (workspaceId === null || title === null) {
+      return fail("Me faltan datos para crear la tarea (título). Dímelo y la creo.");
+    }
+    const projectId = await targetProject(
+      paramStr(params, "projectId") ?? paramStr(params, "project_id"),
+    );
+    if (projectId === null) {
+      return fail("No pude abrir la Bandeja del espacio. Inténtalo de nuevo.");
     }
     const dueAt = paramStr(params, "dueAt") ?? paramStr(params, "due_at");
+    const assignees = params["assigneeIds"] ?? params["assignee_ids"];
     const res = await userRest("/tasks", ctx.jwt, {
       method: "POST",
       body: {
@@ -1043,30 +1335,135 @@ async function execConfirmedAction(
         title: title.slice(0, 200),
         notes: paramStr(params, "notes") ?? "",
         ...(dueAt !== null ? { due_at: dueAt } : {}),
+        ...(Array.isArray(assignees) ? { assignee_ids: assignees.filter((a) => typeof a === "string") } : {}),
         created_by: ctx.uid,
       },
     });
-    if (!res.ok) return { ok: false, text: "No pude crear la tarea. Revisa el proyecto e inténtalo de nuevo." };
-    return { ok: true, text: `Listo: creé la tarea “${title.slice(0, 100)}”.` };
+    if (!res.ok || !isRecord(res.data)) {
+      return fail("No pude crear la tarea. Revisa el proyecto e inténtalo de nuevo.");
+    }
+    const id = asString(res.data["id"]) ?? "";
+    const link = `/proyectos?project=${encodeURIComponent(projectId)}&task=${encodeURIComponent(id)}`;
+    return done(
+      `Listo: creé la tarea “${title.slice(0, 100)}”.`,
+      [link],
+      id === "" ? [] : [{ kind: "task", id, label: title.slice(0, 100), workspaceId, projectId }],
+    );
   }
 
   if (action === "complete_task") {
     const taskId = paramStr(params, "taskId") ?? paramStr(params, "task_id");
     if (taskId === null) {
-      return { ok: false, text: "No sé qué tarea completar. Dime cuál y la marco." };
+      return fail("No sé qué tarea completar. Dime cuál y la marco.");
     }
     const res = await userRest(`/tasks?id=eq.${encodeURIComponent(taskId)}`, ctx.jwt, {
       method: "PATCH",
       body: { status: "done", completed_at: new Date().toISOString() },
     });
-    if (!res.ok) return { ok: false, text: "No pude completar la tarea. Inténtalo de nuevo." };
-    return { ok: true, text: "Listo: marqué la tarea como hecha." };
+    if (!res.ok) return fail("No pude completar la tarea. Inténtalo de nuevo.");
+    return done("Listo: marqué la tarea como hecha.");
+  }
+
+  if (action === "update_task") {
+    const taskId = paramStr(params, "taskId") ?? paramStr(params, "task_id");
+    if (workspaceId === null || taskId === null) {
+      return fail("No sé qué tarea editar. Dime cuál y qué cambiar.");
+    }
+    const patch: Record<string, unknown> = {};
+    const title = paramStr(params, "title");
+    const dueAt = paramStr(params, "dueAt") ?? paramStr(params, "due_at");
+    const notes = paramStr(params, "notes");
+    const status = paramStr(params, "status");
+    const projectId = paramStr(params, "projectId") ?? paramStr(params, "project_id");
+    const assignees = params["assigneeIds"] ?? params["assignee_ids"];
+    if (title !== null) patch["title"] = title.slice(0, 200);
+    if (dueAt !== null) patch["due_at"] = dueAt;
+    if (notes !== null) patch["notes"] = notes;
+    if (status !== null && (status === "todo" || status === "doing" || status === "done")) {
+      patch["status"] = status;
+      if (status === "done") patch["completed_at"] = new Date().toISOString();
+    }
+    if (projectId !== null) patch["project_id"] = projectId;
+    if (Array.isArray(assignees)) {
+      patch["assignee_ids"] = assignees.filter((a) => typeof a === "string");
+    }
+    if (Object.keys(patch).length === 0) {
+      return fail("Dime qué cambiar de la tarea (título, fecha, responsables o estado).");
+    }
+    const res = await userRest(`/tasks?id=eq.${encodeURIComponent(taskId)}`, ctx.jwt, {
+      method: "PATCH",
+      body: patch,
+    });
+    if (!res.ok) return fail("No pude editar la tarea. Revisa que sea tuya o pide a un admin.");
+    return done("Listo: actualicé la tarea.");
+  }
+
+  if (action === "update_event") {
+    const eventId = paramStr(params, "eventId") ?? paramStr(params, "event_id");
+    if (workspaceId === null || eventId === null) {
+      return fail("No sé qué evento editar. Dime cuál y qué cambiar.");
+    }
+    const patch: Record<string, unknown> = {};
+    const title = paramStr(params, "title");
+    const startsAt = paramStr(params, "startsAt") ?? paramStr(params, "starts_at");
+    const endsAt = paramStr(params, "endsAt") ?? paramStr(params, "ends_at");
+    const location = paramStr(params, "location");
+    if (title !== null) patch["title"] = title.slice(0, 120);
+    if (startsAt !== null) patch["starts_at"] = startsAt;
+    if (endsAt !== null) patch["ends_at"] = endsAt;
+    if (location !== null) patch["location"] = location;
+    if (Object.keys(patch).length === 0) {
+      return fail("Dime qué cambiar del evento (título, fecha u hora).");
+    }
+    const res = await userRest(`/events?id=eq.${encodeURIComponent(eventId)}`, ctx.jwt, {
+      method: "PATCH",
+      body: patch,
+    });
+    if (!res.ok) return fail("No pude editar el evento. Solo su creador o un admin puede.");
+    return done("Listo: actualicé el evento.", [`/calendario`]);
+  }
+
+  if (action === "create_post") {
+    const text = paramStr(params, "text") ?? paramStr(params, "title");
+    if (workspaceId === null || text === null) {
+      return fail("Dime el texto del aviso y lo publico.");
+    }
+    // El chat 'posts' existe en todo espacio (ensure_posts_chat lo garantiza).
+    await userRest("/rpc/ensure_posts_chat", ctx.jwt, {
+      method: "POST",
+      body: { p_workspace_id: workspaceId },
+    }).catch(() => undefined);
+    const res = await userRest("/messages", ctx.jwt, {
+      method: "POST",
+      body: {
+        workspace_id: workspaceId,
+        chat_id: "posts",
+        author_id: ctx.uid,
+        author_name: "",
+        text: text.slice(0, 4000),
+        type: "post",
+      },
+    });
+    if (!res.ok || !isRecord(res.data)) {
+      return fail("No pude publicar el aviso. Inténtalo de nuevo.");
+    }
+    const id = asString(res.data["id"]) ?? "";
+    return done(
+      "Listo: lo publiqué en Publicaciones.",
+      [`/chat/publicaciones`],
+      id === "" ? [] : [{ kind: "post", id, label: text.slice(0, 100), workspaceId }],
+    );
+  }
+
+  if (action === "create_list_item") {
+    // Punto de extensión: las listas compartidas llegan después.
+    return fail("Las listas compartidas aún no están listas. Por ahora lo anoto como tarea si quieres.");
   }
 
   if (action === "create_reminder") {
     const remindAt = paramStr(params, "remindAt") ?? paramStr(params, "remind_at");
     if (remindAt === null) {
-      return { ok: false, text: "Me falta la hora del recordatorio. Dímela y lo dejo listo." };
+      return fail("Me falta la hora del recordatorio. Dímela y lo dejo listo.");
     }
     const taskId = paramStr(params, "taskId") ?? paramStr(params, "task_id");
     if (taskId !== null) {
@@ -1074,13 +1471,28 @@ async function execConfirmedAction(
         method: "PATCH",
         body: { reminder_at: remindAt },
       });
-      if (!res.ok) return { ok: false, text: "No pude dejar el recordatorio. Inténtalo de nuevo." };
-      return { ok: true, text: "Listo: dejé el recordatorio en la tarea." };
+      if (!res.ok) return fail("No pude dejar el recordatorio. Inténtalo de nuevo.");
+      return done("Listo: dejé el recordatorio en la tarea.");
     }
     const title = paramStr(params, "title") ?? "Recordatorio";
-    const projectId = paramStr(params, "projectId") ?? paramStr(params, "project_id");
+    const projectId = await targetProject(
+      paramStr(params, "projectId") ?? paramStr(params, "project_id"),
+    );
     if (workspaceId === null || projectId === null) {
-      return { ok: false, text: "Me falta el proyecto para el recordatorio. Dime en cuál lo creo." };
+      return fail("No pude abrir la Bandeja del espacio. Inténtalo de nuevo.");
+    }
+    const rawAssignees = params["assigneeIds"] ?? params["assignee_ids"];
+    const assignees: string[] = Array.isArray(rawAssignees)
+      ? rawAssignees.filter((a): a is string => typeof a === "string")
+      : [];
+    // Anti-spam: avisos a terceros con tope por hora.
+    for (const target of assignees) {
+      if (target !== ctx.uid) {
+        const allowed = await allowThirdPartyPing(workspaceId, ctx.uid, target);
+        if (!allowed) {
+          return fail("Ya le mandaste varios avisos a esa persona en la última hora. Espera un poco.");
+        }
+      }
     }
     const res = await userRest("/tasks", ctx.jwt, {
       method: "POST",
@@ -1089,14 +1501,26 @@ async function execConfirmedAction(
         project_id: projectId,
         title: title.slice(0, 200),
         reminder_at: remindAt,
+        ...(assignees.length > 0 ? { assignee_ids: assignees } : {}),
         created_by: ctx.uid,
       },
     });
-    if (!res.ok) return { ok: false, text: "No pude crear el recordatorio. Inténtalo de nuevo." };
-    return { ok: true, text: `Listo: te avisaré de “${title.slice(0, 100)}”.` };
+    if (!res.ok || !isRecord(res.data)) {
+      return fail("No pude crear el recordatorio. Inténtalo de nuevo.");
+    }
+    const id = asString(res.data["id"]) ?? "";
+    const link = `/proyectos?project=${encodeURIComponent(projectId)}&task=${encodeURIComponent(id)}`;
+    const who = assignees.length > 0 && !assignees.includes(ctx.uid)
+      ? " Le avisaré."
+      : " Te avisaré.";
+    return done(
+      `Listo: agendé “${title.slice(0, 100)}”.${who}`,
+      [link],
+      id === "" ? [] : [{ kind: "task", id, label: title.slice(0, 100), workspaceId, projectId }],
+    );
   }
 
-  return { ok: false, text: "Esa acción no está soportada." };
+  return fail("Esa acción no está soportada.");
 }
 
 // --- Proveedores (streaming) --------------------------------------------------
@@ -1275,11 +1699,19 @@ async function streamFromProvider(
 
 // --- Handler ------------------------------------------------------------------
 
+type ConfirmActionItem = {
+  action: string;
+  params: Record<string, unknown>;
+  include?: boolean;
+};
+
 type ConfirmPayload = {
   id: string;
   action: string;
   params: Record<string, unknown>;
   ok: boolean;
+  /** Plan multi-acción: solo se ejecutan las incluidas. */
+  actions?: ConfirmActionItem[];
 };
 
 type ChatRequest =
@@ -1300,8 +1732,21 @@ function parseConfirm(raw: unknown): ConfirmPayload | undefined {
   if (id === null || action === null) return undefined;
   const params = isRecord(raw["params"]) ? raw["params"] : {};
   // Las confirmaciones no arrastran textos largos: tope de seguridad.
-  if (JSON.stringify(params).length > 4000) return undefined;
-  return { id, action, params, ok: raw["ok"] === true };
+  if (JSON.stringify(params).length > 8000) return undefined;
+  let actions: ConfirmActionItem[] | undefined;
+  if (Array.isArray(raw["actions"])) {
+    const items: ConfirmActionItem[] = [];
+    for (const item of raw["actions"]) {
+      if (!isRecord(item)) continue;
+      const a = validId(item["action"]);
+      if (a === null) continue;
+      const p = isRecord(item["params"]) ? item["params"] : {};
+      if (JSON.stringify(p).length > 4000) continue;
+      items.push({ action: a, params: p, include: item["include"] !== false });
+    }
+    if (items.length > 0 && items.length <= 10) actions = items;
+  }
+  return { id, action, params, ok: raw["ok"] === true, ...(actions !== undefined ? { actions } : {}) };
 }
 
 function parseRequest(body: unknown): ChatRequest | null {
@@ -1340,7 +1785,11 @@ function parseRequest(body: unknown): ChatRequest | null {
 /** Stream SSE que emite deltas y guarda la respuesta final. */
 function sseReplyStream(
   save: ((full: string) => Promise<void>) | null,
-  run: (send: (delta: string) => void, sendPending: (pending: unknown) => void) => Promise<void>,
+  run: (
+    send: (delta: string) => void,
+    sendPending: (pending: unknown) => void,
+    sendCreated: (created: unknown) => void,
+  ) => Promise<void>,
   after?: (full: string) => void,
 ): Response {
   const encoder = new TextEncoder();
@@ -1354,8 +1803,11 @@ function sseReplyStream(
       const sendPending = (pending: unknown): void => {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ tool_pending: pending })}\n\n`));
       };
+      const sendCreated = (created: unknown): void => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ created })}\n\n`));
+      };
       try {
-        await run(send, sendPending);
+        await run(send, sendPending, sendCreated);
         if (full.trim() !== "") {
           await save?.(full);
           after?.(full);
@@ -1396,12 +1848,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
       message: "Demasiadas peticiones. Espera un minuto e inténtalo de nuevo.",
     });
   }
-  if (!isConfigured()) {
-    return json(503, {
-      code: "not_configured",
-      message: "Loki IA sin configurar. Pide al administrador que configure el proveedor.",
-    });
-  }
+  // Sin clave el modelo no anda, pero la confirmación (REST con el JWT) y la
+  // vía determinista (código, no IA) sí: el chequeo va después de ellas.
+  // Comportamiento exacto sin LLM_API_KEY:
+  //   - comandos simples con fecha clara -> tarjeta de confirmación igual;
+  //   - confirmar ejecuta igual (no usa modelo);
+  //   - lo demás -> 503 "Loki IA sin configurar".
   const auth = await authUser(req);
   if (auth === null) {
     return json(401, { code: "unauthorized" });
@@ -1419,6 +1871,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   // --- Segundo POST: confirmación de una acción pendiente -----------------------
+  // No usa el modelo: funciona incluso sin proveedor configurado.
   if (input.confirm !== undefined) {
     const confirm = input.confirm;
     let save: ((full: string) => Promise<void>) | null = null;
@@ -1434,37 +1887,93 @@ Deno.serve(async (req: Request): Promise<Response> => {
       if (chatId === null) return json(502, { code: "provider_error" });
       save = (full: string) => savePersonalReply(chatId, full);
     }
-    return sseReplyStream(save, async (send) => {
+    return sseReplyStream(save, async (send, _sendPending, sendCreated) => {
       if (!confirm.ok) {
         send("Entendido, lo dejé sin hacer.");
         return;
       }
-      const result = await execConfirmedAction(confirm.action, confirm.params, {
-        uid,
-        jwt: token,
-        workspaceId,
-      });
-      send(result.text);
+      // Plan multi-acción: se ejecutan las incluidas, en orden.
+      const items = confirm.actions !== undefined && confirm.actions.length > 0
+        ? confirm.actions.filter((item) => item.include !== false)
+        : [{ action: confirm.action, params: confirm.params, include: true }];
+      if (items.length === 0) {
+        send("Entendido, lo dejé sin hacer.");
+        return;
+      }
+      const texts: string[] = [];
+      const links: string[] = [];
+      const undo: UndoItem[] = [];
+      for (const item of items) {
+        if (!WRITE_ACTIONS.has(item.action)) continue;
+        const merged = {
+          ...item.params,
+          ...(workspaceId !== undefined && asString(item.params["workspaceId"]) === null
+            ? { workspaceId }
+            : {}),
+        };
+        const result = await execConfirmedAction(item.action, merged, {
+          uid,
+          jwt: token,
+          workspaceId,
+        });
+        texts.push(result.text);
+        for (const link of result.links) {
+          if (!links.includes(link)) links.push(link);
+        }
+        for (const u of result.undo) undo.push(u);
+        if (!result.ok) break;
+      }
+      const full = texts.join("\n");
+      const withLinks = links.length > 0 ? `${full}\n${links.map((l) => `Ver: ${l}`).join("\n")}` : full;
+      send(withLinks);
+      if (links.length > 0 || undo.length > 0) {
+        sendCreated({ links, undo });
+      }
     });
   }
 
   // --- Vía determinista (sin modelo): verbo + fecha clara en español ---------
   // Si el analizador está seguro (p. ej. "recuérdame mañana a las 9 sacar
   // la basura"), se arma la herramienta directo y no se gasta cuota ni LLM.
-  if (input.confirm === undefined) {
+  // Funciona sin proveedor configurado: es código, no IA.
+  {
     const quick = analyzeIntent(input.text);
     if (
       quick !== null && quick.confident && quick.dateISO !== null &&
       (quick.action === "remind" || quick.action === "create_event")
     ) {
+      let wsForTool: string | undefined;
       if (input.mode === "mention") {
         const member = await isMember(input.workspaceId, uid);
         if (!member) return json(403, { code: "forbidden" });
+        wsForTool = input.workspaceId;
+      }
+      // "Recuérdale a Sofi…": se resuelve contra los miembros del espacio.
+      let assigneeIds: string[] | undefined;
+      let assigneeChoices: SpaceMember[] | undefined;
+      if (quick.action === "remind" && quick.mentions.length > 0) {
+        const wsId = wsForTool ?? await defaultWorkspaceId(uid, token);
+        if (wsId !== null) {
+          wsForTool = wsId;
+          const members = await listSpaceMembers(wsId, token);
+          for (const mention of quick.mentions) {
+            const hit = resolvePerson(mention, members, uid);
+            if (hit !== null && "uid" in hit) {
+              assigneeIds = [...(assigneeIds ?? []), hit.uid];
+            } else if (hit !== null && "ambiguous" in hit) {
+              assigneeChoices = hit.ambiguous;
+            }
+          }
+        }
       }
       const tool = quick.action === "remind"
         ? {
           name: "create_reminder",
-          args: { title: quick.title, remindAt: quick.dateISO },
+          args: {
+            title: quick.title,
+            remindAt: quick.dateISO,
+            ...(assigneeIds !== undefined && assigneeIds.length > 0 ? { assigneeIds } : {}),
+          },
         }
         : {
           name: "create_event",
@@ -1475,14 +1984,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
         action: tool.name,
         label: actionLabel(tool.name),
         params: pendingParams(tool.args, {
-          workspaceId: input.mode === "mention" ? input.workspaceId : undefined,
+          workspaceId: wsForTool,
           chatId: input.mode === "mention" ? input.chatId : undefined,
         }),
+        // Ambigüedad ("dos Pedros"): la tarjeta pide elegir en vez de adivinar.
+        ...(assigneeChoices !== undefined && assigneeChoices.length > 0
+          ? { assigneeChoices }
+          : {}),
       };
       return sseReplyStream(null, async (_send, sendPending) => {
         sendPending(pending);
       });
     }
+  }
+
+  if (!isConfigured()) {
+    return json(503, {
+      code: "not_configured",
+      message: "Loki IA sin configurar. Pide al administrador que configure el proveedor.",
+    });
   }
 
   // --- Primer POST: cuota (espacio + usuario) ---------------------------------
@@ -1609,14 +2129,81 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // --- Escritura: pide confirmación (no ejecuta, no guarda) -----------------------
   if (WRITE_ACTIONS.has(tool.name)) {
+    // Plan de varias acciones: una tarjeta, casilla por acción.
+    if (tool.name === "propose_plan") {
+      const rawActions = Array.isArray(toolArgs["actions"]) ? toolArgs["actions"] : [];
+      const items: {
+        action: string;
+        label: string;
+        params: Record<string, unknown>;
+        include: boolean;
+        warning?: string;
+      }[] = [];
+      for (const raw of rawActions.slice(0, 10)) {
+        if (!isRecord(raw)) continue;
+        const name = asString(raw["action"]);
+        if (name === null || !WRITE_ACTIONS.has(name) || name === "propose_plan") continue;
+        const params = pendingParams(
+          isRecord(raw) ? raw as Record<string, unknown> : {},
+          { workspaceId: mentionCtx?.workspaceId, chatId: mentionCtx?.chatId },
+        );
+        const check = await precheckAction(name, params, { uid, jwt: token });
+        items.push({
+          action: name,
+          label: actionLabel(name),
+          params,
+          include: check.ok,
+          ...(check.ok ? {} : { warning: check.message }),
+        });
+      }
+      if (items.length === 0) {
+        return sseReplyStream(save, async (send) => {
+          send("No pude armar el plan con esos datos. Dímelo con más detalle.");
+        });
+      }
+      // El plan gasta por acción: se reserva el extra (la primera ya se cobró).
+      const extra = await reserveQuota(
+        mentionCtx?.workspaceId ?? fallbackWs,
+        uid,
+        quotaUnits * (items.length - 1),
+      );
+      if (!extra.allowed) {
+        return json(429, {
+          code: "limit",
+          message: "Este espacio llegó a su límite de IA de hoy.",
+        });
+      }
+      const pending = {
+        id: crypto.randomUUID(),
+        action: "propose_plan",
+        label: "Plan de acciones",
+        params: pendingParams(toolArgs, {
+          workspaceId: mentionCtx?.workspaceId,
+          chatId: mentionCtx?.chatId,
+        }),
+        actions: items,
+      };
+      return sseReplyStream(null, async (_send, sendPending) => {
+        sendPending(pending);
+      });
+    }
+    const singleParams = pendingParams(toolArgs, {
+      workspaceId: mentionCtx?.workspaceId,
+      chatId: mentionCtx?.chatId,
+    });
+    // Si no pasaría el permiso (p. ej. editar evento ajeno), la tarjeta lo
+    // diría: mejor decirlo directo sin ofrecer nada.
+    const check = await precheckAction(tool.name, singleParams, { uid, jwt: token });
+    if (!check.ok) {
+      return sseReplyStream(save, async (send) => {
+        send(check.message);
+      });
+    }
     const pending = {
       id: crypto.randomUUID(),
       action: tool.name,
       label: actionLabel(tool.name),
-      params: pendingParams(toolArgs, {
-        workspaceId: mentionCtx?.workspaceId,
-        chatId: mentionCtx?.chatId,
-      }),
+      params: singleParams,
     };
     return sseReplyStream(null, async (_send, sendPending) => {
       sendPending(pending);

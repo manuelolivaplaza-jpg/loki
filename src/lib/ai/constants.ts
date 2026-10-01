@@ -25,8 +25,8 @@ export const AI_CHAT_NAME = "Loki IA";
 /** Chips de arranque: se muestran solo cuando el chat está vacío. */
 export const AI_SUGGESTIONS: readonly string[] = [
   "¿Qué tengo hoy?",
-  "Resume mi semana",
-  "Crea un recordatorio",
+  "Recuérdame mañana a las 9 sacar la basura",
+  "Organiza el cumpleaños del sábado: evento a las 16 y tarea de comprar la torta",
 ];
 
 /** Texto del estado vacío del chat con Loki. */

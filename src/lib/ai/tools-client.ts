@@ -21,12 +21,37 @@ import {
   LokiError,
 } from "@/lib/ai/loki";
 
+/** Ítem de un plan multi-acción (protocolo tool_pending extendido). */
+export type AiPendingItem = {
+  action: string;
+  label: string;
+  params: Record<string, unknown>;
+  include: boolean;
+  warning?: string;
+};
+
+/** Persona candidata cuando "a Pedro" es ambiguo. */
+export type AssigneeChoice = {
+  uid: string;
+  name: string;
+};
+
 /** Acción de escritura pendiente de confirmación (protocolo SSE). */
 export type AiPendingAction = {
   id: string;
   action: string;
   label: string;
   params: Record<string, unknown>;
+  /** Plan: una tarjeta con varias acciones (ausente = acción única, compatible). */
+  actions?: AiPendingItem[];
+  /** Elegir responsable cuando el nombre es ambiguo. */
+  assigneeChoices?: AssigneeChoice[];
+};
+
+export type LokiConfirmItem = {
+  action: string;
+  params: Record<string, unknown>;
+  include: boolean;
 };
 
 export type LokiConfirm = {
@@ -34,6 +59,20 @@ export type LokiConfirm = {
   action: string;
   params: Record<string, unknown>;
   ok: boolean;
+  actions?: LokiConfirmItem[];
+};
+
+export type UndoItem = {
+  kind: "task" | "event" | "post";
+  id: string;
+  label: string;
+  workspaceId: string;
+  projectId?: string;
+};
+
+export type CreatedResult = {
+  links: string[];
+  undo: UndoItem[];
 };
 
 export type LokiToolsInput =
@@ -60,6 +99,7 @@ export type LokiConfirmInput =
 export type LokiToolsCallbacks = {
   onChunk: (fullText: string) => void;
   onToolPending?: (pending: AiPendingAction) => void;
+  onCreated?: (created: CreatedResult) => void;
 };
 
 function functionUrl(): string | null {
@@ -70,6 +110,26 @@ function functionUrl(): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parsePendingItem(value: unknown): AiPendingItem | null {
+  if (!isRecord(value)) return null;
+  const action = value["action"];
+  if (typeof action !== "string" || action === "") return null;
+  const label = typeof value["label"] === "string" && value["label"] !== ""
+    ? value["label"]
+    : "Confirmar acción";
+  const params = isRecord(value["params"]) ? value["params"] : {};
+  const warning = typeof value["warning"] === "string" && value["warning"] !== ""
+    ? value["warning"]
+    : undefined;
+  return {
+    action,
+    label,
+    params,
+    include: value["include"] !== false && warning === undefined,
+    ...(warning !== undefined ? { warning } : {}),
+  };
 }
 
 /** Extrae una acción pendiente válida de un payload SSE (o null). */
@@ -84,7 +144,35 @@ function parsePending(value: unknown): AiPendingAction | null {
     ? value["label"]
     : "Confirmar acción";
   const params = isRecord(value["params"]) ? value["params"] : {};
-  return { id, action, label, params };
+  let actions: AiPendingItem[] | undefined;
+  if (Array.isArray(value["actions"])) {
+    const items = value["actions"]
+      .map(parsePendingItem)
+      .filter((item): item is AiPendingItem => item !== null)
+      .slice(0, 10);
+    if (items.length > 0) actions = items;
+  }
+  let assigneeChoices: AssigneeChoice[] | undefined;
+  if (Array.isArray(value["assigneeChoices"])) {
+    const choices: AssigneeChoice[] = [];
+    for (const choice of value["assigneeChoices"]) {
+      if (!isRecord(choice)) continue;
+      const uid = choice["uid"];
+      const name = choice["name"];
+      if (typeof uid === "string" && uid !== "" && typeof name === "string") {
+        choices.push({ uid, name });
+      }
+    }
+    if (choices.length > 0) assigneeChoices = choices;
+  }
+  return {
+    id,
+    action,
+    label,
+    params,
+    ...(actions !== undefined ? { actions } : {}),
+    ...(assigneeChoices !== undefined ? { assigneeChoices } : {}),
+  };
 }
 
 type SseOutcome = { text: string; pending: AiPendingAction | null };
@@ -166,6 +254,41 @@ async function ssePost(
       if (next !== null) {
         pending = next;
         callbacks.onToolPending?.(next);
+      }
+      return;
+    }
+    if (parsed["created"] !== undefined && isRecord(parsed["created"])) {
+      const created = parsed["created"];
+      const links = Array.isArray(created["links"])
+        ? created["links"].filter((l): l is string => typeof l === "string")
+        : [];
+      const undo: UndoItem[] = [];
+      if (Array.isArray(created["undo"])) {
+        for (const entry of created["undo"]) {
+          if (!isRecord(entry)) continue;
+          const kind = entry["kind"];
+          const id = entry["id"];
+          const workspaceId = entry["workspaceId"];
+          if (
+            (kind === "task" || kind === "event" || kind === "post") &&
+            typeof id === "string" && id !== "" &&
+            typeof workspaceId === "string" && workspaceId !== ""
+          ) {
+            const item: UndoItem = {
+              kind,
+              id,
+              label: typeof entry["label"] === "string" ? entry["label"] : "",
+              workspaceId,
+            };
+            if (typeof entry["projectId"] === "string" && entry["projectId"] !== "") {
+              item.projectId = entry["projectId"];
+            }
+            undo.push(item);
+          }
+        }
+      }
+      if (links.length > 0 || undo.length > 0) {
+        callbacks.onCreated?.({ links, undo });
       }
       return;
     }

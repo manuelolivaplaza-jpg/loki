@@ -192,6 +192,52 @@ function cleanTitle(text: string): string {
     .slice(0, 200);
 }
 
+/** Unidades conocidas para "2 kg de pan" (minúsculas, sin tildes). */
+const QUANTITY_UNITS: ReadonlySet<string> = new Set([
+  "kg", "g", "gr", "mg", "l", "lt", "ml", "litro", "litros",
+  "doc", "docena", "docenas", "paq", "paquete", "paquetes",
+  "caja", "cajas", "botella", "botellas", "lata", "latas",
+  "bolsa", "bolsas", "unidad", "unidades", "u", "ud", "uds",
+  "kilo", "kilos", "gramo", "gramos", "taza", "tazas",
+]);
+
+export interface ParsedQuantity {
+  /** "2" o "" si no había número. */
+  quantity: string;
+  /** "kg" o "" si no había unidad conocida. */
+  unit: string;
+  /** Resto ("pan"). */
+  text: string;
+}
+
+/**
+ * Separa "2 kg de pan" en cantidad/unidad/texto (sin IA). Solo cuando
+ * empieza con número; "un par de" no cuenta como cantidad exacta.
+ */
+export function parseQuantity(raw: string): ParsedQuantity {
+  const normalized = normalizeIntent(raw.trim());
+  const match = normalized.match(/^(\d+(?:[.,]\d+)?)\s*([a-z]+)?\s+(.+)$/);
+  if (match === null) {
+    return { quantity: "", unit: "", text: raw.trim().slice(0, 200) };
+  }
+  const maybeUnit = (match[2] ?? "").trim();
+  if (maybeUnit !== "" && !QUANTITY_UNITS.has(maybeUnit)) {
+    // "3 huevos revueltos": número + texto (sin unidad).
+    return {
+      quantity: match[1] ?? "",
+      unit: "",
+      text: `${maybeUnit} ${match[3] ?? ""}`.trim().slice(0, 200),
+    };
+  }
+  // Quita el "de" intermedio ("2 kg de pan" -> "pan").
+  const rest = (match[3] ?? "").replace(/^de\s+/, "").trim();
+  return {
+    quantity: match[1] ?? "",
+    unit: maybeUnit,
+    text: (rest === "" ? match[3] ?? "" : rest).slice(0, 200),
+  };
+}
+
 /** Extrae tokens @usuario normalizados (sin @). */
 export function extractIntentMentions(text: string): string[] {
   const out: string[] = [];
@@ -212,7 +258,7 @@ const REMIND_RE =
   /(recuerdame|recuerdale|recuerdanos|avisame|avisale|recordatorio|no (te|se) (olvide|olviden)|no olvidar)/;
 const TASK_RE = /(crea|crea|crear|agrega|agrega|anade|anota|suma)\s+(una\s+)?tarea/;
 const EVENT_RE = /(agenda|agendar|crea|crear|agrega|anade|programa)\s+(un\s+)?(evento|cita|reunion|junta|llamada|clase)/;
-const LIST_RE = /(agrega|agrega|anade|suma|anota|pon)\s+(.+?)\s+a la lista\s+(del\s+|de la\s+|de\s+)?(.+)?$/;
+const LIST_RE = /(agrega|agrega|anade|suma|anota|pon)\s+(.+?)\s+a la lista(?:\s+(?:(del|de la|de)\s+)?(.+))?$/;
 
 function matchList(normalized: string): { item: string; list: string | null } | null {
   const match = normalized.match(LIST_RE);

@@ -8,6 +8,7 @@ import {
   CalendarPlus,
   FolderPlus,
   Lightbulb,
+  ListPlus,
   Send,
   UserPlus,
   type LucideIcon,
@@ -38,6 +39,7 @@ export const QUICK_ACTIONS: readonly QuickAction[] = [
   { key: "idea", title: "Nueva idea", description: "Anota algo antes de olvidarlo", icon: Lightbulb, href: "/ideas" },
   { key: "evento", title: "Nuevo evento o fecha", description: "Agenda en el calendario", icon: CalendarPlus, href: "/calendario" },
   { key: "proyecto", title: "Nuevo proyecto", description: "Organiza tareas en un espacio", icon: FolderPlus, href: "/proyectos" },
+  { key: "lista", title: "Nueva lista", description: "Compras, quehaceres o checklist", icon: ListPlus, href: "/proyectos?tab=listas" },
   { key: "post", title: "Compartir algo", description: "Publica un post en el espacio", icon: Send, href: "/chat/publicaciones" },
   { key: "invitar", title: "Invitar miembro", description: "Suma a alguien a tu espacio", icon: UserPlus, href: null },
 ];

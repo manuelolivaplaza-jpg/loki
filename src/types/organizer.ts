@@ -144,3 +144,48 @@ export interface InviteItem {
   revokedAt: Timestamp | null;
   createdAt: Timestamp;
 }
+
+export type ListKind = "groceries" | "chores" | "checklist";
+
+export interface ShoppingList {
+  id: string;
+  workspaceId: string;
+  title: string;
+  emoji: string;
+  color: string;
+  kind: ListKind;
+  pinned: boolean;
+  archived: boolean;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+  /** Ítems sin marcar / total (para el widget de Inicio). */
+  open: number;
+  total: number;
+}
+
+export interface ListItem {
+  id: string;
+  listId: string;
+  workspaceId: string;
+  text: string;
+  quantity: string;
+  unit: string;
+  category: string;
+  checked: boolean;
+  checkedBy: string | null;
+  checkedAt: Timestamp | null;
+  assigneeId: string | null;
+  dueAt: Timestamp | null;
+  position: number;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface ListWatcher {
+  userId: string;
+  listId: string;
+  onAdd: boolean;
+  onComplete: boolean;
+}

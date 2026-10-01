@@ -23,7 +23,14 @@ export interface ChatDoc {
   lastMessage: ChatLastMessage | null;
 }
 
-export type MessageType = "user" | "ai" | "system" | "post";
+export type MessageType = "user" | "ai" | "system" | "post" | "card";
+
+/** Datos de tarjeta (lista viva, etc.). Nunca se renderiza como HTML. */
+export type MessageMeta = {
+  kind?: string;
+  list_id?: string;
+  [key: string]: unknown;
+};
 
 export type AttachmentKind = "image" | "video" | "audio" | "file";
 
@@ -73,6 +80,8 @@ export interface MessageDoc {
   editedAt: Timestamp | null;
   deleted: boolean;
   type: MessageType;
+  /** Datos de tarjeta (`card`): p. ej. { kind: "list", list_id }. */
+  meta?: MessageMeta | null;
 }
 
 export interface AiChatDoc {

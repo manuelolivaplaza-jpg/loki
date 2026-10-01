@@ -58,14 +58,34 @@ import {
   setMemberRole,
   type AcceptInviteResult,
 } from "@/lib/data/invites";
+import {
+  addListItem,
+  clearCheckedItems,
+  createShoppingList,
+  deleteListItem,
+  deleteShoppingList,
+  getListWatchers,
+  listItems,
+  listShoppingLists,
+  listenListItems,
+  listenShoppingLists,
+  setItemChecked,
+  setListWatcher,
+  updateListItem,
+  updateShoppingList,
+  type NewListItem,
+} from "@/lib/data/lists";
 import type {
   EventItem,
   EventOccurrence,
   IdeaItem,
   InviteItem,
+  ListItem,
+  ListWatcher,
   NotificationItem,
   NotificationPrefs,
   ProjectItem,
+  ShoppingList,
   TaskItem,
 } from "@/types/organizer";
 
@@ -455,5 +475,153 @@ export function useRemoveMember(): UseMutationResult<void, Error, { wsId: string
   return useMutation({
     mutationFn: ({ wsId, uid }) => removeMember(wsId, uid),
     onSuccess: () => invalidate([["members"], ["workspaces"]]),
+  });
+}
+
+// --- Listas compartidas ----------------------------------------------------------
+
+export function useShoppingLists(wsId: string | null): UseQueryResult<ShoppingList[], Error> {
+  const queryClient = useQueryClient();
+  const query = useQuery<ShoppingList[], Error>({
+    queryKey: ["lists", wsId],
+    queryFn: () => listShoppingLists(wsId ?? ""),
+    enabled: wsId !== null,
+  });
+  React.useEffect(() => {
+    if (wsId === null) return;
+    const stop = listenShoppingLists(wsId, () => {
+      void queryClient.invalidateQueries({ queryKey: ["lists", wsId] });
+    });
+    return stop;
+  }, [wsId, queryClient]);
+  return query;
+}
+
+export function useListItems(listId: string | null): UseQueryResult<ListItem[], Error> {
+  const queryClient = useQueryClient();
+  const query = useQuery<ListItem[], Error>({
+    queryKey: ["list-items", listId],
+    queryFn: () => listItems(listId ?? ""),
+    enabled: listId !== null,
+  });
+  React.useEffect(() => {
+    if (listId === null) return;
+    const stop = listenListItems(listId, () => {
+      void queryClient.invalidateQueries({ queryKey: ["list-items", listId] });
+      void queryClient.invalidateQueries({ queryKey: ["lists"] });
+    });
+    return stop;
+  }, [listId, queryClient]);
+  return query;
+}
+
+export function useCreateShoppingList(
+  wsId: string | null,
+): UseMutationResult<string, Error, { uid: string; title: string; emoji?: string; color?: string; kind?: ShoppingList["kind"] }> {
+  const invalidate = useInvalidateKeys();
+  return useMutation({
+    mutationFn: ({ uid, ...input }) => {
+      if (wsId === null) throw new Error("Falta el espacio.");
+      return createShoppingList(wsId, uid, input);
+    },
+    onSuccess: () => invalidate([["lists"]]),
+  });
+}
+
+export function useUpdateShoppingList(): UseMutationResult<void, Error, { id: string; patch: { title?: string; emoji?: string; color?: string; pinned?: boolean; archived?: boolean } }> {
+  const invalidate = useInvalidateKeys();
+  return useMutation({
+    mutationFn: ({ id, patch }) => updateShoppingList(id, patch),
+    onSuccess: () => invalidate([["lists"]]),
+  });
+}
+
+export function useDeleteShoppingList(): UseMutationResult<void, Error, string> {
+  const invalidate = useInvalidateKeys();
+  return useMutation({
+    mutationFn: (id: string) => deleteShoppingList(id),
+    onSuccess: () => invalidate([["lists"]]),
+  });
+}
+
+export function useAddListItem(
+  listId: string | null,
+  wsId: string | null,
+): UseMutationResult<string, Error, { uid: string; input: NewListItem }> {
+  const invalidate = useInvalidateKeys();
+  return useMutation({
+    mutationFn: ({ uid, input }) => {
+      if (listId === null || wsId === null) throw new Error("Falta la lista.");
+      return addListItem(listId, wsId, uid, input);
+    },
+    onSuccess: () => invalidate([["list-items", listId], ["lists"]]),
+  });
+}
+
+export function useCheckListItem(
+  listId: string | null,
+): UseMutationResult<void, Error, { uid: string; id: string; checked: boolean }> {
+  const invalidate = useInvalidateKeys();
+  return useMutation({
+    mutationFn: ({ uid, id, checked }) => setItemChecked(id, uid, checked),
+    onSuccess: () => invalidate([["list-items", listId], ["lists"]]),
+  });
+}
+
+export function useUpdateListItem(
+  listId: string | null,
+): UseMutationResult<void, Error, { id: string; patch: { text?: string; quantity?: string; unit?: string; category?: string; assigneeId?: string | null; dueAt?: Date | null; position?: number } }> {
+  const invalidate = useInvalidateKeys();
+  return useMutation({
+    mutationFn: ({ id, patch }) => updateListItem(id, patch),
+    onSuccess: () => invalidate([["list-items", listId], ["lists"]]),
+  });
+}
+
+export function useDeleteListItem(
+  listId: string | null,
+): UseMutationResult<void, Error, string> {
+  const invalidate = useInvalidateKeys();
+  return useMutation({
+    mutationFn: (id: string) => deleteListItem(id),
+    onSuccess: () => invalidate([["list-items", listId], ["lists"]]),
+  });
+}
+
+export function useClearCheckedItems(
+  listId: string | null,
+): UseMutationResult<void, Error, void> {
+  const invalidate = useInvalidateKeys();
+  return useMutation({
+    mutationFn: () => {
+      if (listId === null) throw new Error("Falta la lista.");
+      return clearCheckedItems(listId);
+    },
+    onSuccess: () => invalidate([["list-items", listId], ["lists"]]),
+  });
+}
+
+export function useListWatchers(
+  listId: string | null,
+): UseQueryResult<ListWatcher[], Error> {
+  return useQuery<ListWatcher[], Error>({
+    queryKey: ["list-watchers", listId],
+    queryFn: () => getListWatchers(listId ?? ""),
+    enabled: listId !== null,
+  });
+}
+
+export function useSetListWatcher(
+  listId: string | null,
+): UseMutationResult<void, Error, { uid: string; prefs: { onAdd: boolean; onComplete: boolean } | null }> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ uid, prefs }) => {
+      if (listId === null) throw new Error("Falta la lista.");
+      return setListWatcher(uid, listId, prefs);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["list-watchers", listId] });
+    },
   });
 }

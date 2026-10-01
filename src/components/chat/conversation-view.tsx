@@ -452,7 +452,7 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
     [toolPending, isLoki],
   );
 
-  /** Deshace lo recién creado por Loki (tarea, evento o aviso). */
+  /** Deshace lo recién creado por Loki (tarea, evento, aviso o ítem). */
   const handleUndo = React.useCallback(
     async (items: UndoItem[]) => {
       const client = getSupabaseClient();
@@ -465,6 +465,12 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
           }
         } else if (item.kind === "event") {
           const { error } = await client.from("events").delete().eq("id", item.id);
+          if (error !== null) {
+            setSendError("No se pudo deshacer todo. Revisa la pantalla correspondiente.");
+            return;
+          }
+        } else if (item.kind === "list_item") {
+          const { error } = await client.from("list_items").delete().eq("id", item.id);
           if (error !== null) {
             setSendError("No se pudo deshacer todo. Revisa la pantalla correspondiente.");
             return;

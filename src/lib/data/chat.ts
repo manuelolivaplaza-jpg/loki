@@ -213,6 +213,7 @@ function toMessageDoc(
     editedAt: toTimestampOrNull(row.edited_at),
     deleted: row.deleted,
     type: row.type as MessageDoc["type"],
+    meta: (row.meta ?? null) as MessageDoc["meta"],
   };
 }
 
@@ -598,7 +599,7 @@ export function mentionCandidatesWithLoki(
 // --- Mensajes: lectura -------------------------------------------------------
 
 const MESSAGE_COLUMNS =
-  "id, workspace_id, chat_id, author_id, author_name, text, type, mentions, reply_to, thread_parent_id, thread_count, last_reply_at, attachments, edited_at, deleted, created_at";
+  "id, workspace_id, chat_id, author_id, author_name, text, type, mentions, reply_to, thread_parent_id, thread_count, last_reply_at, attachments, edited_at, deleted, meta, created_at";
 
 /** Reacciones de una lista de mensajes: mapa {emoji: uid[]} + última por fecha. */
 async function fetchReactionMaps(
@@ -779,7 +780,9 @@ export type SendMessageInput = {
   replyTo?: MessageReplyRef | null;
   threadParentId?: string | null;
   attachments?: MessageAttachment[];
-  type?: "user" | "post" | "system";
+  type?: "user" | "post" | "system" | "card";
+  /** Datos de tarjeta (solo type "card"): p. ej. { kind: "list", list_id }. */
+  meta?: Record<string, unknown> | null;
   /**
    * Id de cliente para envío optimista y reintentos: si se pasa, el
    * mensaje se escribe con ese id (mismo id al reintentar).
@@ -843,6 +846,7 @@ export async function sendMessage(
           },
     thread_parent_id: input.threadParentId ?? null,
     attachments: (input.attachments ?? []) as unknown as Json,
+    meta: (input.meta ?? {}) as unknown as Json,
   });
   if (error !== null) {
     // El reintento con el mismo id choca con la PK: el mensaje ya está.

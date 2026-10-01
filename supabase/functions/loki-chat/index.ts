@@ -33,7 +33,7 @@
 // SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY.
 // =============================================================================
 
-import { analyzeIntent } from "../_shared/intent.ts";
+import { analyzeIntent, parseQuantity } from "../_shared/intent.ts";
 
 const SUPABASE_URL = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
@@ -139,6 +139,9 @@ const SYSTEM_PROMPT =
   "Sin proyecto explícito usa la Bandeja (omite projectId: el sistema la " +
   "resuelve). Si el pedido trae 2+ cosas usa propose_plan con una acción " +
   "por cosa. Para '¿qué me perdí?' usa get_unread y resume en puntos. " +
+  "Para listas: 'agrega X a la lista del súper' usa add_list_items (los " +
+  "ítems van en `items`, la lista en `list` o `listId`); '¿qué falta " +
+  "comprar?' primero usa read_list y responde con lo no marcado. " +
   "Resuelve personas contra los miembros (pide user_id por nombre " +
   "solo si es único; si hay dos iguales, dilo y no adivines) y fechas con " +
   "la herramienta tal cual te las dicen en ISO (mañana, el viernes, etc.).";
@@ -588,16 +591,72 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: "create_list_item",
-    description: "Agrega un ítem a una lista (punto de extensión: las listas llegan después).",
+    name: "read_list",
+    description: "Lee una lista compartida (lo que falta y lo hecho). Para '¿qué falta comprar?'.",
     parameters: {
       type: "object",
       properties: {
         workspaceId: { type: "string" },
-        list: { type: "string" },
-        item: { type: "string" },
+        listId: { type: "string", description: "Id de la lista (o usa `list` con el nombre)" },
+        list: { type: "string", description: "Nombre aproximado ('súper', 'quehaceres')" },
+        limit: { type: "integer" },
       },
-      required: ["workspaceId", "item"],
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "add_list_items",
+    description: "Agrega uno o varios ítems a una lista existente ('agrega huevos y leche a la lista del súper'). Requiere confirmación.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        listId: { type: "string" },
+        list: { type: "string", description: "Nombre aproximado si no hay listId" },
+        items: {
+          type: "array",
+          description: "Máximo 10. Cada uno: {text, quantity?, unit?}",
+          items: {
+            type: "object",
+            properties: {
+              text: { type: "string" },
+              quantity: { type: "string" },
+              unit: { type: "string" },
+            },
+            required: ["text"],
+          },
+        },
+      },
+      required: ["workspaceId", "items"],
+    },
+  },
+  {
+    name: "check_list_item",
+    description: "Marca (o desmarca) un ítem de lista. Requiere confirmación.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        itemId: { type: "string" },
+        listId: { type: "string" },
+        text: { type: "string", description: "Texto aproximado si no hay itemId" },
+        checked: { type: "boolean", description: "true marca, false desmarca (default true)" },
+      },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "remove_list_item",
+    description: "Quita un ítem de una lista. Requiere confirmación.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        itemId: { type: "string" },
+        listId: { type: "string" },
+        text: { type: "string", description: "Texto aproximado si no hay itemId" },
+      },
+      required: ["workspaceId"],
     },
   },
   {
@@ -615,7 +674,7 @@ const TOOLS: ToolDef[] = [
             properties: {
               action: {
                 type: "string",
-                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task"],
+                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task", "add_list_items", "check_list_item", "remove_list_item"],
               },
               title: { type: "string" },
               startsAt: { type: "string" },
@@ -704,6 +763,9 @@ const WRITE_ACTIONS: ReadonlySet<string> = new Set([
   "update_event",
   "create_post",
   "create_list_item",
+  "add_list_items",
+  "check_list_item",
+  "remove_list_item",
   "propose_plan",
 ]);
 
@@ -716,6 +778,9 @@ const ACTION_LABELS: Record<string, string> = {
   update_event: "Editar evento",
   create_post: "Publicar aviso",
   create_list_item: "Agregar a la lista",
+  add_list_items: "Agregar a la lista",
+  check_list_item: "Marcar ítem",
+  remove_list_item: "Quitar ítem",
   propose_plan: "Plan de acciones",
 };
 
@@ -824,6 +889,28 @@ async function execReadTool(
     }
     return JSON.stringify({ proyectos: rows, progreso: progress });
   }
+  if (name === "read_list") {
+    const list = await resolveList(
+      workspaceId as string,
+      jwt,
+      asString(args["listId"]) ?? asString(args["list_id"]),
+      asString(args["list"]),
+    );
+    if (list === null) return "No encontré esa lista en este espacio.";
+    const rawLimit = args["limit"];
+    const limit = typeof rawLimit === "number" && rawLimit >= 1 && rawLimit <= 100
+      ? Math.floor(rawLimit)
+      : 30;
+    const res = await userRest(
+      `/list_items?list_id=eq.${encodeURIComponent(list.id)}&select=text,quantity,unit,checked&order=checked.asc&order=position.asc&limit=${limit}`,
+      jwt,
+    );
+    const rows = Array.isArray(res.data) ? res.data : [];
+    const open = rows
+      .filter((row) => isRecord(row) && row["checked"] !== true)
+      .map((row) => isRecord(row) ? String(row["quantity"] ?? "") !== "" ? `${String(row["quantity"])}${String(row["unit"] ?? "") !== "" ? ` ${String(row["unit"])}` : ""} ${String(row["text"] ?? "")}`.trim() : String(row["text"] ?? "") : "");
+    return JSON.stringify({ lista: list.title, faltan: open, total: rows.length });
+  }
   if (name === "search_messages") {
     const query = asString(args["query"]) ?? "";
     const chatId = asString(args["chatId"]);
@@ -904,6 +991,63 @@ async function ensureInbox(workspaceId: string, jwt: string): Promise<string | n
   });
   if (!res.ok || typeof res.data !== "string" || res.data === "") return null;
   return res.data;
+}
+
+type SpaceList = { id: string; title: string };
+
+/** Listas del espacio (id + título) con el JWT. */
+async function listSpaceLists(workspaceId: string, jwt: string): Promise<SpaceList[]> {
+  const res = await userRest(
+    `/lists?workspace_id=eq.${encodeURIComponent(workspaceId)}&archived=is.false&select=id,title&order=updated_at.desc&limit=30`,
+    jwt,
+  );
+  if (!res.ok || !Array.isArray(res.data)) return [];
+  const out: SpaceList[] = [];
+  for (const row of res.data) {
+    if (!isRecord(row)) continue;
+    const id = asString(row["id"]);
+    const title = asString(row["title"]) ?? "Lista";
+    if (id !== null) out.push({ id, title });
+  }
+  return out;
+}
+
+/** Resuelve una lista por id o por nombre aproximado ("súper", "super"). */
+async function resolveList(
+  workspaceId: string,
+  jwt: string,
+  listId: string | null,
+  listName: string | null,
+): Promise<SpaceList | null> {
+  if (listId !== null) {
+    const res = await userRest(
+      `/lists?id=eq.${encodeURIComponent(listId)}&workspace_id=eq.${encodeURIComponent(workspaceId)}&select=id,title&limit=1`,
+      jwt,
+    );
+    if (res.ok && Array.isArray(res.data) && isRecord(res.data[0])) {
+      const id = asString(res.data[0]["id"]);
+      if (id !== null) {
+        return { id, title: asString(res.data[0]["title"]) ?? "Lista" };
+      }
+    }
+    return null;
+  }
+  const lists = await listSpaceLists(workspaceId, jwt);
+  if (lists.length === 0) return null;
+  if (listName === null) return lists.length === 1 ? (lists[0] ?? null) : null;
+  const q = normName(listName);
+  const hit = lists.find((entry) => normName(entry.title).includes(q)) ??
+    lists.find((entry) => q.includes(normName(entry.title).split(/\s+/)[0] ?? ""));
+  return hit ?? null;
+}
+
+/** Parte "huevos y leche, pan" en ítems (máx 10, sin IA). */
+function splitListItems(raw: string): string[] {
+  const parts = raw
+    .split(/[\n,;]+|\s+y\s+/g)
+    .map((part) => part.trim().slice(0, 200))
+    .filter((part) => part !== "");
+  return parts.slice(0, 10);
 }
 
 /**
@@ -1264,6 +1408,19 @@ function detectIntentFallback(text: string): LlmToolCall {
   if (/(que me perdi|ponme al dia|resumen de (este|el) chat|que paso aqui|que ha pasado)/.test(lower)) {
     return { name: "get_unread", args: {} };
   }
+  const listAdd = lower.match(/(agrega|añade|suma|anota|pon)\s+(.+?)\s+a la lista\s+(del\s+|de la\s+|de\s+)?(.+)?$/);
+  if (listAdd !== null && (listAdd[2] ?? "").trim() !== "") {
+    return {
+      name: "add_list_items",
+      args: {
+        list: ((listAdd[4] ?? "").trim() || undefined),
+        items: [{ text: (listAdd[2] ?? "").trim().slice(0, 200) }],
+      },
+    };
+  }
+  if (/(que falta|que hay en la lista|que tiene la lista|falta comprar)/.test(lower)) {
+    return { name: "read_list", args: {} };
+  }
   if (/(mis proyectos|proyectos)/.test(lower)) {
     return { name: "list_projects", args: {} };
   }
@@ -1277,7 +1434,7 @@ function paramStr(params: Record<string, unknown>, key: string): string | null {
 }
 
 export type UndoItem = {
-  kind: "task" | "event" | "post";
+  kind: "task" | "event" | "post" | "list_item";
   id: string;
   label: string;
   workspaceId: string;
@@ -1492,9 +1649,139 @@ async function execConfirmedAction(
     );
   }
 
-  if (action === "create_list_item") {
-    // Punto de extensión: las listas compartidas llegan después.
-    return fail("Las listas compartidas aún no están listas. Por ahora lo anoto como tarea si quieres.");
+  if (action === "add_list_items" || action === "create_list_item") {
+    if (workspaceId === null) {
+      return fail("No sé en qué espacio está esa lista. Ábrela y pídemelo ahí.");
+    }
+    const list = await resolveList(
+      workspaceId,
+      ctx.jwt,
+      paramStr(params, "listId") ?? paramStr(params, "list_id"),
+      paramStr(params, "list"),
+    );
+    if (list === null) {
+      return fail("No encontré esa lista en este espacio. Revisa el nombre.");
+    }
+    const rawItems = params["items"];
+    const single = paramStr(params, "item") ?? paramStr(params, "title") ?? paramStr(params, "text");
+    const texts: string[] = Array.isArray(rawItems)
+      ? rawItems.flatMap((entry) => {
+        if (typeof entry === "string") return splitListItems(entry);
+        if (isRecord(entry) && typeof entry["text"] === "string") {
+          const qty = typeof entry["quantity"] === "string" ? entry["quantity"] : "";
+          const unit = typeof entry["unit"] === "string" ? entry["unit"] : "";
+          const prefix = qty !== "" ? `${qty}${unit !== "" ? ` ${unit}` : ""} ` : "";
+          return [`${prefix}${entry["text"]}`.trim().slice(0, 200)];
+        }
+        return [];
+      })
+      : single !== null
+        ? splitListItems(single)
+        : [];
+    const clean = texts.map((t) => t.trim()).filter((t) => t !== "").slice(0, 10);
+    if (clean.length === 0) {
+      return fail("Dime qué agrego a la lista.");
+    }
+    // Posición inicial: tras el último (como en la app).
+    let position = 1024;
+    const last = await userRest(
+      `/list_items?list_id=eq.${encodeURIComponent(list.id)}&select=position&order=position.desc&limit=1`,
+      ctx.jwt,
+    );
+    if (last.ok && Array.isArray(last.data) && isRecord(last.data[0]) && typeof last.data[0]["position"] === "number") {
+      position = (last.data[0]["position"] as number) + 1024;
+    }
+    const createdIds: string[] = [];
+    let added = 0;
+    for (const text of clean) {
+      const parsed = parseQuantity(text);
+      const body = parsed.quantity === "" && parsed.unit === ""
+        ? { list_id: list.id, workspace_id: workspaceId, text: parsed.text, created_by: ctx.uid, position }
+        : { list_id: list.id, workspace_id: workspaceId, text: parsed.text, quantity: parsed.quantity, unit: parsed.unit, created_by: ctx.uid, position };
+      const res = await userRest("/list_items", ctx.jwt, { method: "POST", body });
+      position += 1024;
+      if (res.ok && isRecord(res.data)) {
+        const id = asString(res.data["id"]);
+        if (id !== null) createdIds.push(id);
+        added += 1;
+      }
+    }
+    if (added === 0) return fail("No pude agregar a la lista. Inténtalo de nuevo.");
+    const link = `/proyectos?tab=listas&list=${encodeURIComponent(list.id)}`;
+    const undo = createdIds.map((id) => ({ kind: "list_item" as const, id, label: list.title, workspaceId }));
+    return done(
+      added === 1
+        ? `Listo: agregué “${clean[0]?.slice(0, 100)}” a ${list.title}.`
+        : `Listo: agregué ${added} ítems a ${list.title}.`,
+      [link],
+      undo,
+    );
+  }
+
+  if (action === "check_list_item") {
+    if (workspaceId === null) {
+      return fail("No sé en qué espacio está esa lista.");
+    }
+    const checked = typeof params["checked"] === "boolean" ? params["checked"] : true;
+    const itemId = paramStr(params, "itemId") ?? paramStr(params, "item_id");
+    let targetId = itemId;
+    if (targetId === null) {
+      const text = paramStr(params, "text") ?? paramStr(params, "title") ?? "";
+      const listId = paramStr(params, "listId") ?? paramStr(params, "list_id");
+      if (text === "") return fail("Dime qué ítem marco.");
+      const list = listId !== null
+        ? { id: listId, title: "la lista" }
+        : await resolveList(workspaceId, ctx.jwt, null, paramStr(params, "list"));
+      if (list === null) return fail("No encontré esa lista en este espacio.");
+      const found = await userRest(
+        `/list_items?list_id=eq.${encodeURIComponent(list.id)}&text=ilike.*${encodeURIComponent(text.replace(/[%*]/g, "").slice(0, 60))}*&select=id&limit=5`,
+        ctx.jwt,
+      );
+      if (!found.ok || !Array.isArray(found.data) || !isRecord(found.data[0])) {
+        return fail(`No encontré “${text.slice(0, 60)}” en ${list.title}.`);
+      }
+      targetId = asString(found.data[0]["id"]);
+      if (targetId === null) return fail("No pude marcar ese ítem.");
+    }
+    const res = await userRest(`/list_items?id=eq.${encodeURIComponent(targetId)}`, ctx.jwt, {
+      method: "PATCH",
+      body: checked
+        ? { checked: true, checked_by: ctx.uid, checked_at: new Date().toISOString() }
+        : { checked: false, checked_by: null, checked_at: null },
+    });
+    if (!res.ok) return fail("No pude marcar ese ítem. Inténtalo de nuevo.");
+    return done(checked ? "Listo: lo marqué como hecho." : "Listo: lo dejé sin marcar.");
+  }
+
+  if (action === "remove_list_item") {
+    if (workspaceId === null) {
+      return fail("No sé en qué espacio está esa lista.");
+    }
+    const itemId = paramStr(params, "itemId") ?? paramStr(params, "item_id");
+    let targetId = itemId;
+    if (targetId === null) {
+      const text = paramStr(params, "text") ?? paramStr(params, "title") ?? "";
+      if (text === "") return fail("Dime qué ítem quito.");
+      const listId = paramStr(params, "listId") ?? paramStr(params, "list_id");
+      const list = listId !== null
+        ? { id: listId, title: "la lista" }
+        : await resolveList(workspaceId, ctx.jwt, null, paramStr(params, "list"));
+      if (list === null) return fail("No encontré esa lista en este espacio.");
+      const found = await userRest(
+        `/list_items?list_id=eq.${encodeURIComponent(list.id)}&text=ilike.*${encodeURIComponent(text.replace(/[%*]/g, "").slice(0, 60))}*&select=id&limit=5`,
+        ctx.jwt,
+      );
+      if (!found.ok || !Array.isArray(found.data) || !isRecord(found.data[0])) {
+        return fail(`No encontré “${text.slice(0, 60)}” en ${list.title}.`);
+      }
+      targetId = asString(found.data[0]["id"]);
+      if (targetId === null) return fail("No pude quitar ese ítem.");
+    }
+    const res = await userRest(`/list_items?id=eq.${encodeURIComponent(targetId)}`, ctx.jwt, {
+      method: "DELETE",
+    });
+    if (!res.ok) return fail("No pude quitar ese ítem. Inténtalo de nuevo.");
+    return done("Listo: lo quité de la lista.");
   }
 
   if (action === "create_reminder") {
@@ -2017,10 +2304,49 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // --- Vía determinista (sin modelo): verbo + fecha clara en español ---------
   // Si el analizador está seguro (p. ej. "recuérdame mañana a las 9 sacar
-  // la basura"), se arma la herramienta directo y no se gasta cuota ni LLM.
-  // Funciona sin proveedor configurado: es código, no IA.
+  // la basura" o "agrega huevos y leche a la lista del súper"), se arma la
+  // herramienta directo y no se gasta cuota ni LLM. Funciona sin proveedor
+  // configurado: es código, no IA.
   {
     const quick = analyzeIntent(input.text);
+    // Listas: "agrega X a la lista…" con lista existente (sin LLM).
+    if (quick !== null && quick.confident && quick.action === "add_list") {
+      let wsForTool: string | undefined;
+      if (input.mode === "mention") {
+        const member = await isMember(input.workspaceId, uid);
+        if (!member) return json(403, { code: "forbidden" });
+        wsForTool = input.workspaceId;
+      }
+      const wsId = wsForTool ?? await defaultWorkspaceId(uid, token);
+      if (wsId !== null) {
+        wsForTool = wsId;
+        const list = await resolveList(wsId, token, null, quick.listName);
+        if (list !== null) {
+          const texts = splitListItems(quick.title);
+          if (texts.length > 0) {
+            const items = texts.map((text) => {
+              const parsed = parseQuantity(text);
+              return parsed.quantity === "" && parsed.unit === ""
+                ? { text: parsed.text }
+                : { text: parsed.text, quantity: parsed.quantity, unit: parsed.unit };
+            });
+            const pending = {
+              id: crypto.randomUUID(),
+              action: "add_list_items",
+              label: actionLabel("add_list_items"),
+              params: pendingParams({ items, list: list.title, listId: list.id }, {
+                workspaceId: wsForTool,
+                chatId: input.mode === "mention" ? input.chatId : undefined,
+              }),
+            };
+            return sseReplyStream(null, async (_send, sendPending) => {
+              sendPending(pending);
+            });
+          }
+        }
+      }
+      // Sin lista única que calce: sigue al modelo (o 503 si no hay clave).
+    }
     if (
       quick !== null && quick.confident && quick.dateISO !== null &&
       (quick.action === "remind" || quick.action === "create_event")

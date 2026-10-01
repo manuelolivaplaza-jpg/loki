@@ -24,24 +24,105 @@ const ProjectDialog = dynamic(
   { ssr: false },
 );
 import { ProjectsList } from "@/components/projects/projects-list";
+import { ListsTab } from "@/components/lists/lists-tab";
+import { ListDetail } from "@/components/lists/list-detail";
+import { ShareListDialog } from "@/components/lists/share-list-dialog";
 import {
   useConvertIdea,
   useCreateIdea,
   useDeleteIdea,
   useIdeas,
   useProjects,
+  useShoppingLists,
 } from "@/hooks/use-organizer";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
-import type { IdeaItem, ProjectItem } from "@/types/organizer";
+import type { IdeaItem, ProjectItem, ShoppingList } from "@/types/organizer";
 import { cn } from "@/lib/utils";
 
-export type ProyectosTab = "proyectos" | "ideas";
+export type ProyectosTab = "proyectos" | "ideas" | "listas";
 
 const TABS: readonly { key: ProyectosTab; label: string }[] = [
   { key: "proyectos", label: "Proyectos" },
   { key: "ideas", label: "Ideas" },
+  { key: "listas", label: "Listas" },
 ];
+
+function ListsTabView({
+  wsId,
+  listParam,
+  onOpenList,
+  onCloseList,
+}: {
+  wsId: string | null;
+  listParam: string | null;
+  onOpenList: (id: string) => void;
+  onCloseList: () => void;
+}): React.JSX.Element {
+  const user = useSessionStore((state) => state.user);
+  const listsQuery = useShoppingLists(wsId);
+  const [shareList, setShareList] = React.useState<ShoppingList | null>(null);
+  const lists = listsQuery.data ?? [];
+  const openList =
+    listParam !== null ? (lists.find((item) => item.id === listParam) ?? null) : null;
+  // Enlace directo a una lista: la query aún carga o el id ya no existe.
+  if (listParam !== null && openList === null && wsId !== null) {
+    if (listsQuery.isPending) {
+      return (
+        <div aria-label="Cargando lista" className="mt-2 flex flex-col gap-2">
+          {[0, 1, 2].map((index) => (
+            <span key={index} aria-hidden="true" className="block h-12 animate-pulse rounded-xl bg-surface-soft" />
+          ))}
+        </div>
+      );
+    }
+    return (
+      <div className="mt-2">
+        <button
+          type="button"
+          onClick={onCloseList}
+          className="min-h-11 rounded-full px-4 text-body-sm font-medium text-mention outline-none"
+        >
+          ← Volver a listas
+        </button>
+        <p className="mt-2 text-body-sm text-muted-foreground">
+          Esa lista ya no existe en este espacio.
+        </p>
+      </div>
+    );
+  }
+  // Escritorio: panel a la izquierda, lista abierta a la derecha. Móvil:
+  // una sola columna (la lista abierta es pantalla completa con volver).
+  return (
+    <>
+      <div className="mt-2 lg:grid lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start lg:gap-4">
+        <div className={openList !== null ? "hidden lg:block" : undefined}>
+          <ListsTab
+            wsId={wsId}
+            onOpen={(list) => onOpenList(list.id)}
+          />
+        </div>
+        {openList !== null && wsId !== null ? (
+          <div className="min-w-0 lg:rounded-2xl lg:border lg:border-divider lg:p-4">
+            <ListDetail list={openList} wsId={wsId} onBack={onCloseList} onShare={setShareList} />
+          </div>
+        ) : (
+          <p className="hidden text-body-sm text-muted-foreground lg:mt-8 lg:block lg:text-center">
+            Elige una lista para verla aquí.
+          </p>
+        )}
+      </div>
+      <ShareListDialog
+        open={shareList !== null}
+        list={shareList}
+        wsId={wsId ?? ""}
+        uid={user?.uid ?? null}
+        authorName={user?.displayName?.trim() || "Miembro"}
+        onClose={() => setShareList(null)}
+      />
+    </>
+  );
+}
 
 function IdeasTab({ wsId }: { wsId: string | null }): React.JSX.Element {
   const user = useSessionStore((state) => state.user);
@@ -283,9 +364,16 @@ export function ProyectosTabs({
   const projectsQuery = useProjects(currentWorkspaceId);
 
   const activeTab: ProyectosTab =
-    searchParams.get("tab") === "ideas" ? "ideas" : defaultTab === "ideas" ? "ideas" : "proyectos";
+    searchParams.get("tab") === "ideas"
+      ? "ideas"
+      : searchParams.get("tab") === "listas"
+        ? "listas"
+        : defaultTab === "ideas"
+          ? "ideas"
+          : "proyectos";
   const projectParam = searchParams.get("project");
   const taskParam = searchParams.get("task");
+  const listParam = searchParams.get("list");
 
   const [projectDialogOpen, setProjectDialogOpen] = React.useState(false);
   const [editingProject, setEditingProject] = React.useState<ProjectItem | null>(null);
@@ -296,7 +384,9 @@ export function ProyectosTabs({
 
   function selectTab(tab: ProyectosTab): void {
     if (tab === activeTab) return;
-    router.replace(tab === "ideas" ? "/proyectos?tab=ideas" : "/proyectos");
+    router.replace(
+      tab === "ideas" ? "/proyectos?tab=ideas" : tab === "listas" ? "/proyectos?tab=listas" : "/proyectos",
+    );
   }
 
   function openProjectDetail(project: ProjectItem): void {
@@ -339,6 +429,13 @@ export function ProyectosTabs({
 
       {activeTab === "ideas" ? (
         <IdeasTab wsId={currentWorkspaceId} />
+      ) : activeTab === "listas" ? (
+        <ListsTabView
+          wsId={currentWorkspaceId}
+          listParam={listParam}
+          onOpenList={(id) => router.replace(`/proyectos?tab=listas&list=${encodeURIComponent(id)}`)}
+          onCloseList={() => router.replace("/proyectos?tab=listas")}
+        />
       ) : openProject !== null ? (
         <div className="mt-2">
           <ProjectDetail

@@ -40,7 +40,12 @@ function ActionIcon({ action }: { action: string }): React.JSX.Element {
   }
   if (action === "complete_task") return <CheckCircle2 className={className} aria-hidden="true" />;
   if (action === "create_post") return <Megaphone className={className} aria-hidden="true" />;
-  if (action === "create_list_item") return <ListPlus className={className} aria-hidden="true" />;
+  if (action === "create_list_item" || action === "add_list_items") {
+    return <ListPlus className={className} aria-hidden="true" />;
+  }
+  if (action === "check_list_item") return <CheckCircle2 className={className} aria-hidden="true" />;
+  if (action === "remove_list_item") return <Undo2 className={className} aria-hidden="true" />;
+  if (action === "read_list") return <ListPlus className={className} aria-hidden="true" />;
   return <BellRing className={className} aria-hidden="true" />;
 }
 
@@ -68,12 +73,41 @@ type ItemDraft = {
   /** "" = sin tocar; "none" = solo yo/quitar; uid = responsable. */
   assignee: string;
   projectId: string;
+  /** Solo acciones de lista: nombre + ítems (uno por línea). */
+  listName: string;
+  listItems: string;
+  /** Solo check_list_item. */
+  checked: boolean;
 };
 
+function draftListLines(params: Record<string, unknown>): string {
+  const raw = params["items"];
+  if (Array.isArray(raw)) {
+    return raw
+      .slice(0, 10)
+      .map((entry) => {
+        if (typeof entry === "string") return entry.slice(0, 200);
+        if (typeof entry === "object" && entry !== null) {
+          const rec = entry as Record<string, unknown>;
+          const text = typeof rec["text"] === "string" ? rec["text"] : "";
+          if (text === "") return "";
+          const qty = typeof rec["quantity"] === "string" ? rec["quantity"] : "";
+          const unit = typeof rec["unit"] === "string" ? rec["unit"] : "";
+          return `${qty !== "" ? `${qty}${unit !== "" ? ` ${unit}` : ""} ` : ""}${text}`.slice(0, 200);
+        }
+        return "";
+      })
+      .filter((line) => line !== "")
+      .join("\n");
+  }
+  const single = params["item"] ?? params["title"] ?? params["text"];
+  return typeof single === "string" ? single.slice(0, 200) : "";
+}
+
 function draftFromParams(params: Record<string, unknown>): ItemDraft {
-  const title = typeof params["title"] === "string" || typeof params["text"] === "string"
-    ? String(params["title"] ?? params["text"] ?? "")
-    : "";
+  const title = typeof params["title"] === "string" || typeof params["text"] === "string" || typeof params["item"] === "string"
+    ? String(params["title"] ?? params["item"] ?? params["text"] ?? "")
+    : draftListLines(params).split("\n")[0] ?? "";
   let date = "";
   let time = "";
   for (const key of DATE_KEYS) {
@@ -94,7 +128,10 @@ function draftFromParams(params: Record<string, unknown>): ItemDraft {
   const projectId = typeof params["projectId"] === "string" || typeof params["project_id"] === "string"
     ? String(params["projectId"] ?? params["project_id"] ?? "")
     : "";
-  return { include: true, title, date, time, assignee, projectId };
+  const listName = typeof params["list"] === "string" ? params["list"] : "";
+  const listItems = draftListLines(params);
+  const checked = typeof params["checked"] === "boolean" ? params["checked"] : true;
+  return { include: true, title, date, time, assignee, projectId, listName, listItems, checked };
 }
 
 function applyDraft(
@@ -104,6 +141,18 @@ function applyDraft(
   const next: Record<string, unknown> = { ...params };
   if ("title" in next) next["title"] = draft.title;
   if ("text" in next && !("title" in next)) next["text"] = draft.title;
+  if ("item" in next) next["item"] = draft.title;
+  if ("items" in next) {
+    const lines = draft.listItems
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .slice(0, 10)
+      .map((line) => ({ text: line }));
+    next["items"] = lines;
+  }
+  if ("list" in next && draft.listName !== "") next["list"] = draft.listName;
+  if ("checked" in next) next["checked"] = draft.checked;
   if (draft.date !== "") {
     const iso = joinDateTime(draft.date, draft.time);
     if (iso !== null) {
@@ -293,6 +342,60 @@ export function AiToolCard({
                 <p role="alert" className="text-body-sm leading-5 text-danger">
                   {item.warning}
                 </p>
+              ) : item.action === "add_list_items" || item.action === "create_list_item" ? (
+                <div className="flex flex-col gap-2">
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClass}>Lista</span>
+                    <input
+                      type="text"
+                      aria-label="Lista"
+                      value={draft.listName}
+                      onChange={(event) => setDraft(index, { listName: event.target.value })}
+                      maxLength={120}
+                      className={cn(inputClass, "min-h-11")}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClass}>Ítems (uno por línea)</span>
+                    <textarea
+                      aria-label="Ítems"
+                      value={draft.listItems}
+                      onChange={(event) => setDraft(index, { listItems: event.target.value })}
+                      rows={3}
+                      maxLength={2000}
+                      className="min-h-22 w-full rounded-sm bg-surface-soft px-3 py-2 text-body-sm text-foreground outline-none"
+                    />
+                  </label>
+                </div>
+              ) : item.action === "check_list_item" || item.action === "remove_list_item" ? (
+                <div className="flex flex-col gap-2">
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClass}>
+                      <Pencil className="mr-1 inline h-3 w-3" aria-hidden="true" />
+                      Ítem
+                    </span>
+                    <input
+                      type="text"
+                      aria-label="Ítem"
+                      value={draft.title}
+                      onChange={(event) => setDraft(index, { title: event.target.value })}
+                      maxLength={200}
+                      className={cn(inputClass, "min-h-11")}
+                    />
+                  </label>
+                  {item.action === "check_list_item" ? (
+                    <label className="flex min-h-11 items-center gap-2 text-body-sm text-foreground">
+                      <input
+                        type="checkbox"
+                        aria-label="Marcar como hecho"
+                        checked={draft.checked}
+                        onChange={(event) => setDraft(index, { checked: event.target.checked })}
+                        className="h-6 w-6 shrink-0 accent-[var(--accent)]"
+                      />
+                      Marcar como hecho
+                    </label>
+                  ) : null}
+                </div>
               ) : (
                 <div className="flex flex-col gap-2">
                   <label className="flex flex-col gap-1">

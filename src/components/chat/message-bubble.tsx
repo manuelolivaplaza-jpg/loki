@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import { Sparkles } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
@@ -12,6 +13,49 @@ import { formatPostTime } from "@/lib/chat/posts";
 import { parseMentionSegments } from "@/lib/chat/mentions";
 import type { MessageDoc, MessageSendStatus } from "@/types/chat";
 import { cn } from "@/lib/utils";
+
+/** Tarjeta viva de lista (code splitting: solo se descarga al verla). */
+const ListCard = dynamic(
+  () => import("@/components/lists/list-card").then((mod) => mod.ListCard),
+  {
+    ssr: false,
+    loading: () => (
+      <span aria-label="Cargando lista" className="block h-20 animate-pulse rounded-xl bg-surface-soft" />
+    ),
+  },
+);
+
+/**
+ * Burbuja de tarjeta compartida (lista viva): título + progreso + marcar
+ * desde el chat. El texto siempre por SafeText (nunca HTML).
+ */
+function ListShareBubble({
+  message,
+  showAuthor,
+  showTime,
+}: {
+  message: MessageDoc;
+  showAuthor: boolean;
+  showTime: boolean;
+}): React.JSX.Element {
+  const listId = typeof message.meta?.list_id === "string" ? message.meta.list_id : "";
+  return (
+    <div className="w-full">
+      {showAuthor ? (
+        <p className="mb-1 ml-9 text-meta font-semibold leading-4 text-muted-foreground">
+          {message.authorName}
+        </p>
+      ) : null}
+      <div className="w-fit max-w-full rounded-[22px] border border-divider bg-card px-[14px] py-[10px]">
+        <p className="mb-1 break-words text-[15px] font-semibold leading-[1.45] text-foreground">
+          <SafeText text={message.text} />
+        </p>
+        {listId !== "" && !message.deleted ? <ListCard listId={listId} /> : null}
+      </div>
+      {showTime ? <MessageMeta message={message} /> : null}
+    </div>
+  );
+}
 
 type MessageBubbleProps = {
   message: MessageDoc;
@@ -240,6 +284,10 @@ export function MessageBubble({
         streaming={streaming}
       />
     );
+  }
+
+  if (message.type === "card") {
+    return <ListShareBubble message={message} showAuthor={showAuthor} showTime={showTime} />;
   }
 
   const deleted = message.deleted;

@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import {
   analyzeIntent,
   extractIntentMentions,
+  parseQuantity,
   santiagoOffsetMinutes,
 } from "../src/lib/chat/intent.ts";
 
@@ -103,6 +104,38 @@ equal(analyzeIntent("qué tareas tengo", { now: NOW }), null, "lecturas van al m
 
 // --- Menciones ----------------------------------------------------------------------
 deep(extractIntentMentions("recuérdale a @Juan comprar pan"), ["juan"], "extrae @mención");
+
+// --- Cantidades ----------------------------------------------------------------------
+deep(
+  parseQuantity("2 kg de pan"),
+  { quantity: "2", unit: "kg", text: "pan" },
+  "2 kg de pan se separa",
+);
+deep(
+  parseQuantity("3 huevos"),
+  { quantity: "3", unit: "", text: "huevos" },
+  "número sin unidad",
+);
+deep(
+  parseQuantity("1 docena de huevos"),
+  { quantity: "1", unit: "docena", text: "huevos" },
+  "docena como unidad",
+);
+deep(
+  parseQuantity("leche"),
+  { quantity: "", unit: "", text: "leche" },
+  "sin número no hay cantidad",
+);
+
+// --- Listas: varios ítems y sin nombre -------------------------------------------
+const l2 = analyzeIntent("agrega huevos y leche a la lista del súper", { now: NOW });
+ok(l2 !== null, "detecta varios ítems");
+equal(l2.action, "add_list", "acción add_list múltiple");
+equal(l2.title, "huevos y leche", "título con los dos ítems");
+equal(l2.listName, "super", "lista normalizada");
+const l3 = analyzeIntent("agrega leche a la lista", { now: NOW });
+ok(l3 !== null, "detecta lista sin nombre");
+equal(l3.listName, null, "sin nombre de lista");
 
 // --- Sincronía con la Edge -------------------------------------------------------
 const here = dirname(fileURLToPath(import.meta.url));

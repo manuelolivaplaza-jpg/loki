@@ -20,7 +20,7 @@
 import type { MessageType } from "@/types/chat";
 
 /** Tipos que SÍ actualizan el preview del chat. */
-const PREVIEW_TYPES: readonly MessageType[] = ["user", "ai", "post"];
+const PREVIEW_TYPES: readonly MessageType[] = ["user", "ai", "post", "card"];
 
 /**
  * True si un mensaje de este tipo actualiza `lastMessage` / `updatedAt` del

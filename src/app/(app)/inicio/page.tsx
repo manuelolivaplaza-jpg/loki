@@ -22,6 +22,7 @@ import { InviteDialog } from "@/components/members/invite-dialog";
 import {
   useEventOccurrences,
   useProjects,
+  useShoppingLists,
   useUpdateTask,
   useWorkspaceTasks,
 } from "@/hooks/use-organizer";
@@ -104,6 +105,8 @@ export default function InicioPage(): React.JSX.Element {
   const projectsQuery = useProjects(currentWorkspaceId);
   const weekQuery = useEventOccurrences(currentWorkspaceId, weekStart, weekEnd);
   const upcomingQuery = useEventOccurrences(currentWorkspaceId, now, monthEnd);
+  const listsQuery = useShoppingLists(currentWorkspaceId);
+  const pinnedLists = (listsQuery.data ?? []).filter((list) => list.pinned);
   const updateTask = useUpdateTask();
   const [taskError, setTaskError] = React.useState<string | null>(null);
 
@@ -374,9 +377,45 @@ export default function InicioPage(): React.JSX.Element {
           )}
         </section>
 
+        {pinnedLists.length > 0 ? (
+          <section aria-label="Listas fijadas">
+            <SectionLabel>Listas fijadas</SectionLabel>
+            <Card>
+              {pinnedLists.map((list, index) => (
+                <React.Fragment key={list.id}>
+                  {index > 0 ? <CardDivider /> : null}
+                  <CardRow>
+                    <span aria-hidden="true" className="shrink-0 text-body">
+                      {list.emoji}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-body-sm font-medium text-foreground">
+                        {list.title}
+                      </span>
+                      <span className="block text-meta leading-4 text-muted-foreground">
+                        {list.total === 0
+                          ? "Vacía"
+                          : list.open === 0
+                            ? "Completa"
+                            : `Faltan ${list.open} de ${list.total}`}
+                      </span>
+                    </span>
+                    <Link
+                      href={`/proyectos?tab=listas&list=${encodeURIComponent(list.id)}`}
+                      aria-label={`Abrir ${list.title}`}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full outline-none interactive"
+                    >
+                      <Icon icon={ChevronRight} size={20} className="text-muted-foreground" />
+                    </Link>
+                  </CardRow>
+                </React.Fragment>
+              ))}
+            </Card>
+          </section>
+        ) : null}
+
         <section aria-label="Accesos rápidos">
-          <SectionLabel>Accesos rápidos</SectionLabel>
-          <Card className="p-4">
+          <SectionLabel>Accesos rápidos</SectionLabel>          <Card className="p-4">
             <ul className="grid grid-cols-4 gap-2">
               {QUICK_ACCESS.map((action) => (
                 <li

@@ -184,6 +184,7 @@ type MessageRow = {
   attachments: Json;
   edited_at: string | null;
   deleted: boolean;
+  meta: Json;
   created_at: string;
 };
 
@@ -278,6 +279,47 @@ type MessageLinkRow = {
   task_id: string | null;
   event_id: string | null;
   created_by: string | null;
+  created_at: string;
+};
+
+type ShoppingListRow = {
+  id: string;
+  workspace_id: string;
+  title: string;
+  emoji: string;
+  color: string;
+  kind: string;
+  pinned: boolean;
+  archived: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ListItemRow = {
+  id: string;
+  list_id: string;
+  workspace_id: string;
+  text: string;
+  quantity: string;
+  unit: string;
+  category: string;
+  checked: boolean;
+  checked_by: string | null;
+  checked_at: string | null;
+  assignee_id: string | null;
+  due_at: string | null;
+  position: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type ListWatcherRow = {
+  user_id: string;
+  list_id: string;
+  on_add: boolean;
+  on_complete: boolean;
   created_at: string;
 };
 
@@ -592,6 +634,7 @@ export type Database = {
           attachments?: Json;
           edited_at?: string | null;
           deleted?: boolean;
+          meta?: Json;
           created_at?: string;
         };
         Update: {
@@ -610,6 +653,7 @@ export type Database = {
           attachments?: Json;
           edited_at?: string | null;
           deleted?: boolean;
+          meta?: Json;
           created_at?: string;
         };
         Relationships: [
@@ -635,6 +679,94 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      lists: {
+        Row: ShoppingListRow;
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          title: string;
+          emoji?: string;
+          color?: string;
+          kind?: string;
+          pinned?: boolean;
+          archived?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          title?: string;
+          emoji?: string;
+          color?: string;
+          kind?: string;
+          pinned?: boolean;
+          archived?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      list_items: {
+        Row: ListItemRow;
+        Insert: {
+          id?: string;
+          list_id: string;
+          workspace_id: string;
+          text: string;
+          quantity?: string;
+          unit?: string;
+          category?: string;
+          checked?: boolean;
+          checked_by?: string | null;
+          checked_at?: string | null;
+          assignee_id?: string | null;
+          due_at?: string | null;
+          position?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          list_id?: string;
+          workspace_id?: string;
+          text?: string;
+          quantity?: string;
+          unit?: string;
+          category?: string;
+          checked?: boolean;
+          checked_by?: string | null;
+          checked_at?: string | null;
+          assignee_id?: string | null;
+          due_at?: string | null;
+          position?: number;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      list_watchers: {
+        Row: ListWatcherRow;
+        Insert: {
+          user_id: string;
+          list_id: string;
+          on_add?: boolean;
+          on_complete?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          list_id?: string;
+          on_add?: boolean;
+          on_complete?: boolean;
+          created_at?: string;
+        };
+        Relationships: [];
       };
       message_links: {
         Row: MessageLinkRow;

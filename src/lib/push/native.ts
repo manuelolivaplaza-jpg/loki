@@ -79,6 +79,21 @@ export async function registerNativePush(
   }
   const { PushNotifications } = await import("@capacitor/push-notifications");
 
+  // Canal de Android (importancia alta + sonido): el servidor manda
+  // `channel_id: "loki_default"`. Sin canal, algunos equipos lo silencian.
+  try {
+    await PushNotifications.createChannel({
+      id: "loki_default",
+      name: "Avisos de Loki",
+      description: "Menciones, respuestas, tareas y recordatorios.",
+      importance: 4,
+      sound: "default",
+      vibration: true,
+    });
+  } catch {
+    // Ya existe o la plataforma no usa canales: se sigue igual.
+  }
+
   const current = await PushNotifications.checkPermissions();
   const granted =
     current.receive === "granted"

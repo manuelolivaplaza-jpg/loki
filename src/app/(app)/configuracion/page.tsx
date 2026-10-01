@@ -12,6 +12,7 @@ import { Toggle } from "@/components/ui/toggle";
 import { signOutUser } from "@/lib/auth/actions";
 import { getLokiStatus } from "@/lib/ai/loki";
 import { isPushConfigured, registerPushToken } from "@/lib/push/fcm";
+import { isNativePlatform, registerNativePush } from "@/lib/push/native";
 import { DEFAULT_PREFS } from "@/lib/data/notifications";
 import { GcalSection } from "@/components/calendar/gcal-section";
 import { MembersSection } from "@/components/members/members-section";
@@ -73,6 +74,23 @@ export default function ConfiguracionPage(): React.JSX.Element {
     if (!next) {
       setPushEnabled(false);
       setPushStatus(null);
+      return;
+    }
+    // En la app Android se registra el token nativo (FCM vía
+    // google-services.json); en web, el token del navegador.
+    try {
+      if (await isNativePlatform()) {
+        await registerNativePush((link) => {
+          router.push(link);
+        });
+        setPushEnabled(true);
+        setPushStatus(null);
+        return;
+      }
+    } catch (error) {
+      setPushStatus(
+        error instanceof Error ? error.message : "No se pudo activar las notificaciones.",
+      );
       return;
     }
     if (!isPushConfigured()) {

@@ -1,12 +1,19 @@
 // =============================================================================
 // Push FCM · Edge Function `push-send` (Deno, sin dependencias).
 //
-// Envía una notificación push por FCM HTTP v1 cuando hay un mensaje nuevo.
-// Desactivada por defecto: no hay ningún trigger ni webhook que la llame;
-// cuando Manu la habilite será vía `pg_net` o webhook sobre mensajes nuevos
-// con el cuerpo { workspace_id, chat_id, message_id }.
+// Envía una notificación push por FCM HTTP v1 a los dispositivos de UN
+// usuario. La llama el trigger `maybe_push_notification` (pg_net) o un
+// Database Webhook sobre `notifications` con el cuerpo:
 //
-// Secretos (`supabase/functions/.env`, gitignored):
+//   { user_id, title, body, link, type? }
+//
+// `type` es el tipo de notificación (`mention`, `reply`, …): si el usuario
+// lo apagó en sus preferencias, no se envía nada (pero la bandeja conserva
+// la fila). También acepta el formato de Database Webhook de Supabase:
+//
+//   { type: "INSERT", record: { user_id, title, body, link, type, ... } }
+//
+// Secretos (Edge Functions → Secrets):
 //   FCM_SERVICE_ACCOUNT: JSON de la cuenta de servicio (sin él: 503).
 // El resto lo pone el runtime: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 // =============================================================================
@@ -20,6 +27,9 @@ const CORS: Record<string, string> = {
   "access-control-allow-methods": "POST, OPTIONS",
   "access-control-allow-headers": "authorization, content-type, apikey",
 };
+
+// Canal de notificaciones Android (lo crea la app al registrarse).
+const ANDROID_CHANNEL_ID = "loki_default";
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -129,11 +139,7 @@ async function fcmAccessToken(account: ServiceAccount): Promise<string> {
   return body.access_token;
 }
 
-type PushRequest = { workspace_id: string; chat_id: string; message_id: string };
-
-const MAX_ID = 200;
-
-// --- Límite de peticiones (T35): cubo en memoria por IP, 30 req/min,
+// --- Límite de peticiones: cubo en memoria por IP, 30 req/min,
 // 429 amable en español. Best effort como en `loki-chat`.
 const RATE_LIMIT_MAX = 30;
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -160,25 +166,79 @@ function isRateLimited(req: Request): boolean {
   return false;
 }
 
-function validPushId(value: unknown): value is string {
-  return typeof value === "string" && value !== "" && value.length <= MAX_ID;
+type PushTarget = {
+  userId: string;
+  title: string;
+  body: string;
+  link: string;
+  type: string;
+};
+
+const UUID_RE = /^[0-9a-fA-F-]{36}$/;
+
+function cleanText(value: unknown, max: number): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
 }
 
-function parseRequest(body: unknown): PushRequest | null {
+function cleanLink(value: unknown): string {
+  if (typeof value !== "string" || !value.startsWith("/")) return "/notificaciones";
+  return value.slice(0, 300);
+}
+
+/**
+ * Normaliza el cuerpo: directo `{user_id, title, body, link, type?}` o
+ * webhook de base de datos `{type:"INSERT", record:{...}}`. El modo
+ * antiguo `{workspace_id, chat_id, message_id}` ya no lo llama nadie y se
+ * rechaza con `bad_request` para no enviar pushes a ciegas.
+ */
+function parseTarget(body: unknown): PushTarget | null {
   if (typeof body !== "object" || body === null) return null;
   const raw = body as Record<string, unknown>;
-  if (
-    !validPushId(raw["workspace_id"]) ||
-    !validPushId(raw["chat_id"]) ||
-    !validPushId(raw["message_id"])
-  ) {
-    return null;
+  const record = raw["record"];
+  const source: Record<string, unknown> =
+    typeof record === "object" && record !== null
+      ? (record as Record<string, unknown>)
+      : raw;
+  const userId = source["user_id"];
+  if (typeof userId !== "string" || !UUID_RE.test(userId)) return null;
+  const title = cleanText(source["title"], 80);
+  const text = cleanText(source["body"], 160);
+  if (title === "" || text === "") return null;
+  const type = typeof source["type"] === "string" && source["type"] !== ""
+    ? source["type"]
+    : "mention";
+  return { userId, title, body: text, link: cleanLink(source["link"]), type };
+}
+
+/** Clave de preferencias para cada tipo de notificación. */
+function prefKeyFor(type: string): string | null {
+  switch (type) {
+    case "mention": return "mention";
+    case "reply": return "reply";
+    case "reaction": return "reaction";
+    case "task_assigned": return "task_assigned";
+    case "task_due": return "task_due";
+    case "event_reminder": return "event_reminder";
+    case "invite": return "invite";
+    case "ai_alert": return "ai_alert";
+    default: return null;
   }
-  return {
-    workspace_id: raw["workspace_id"],
-    chat_id: raw["chat_id"],
-    message_id: raw["message_id"],
-  };
+}
+
+function fcmErrorCode(payload: unknown): string {
+  if (typeof payload !== "object" || payload === null) return "";
+  const error = (payload as Record<string, unknown>)["error"];
+  if (typeof error !== "object" || error === null) return "";
+  const details = (error as Record<string, unknown>)["details"];
+  if (!Array.isArray(details)) return "";
+  for (const detail of details) {
+    if (typeof detail !== "object" || detail === null) continue;
+    const code = (detail as Record<string, unknown>)["errorCode"];
+    if (typeof code === "string") return code;
+  }
+  return "";
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -204,54 +264,39 @@ Deno.serve(async (req: Request): Promise<Response> => {
   } catch {
     return json(400, { code: "bad_request" });
   }
-  const input = parseRequest(body);
-  if (input === null) {
+  const target = parseTarget(body);
+  if (target === null) {
     return json(400, { code: "bad_request" });
   }
 
-  // Mensaje + autor (service role: la función es backend).
-  const msgRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/messages?id=eq.${input.message_id}&select=author_id,author_name,text,workspace_id,chat_id&limit=1`,
-    { headers: svcHeaders() },
-  ).catch(() => null);
-  if (msgRes === null || !msgRes.ok) {
-    return json(502, { code: "lookup_failed" });
-  }
-  const msgs = (await msgRes.json()) as {
-    author_id: string | null;
-    author_name: string;
-    text: string;
-  }[];
-  const msg = msgs[0];
-  if (msg === undefined || msg.text.trim() === "") {
-    return json(200, { sent: 0 });
+  // Preferencias: tipo apagado → no molestar (la bandeja conserva la fila).
+  const prefKey = prefKeyFor(target.type);
+  if (prefKey !== null) {
+    const prefsRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/notification_prefs?user_id=eq.${target.userId}&select=${prefKey}&limit=1`,
+      { headers: svcHeaders() },
+    ).catch(() => null);
+    if (prefsRes !== null && prefsRes.ok) {
+      const rows = (await prefsRes.json()) as Record<string, unknown>[];
+      const row = rows[0];
+      if (row !== undefined && row[prefKey] === false) {
+        return json(200, { sent: 0, skipped: "prefs" });
+      }
+    }
   }
 
-  // Tokens de los miembros del espacio menos el autor.
-  const membersRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/workspace_members?workspace_id=eq.${input.workspace_id}&select=user_id`,
-    { headers: svcHeaders() },
-  ).catch(() => null);
-  if (membersRes === null || !membersRes.ok) {
-    return json(502, { code: "lookup_failed" });
-  }
-  const members = (await membersRes.json()) as { user_id: string }[];
-  const targets = members
-    .map((m) => m.user_id)
-    .filter((uid) => uid !== msg.author_id);
-  if (targets.length === 0) {
-    return json(200, { sent: 0 });
-  }
+  // Tokens del destinatario (web + Android/iOS comparten la tabla).
   const tokensRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/push_tokens?user_id=in.(${targets.join(",")})&select=token`,
+    `${SUPABASE_URL}/rest/v1/push_tokens?user_id=eq.${target.userId}&select=token`,
     { headers: svcHeaders() },
   ).catch(() => null);
   if (tokensRes === null || !tokensRes.ok) {
     return json(502, { code: "lookup_failed" });
   }
   const tokens = (await tokensRes.json()) as { token: string }[];
-  if (tokens.length === 0) {
-    return json(200, { sent: 0 });
+  const uniq = [...new Set(tokens.map((t) => t.token).filter((t) => t !== ""))];
+  if (uniq.length === 0) {
+    return json(200, { sent: 0, skipped: "no_tokens" });
   }
 
   let accessToken: string;
@@ -260,10 +305,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   } catch {
     return json(502, { code: "fcm_auth_failed" });
   }
-  const preview =
-    msg.text.length > 120 ? `${msg.text.slice(0, 120)}…` : msg.text;
+
   let sent = 0;
-  for (const { token } of tokens) {
+  const dead: string[] = [];
+  for (const token of uniq) {
     try {
       const res = await fetch(
         `https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`,
@@ -276,20 +321,46 @@ Deno.serve(async (req: Request): Promise<Response> => {
           body: JSON.stringify({
             message: {
               token,
-              notification: { title: msg.author_name, body: preview },
+              notification: { title: target.title, body: target.body },
               data: {
-                workspace_id: input.workspace_id,
-                chat_id: input.chat_id,
-                message_id: input.message_id,
+                link: target.link,
+                type: target.type,
+                title: target.title,
+                body: target.body,
               },
+              android: {
+                priority: "HIGH",
+                notification: {
+                  channel_id: ANDROID_CHANNEL_ID,
+                  sound: "default",
+                  click_action: "FLUTTER_NOTIFICATION_CLICK",
+                },
+              },
+              apns: { payload: { aps: { sound: "default" } } },
             },
           }),
         },
       );
-      if (res.ok) sent += 1;
+      if (res.ok) {
+        sent += 1;
+      } else {
+        const code = fcmErrorCode(await res.json().catch(() => null));
+        if (code === "UNREGISTERED" || code === "SENDER_ID_MISMATCH") {
+          dead.push(token);
+        }
+      }
     } catch {
       // Un token roto no frena al resto.
     }
   }
-  return json(200, { sent });
+
+  // Limpieza: los tokens muertos se borran para no intentarlo más.
+  for (const token of dead) {
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/push_tokens?user_id=eq.${target.userId}&token=eq.${encodeURIComponent(token)}`,
+      { method: "DELETE", headers: svcHeaders() },
+    ).catch(() => null);
+  }
+
+  return json(200, { sent, cleaned: dead.length });
 });

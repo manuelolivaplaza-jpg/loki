@@ -12,6 +12,7 @@ import { Sidebar } from "@/components/shell/sidebar";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { WorkspaceBootstrap } from "@/components/workspaces/workspace-bootstrap";
+import { NativePushBootstrap } from "@/components/push/native-push-bootstrap";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { normalizePathname, useAppPathname } from "@/lib/navigation";
 import { useUiStore } from "@/stores/ui-store";
@@ -77,6 +78,7 @@ export function AppShell({ children }: AppShellProps): React.JSX.Element {
   return (
     <div className="min-h-dvh bg-background text-foreground">
       <WorkspaceBootstrap />
+      <NativePushBootstrap />
       <MobileHeader title={headerTitle} />
 
       <div className="flex w-full items-start">

@@ -138,7 +138,8 @@ const SYSTEM_PROMPT =
   "escritura: el sistema pide confirmación antes de ejecutar. " +
   "Sin proyecto explícito usa la Bandeja (omite projectId: el sistema la " +
   "resuelve). Si el pedido trae 2+ cosas usa propose_plan con una acción " +
-  "por cosa. Resuelve personas contra los miembros (pide user_id por nombre " +
+  "por cosa. Para '¿qué me perdí?' usa get_unread y resume en puntos. " +
+  "Resuelve personas contra los miembros (pide user_id por nombre " +
   "solo si es único; si hay dos iguales, dilo y no adivines) y fechas con " +
   "la herramienta tal cual te las dicen en ISO (mañana, el viernes, etc.).";
 
@@ -663,6 +664,19 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "get_unread",
+    description: "Últimos mensajes no leídos de un chat (para '¿qué me perdí?').",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        chatId: { type: "string" },
+        limit: { type: "number", description: "Máximo 1-40, default 20" },
+      },
+      required: ["workspaceId", "chatId"],
+    },
+  },
+  {
     name: "create_reminder",
     description: "Crea un recordatorio (tarea con hora de aviso, para mí o para alguien con assigneeIds; sin proyecto va a la Bandeja). Requiere confirmación.",
     parameters: {
@@ -740,6 +754,26 @@ async function execReadTool(
     return "Falta el espacio para consultar.";
   }
   const ws = encodeURIComponent(workspaceId as string);
+  if (name === "get_unread") {
+    const chatId = asString(args["chatId"]);
+    if (chatId === null) return "Falta el chat para consultar.";
+    const rawLimit = args["limit"];
+    const limit = typeof rawLimit === "number" && rawLimit >= 1 && rawLimit <= 40
+      ? Math.floor(rawLimit)
+      : 20;
+    const res = await userRest(
+      `/messages?workspace_id=eq.${ws}&chat_id=eq.${encodeURIComponent(chatId)}` +
+        `&thread_parent_id=is.null&deleted=is.false&select=author_name,text,created_at` +
+        `&order=created_at.desc&limit=${limit}`,
+      jwt,
+    );
+    if (!res.ok || !Array.isArray(res.data)) return "No pude leer ese chat.";
+    const rows = (res.data as Record<string, unknown>[]).reverse().map((m) => ({
+      autor: String(m["author_name"] ?? ""),
+      texto: String(m["text"] ?? "").slice(0, 300),
+    }));
+    return JSON.stringify({ no_leidos: rows });
+  }
   if (name === "get_today_summary") {
     const { start, end } = dayRangeISO(new Date());
     const [tasks, events] = await Promise.all([
@@ -1226,6 +1260,9 @@ function detectIntentFallback(text: string): LlmToolCall {
   }
   if (/(mis eventos|pr[oó]ximos eventos|calendario)/.test(lower)) {
     return { name: "list_events", args: {} };
+  }
+  if (/(que me perdi|ponme al dia|resumen de (este|el) chat|que paso aqui|que ha pasado)/.test(lower)) {
+    return { name: "get_unread", args: {} };
   }
   if (/(mis proyectos|proyectos)/.test(lower)) {
     return { name: "list_projects", args: {} };
@@ -1723,7 +1760,8 @@ type ChatRequest =
     chatId: string;
     threadParentId?: string;
     confirm?: ConfirmPayload;
-  };
+  }
+  | { mode: "suggest"; text: string; confirm?: undefined; threadParentId?: undefined };
 
 function parseConfirm(raw: unknown): ConfirmPayload | undefined {
   if (!isRecord(raw)) return undefined;
@@ -1763,6 +1801,9 @@ function parseRequest(body: unknown): ChatRequest | null {
 
   if (mode === "personal") {
     return { mode: "personal", text, confirm };
+  }
+  if (mode === "suggest") {
+    return { mode: "suggest", text };
   }
   const workspaceId = validId(body["workspaceId"]);
   const chatId = validId(body["chatId"]);
@@ -1868,6 +1909,48 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const input = parseRequest(body);
   if (input === null) {
     return json(400, { code: "bad_request" });
+  }
+
+  // --- Modo suggest: título + fecha para convertir un mensaje ---------------
+  // Sin streaming ni guardado: el modelo barato propone, el usuario decide.
+  // Nunca automático. Consume cuota normal del espacio del usuario.
+  if (input.mode === "suggest") {
+    if (!isConfigured()) {
+      return json(503, {
+        code: "not_configured",
+        message: "Loki IA sin configurar. Pide al administrador que configure el proveedor.",
+      });
+    }
+    const wsId = await defaultWorkspaceId(uid, token);
+    const quota = await reserveQuota(wsId, uid, Math.max(1, Math.ceil(input.text.length / 250)));
+    if (!quota.allowed) {
+      return json(429, {
+        code: "limit",
+        message: quota.reason.startsWith("space")
+          ? "Este espacio llegó a su límite de IA de hoy."
+          : "Llegaste al límite diario de Loki IA. Vuelve mañana.",
+      });
+    }
+    try {
+      const raw = await completeText([
+        {
+          role: "system",
+          content: "Devuelves SOLO un JSON {\"title\": string (máx 80, lo esencial del texto), \"dateISO\": string ISO 8601 o null si no hay fecha clara}. Sin adornos ni markdown.",
+        },
+        { role: "user", content: input.text.slice(0, 1000) },
+      ]);
+      const parsed: unknown = JSON.parse(raw.replace(/^```json|```$/g, "").trim());
+      const title = isRecord(parsed) && typeof parsed["title"] === "string"
+        ? parsed["title"].slice(0, 80)
+        : "";
+      const dateISO = isRecord(parsed) && typeof parsed["dateISO"] === "string" &&
+          !Number.isNaN(Date.parse(parsed["dateISO"]))
+        ? parsed["dateISO"]
+        : null;
+      return json(200, { title, dateISO });
+    } catch {
+      return json(502, { code: "provider_error" });
+    }
   }
 
   // --- Segundo POST: confirmación de una acción pendiente -----------------------
@@ -2121,7 +2204,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ? { workspaceId: mentionCtx.workspaceId }
       : {}),
     ...(fallbackWs !== null ? { workspaceId: fallbackWs } : {}),
-    ...(mentionCtx !== null && tool.name === "search_messages" &&
+    ...(mentionCtx !== null && (tool.name === "search_messages" || tool.name === "get_unread") &&
         asString(tool.args["chatId"]) === null
       ? { chatId: mentionCtx.chatId }
       : {}),

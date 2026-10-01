@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { MessageSquareReply, MoreHorizontal } from "lucide-react";
+import { CheckCircle2, ListPlus, MessageSquareReply, MoreHorizontal } from "lucide-react";
 import {
   MESSAGE_BUBBLE_FIT_CLASS,
   MESSAGE_ROW_CLASS,
@@ -12,6 +12,7 @@ import { ReactionBar } from "@/components/chat/reaction-bar";
 import { ReactionChips } from "@/components/chat/reaction-chips";
 import { Icon } from "@/components/ui/icon";
 import { formatHour } from "@/lib/chat/format";
+import { useMessageLinks } from "@/lib/data/message-links";
 import type { MessageDoc, MessageSendStatus } from "@/types/chat";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,30 @@ const LONG_PRESS_MS = 500;
 function truncate(text: string, max = 80): string {
   const clean = text.replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+}
+
+/**
+ * Chip discreto del vínculo ("✓ Tarea: Comprar torta"). En vivo: si la
+ * tarea se completa, el chip lo refleja (tacha el título).
+ */
+function MessageLinkChip({ messageId }: { messageId: string }): React.JSX.Element | null {
+  const links = useMessageLinks(messageId);
+  if (links.length === 0) return null;
+  return (
+    <ul aria-label="Convertido en" className="mt-1 flex flex-col items-start gap-1">
+      {links.map((link) => (
+        <li
+          key={link.id}
+          className="flex items-center gap-1 text-meta font-medium leading-4 text-muted-foreground"
+        >
+          <Icon icon={CheckCircle2} size={20} aria-hidden="true" />
+          <span className={cn(link.done && "line-through")}>
+            {link.kind === "task" ? "Tarea" : "Evento"}: {truncate(link.targetTitle, 40)}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 type MessageItemProps = {
@@ -37,6 +62,7 @@ type MessageItemProps = {
   onCopy: (message: MessageDoc) => void;
   onEdit: (message: MessageDoc) => void;
   onDelete: (message: MessageDoc) => void;
+  onConvert?: (message: MessageDoc, kind: "task" | "event" | "reminder") => void;
   /** Chat de IA: oculta reacciones en los mensajes propios. */
   disableOwnReactions?: boolean;
 };
@@ -65,6 +91,7 @@ export function MessageItem({
   onCopy,
   onEdit,
   onDelete,
+  onConvert,
   disableOwnReactions = false,
 }: MessageItemProps): React.JSX.Element {
   const [reactionsOpen, setReactionsOpen] = React.useState(false);
@@ -152,8 +179,11 @@ export function MessageItem({
       else if (action === "copy") onCopy(message);
       else if (action === "edit") onEdit(message);
       else if (action === "delete") onDelete(message);
+      else if (action === "convert_task") onConvert?.(message, "task");
+      else if (action === "convert_event") onConvert?.(message, "event");
+      else if (action === "convert_reminder") onConvert?.(message, "reminder");
     },
-    [closeUnified, message, onReply, onOpenThread, onCopy, onEdit, onDelete],
+    [closeUnified, message, onReply, onOpenThread, onCopy, onEdit, onDelete, onConvert],
   );
 
   const selectReaction = React.useCallback(
@@ -337,6 +367,30 @@ export function MessageItem({
             </button>
           ) : null}
 
+          {interactive && onConvert !== undefined ? (
+            <button
+              type="button"
+              aria-label="Convertir en tarea, evento o recordatorio"
+              title="Convertir en…"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (menuOpen || reactionsOpen) {
+                  closeUnified();
+                } else {
+                  openUnified();
+                }
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              className={cn(
+                "absolute -top-3 hidden h-7 w-7 items-center justify-center rounded-full bg-background shadow-float outline-none",
+                "md:flex md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100",
+                isMine ? "-left-[68px]" : "-right-[68px]",
+              )}
+            >
+              <Icon icon={ListPlus} size={20} />
+            </button>
+          ) : null}
+
           {showReactions ? (
             <ReactionBar
               isMine={isMine}
@@ -383,6 +437,7 @@ export function MessageItem({
               {threadCount} {threadCount === 1 ? "respuesta" : "respuestas"}
             </button>
           ) : null}
+          {interactive ? <MessageLinkChip messageId={message.id} /> : null}
         </div>
       ) : null}
     </div>

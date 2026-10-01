@@ -50,16 +50,30 @@ function parseInputValue(value: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+export type TaskSheetInitial = {
+  title?: string;
+  notes?: string;
+  assigneeIds?: string[];
+  dueAt?: Date | null;
+  reminderAt?: Date | null;
+};
+
 export function TaskSheet({
   open,
   projectId,
   task,
+  initial,
+  onCreated,
   onClose,
 }: {
   open: boolean;
   projectId: string;
   /** Null = crear; con tarea = editar. */
   task: TaskItem | null;
+  /** Prefill al convertir un mensaje (solo crear). */
+  initial?: TaskSheetInitial;
+  /** Al crear: devuelve el id (para el vínculo con el mensaje). */
+  onCreated?: (id: string) => void;
   onClose: () => void;
 }): React.JSX.Element {
   const user = useSessionStore((state) => state.user);
@@ -85,17 +99,29 @@ export function TaskSheet({
 
   React.useEffect(() => {
     if (!open) return;
-    setTitle(task?.title ?? "");
-    setNotes(task?.notes ?? "");
+    setTitle(task?.title ?? initial?.title ?? "");
+    setNotes(task?.notes ?? initial?.notes ?? "");
     setStatus(task?.status ?? "todo");
     setPriority(task?.priority ?? "normal");
-    setAssignees(task?.assigneeIds ?? []);
-    setDue(task?.dueAt ? toInputValue(task.dueAt.toDate()) : "");
-    setReminder(task?.reminderAt ? toInputValue(task.reminderAt.toDate()) : "");
+    setAssignees(task?.assigneeIds ?? initial?.assigneeIds ?? []);
+    setDue(
+      task?.dueAt
+        ? toInputValue(task.dueAt.toDate())
+        : initial?.dueAt != null
+          ? toInputValue(initial.dueAt)
+          : "",
+    );
+    setReminder(
+      task?.reminderAt
+        ? toInputValue(task.reminderAt.toDate())
+        : initial?.reminderAt != null
+          ? toInputValue(initial.reminderAt)
+          : "",
+    );
     setSubtaskTitle("");
     setError(null);
     setConfirmDelete(false);
-  }, [open, task]);
+  }, [open, task, initial]);
 
   const saving = createTask.isPending || updateTask.isPending;
   const members = membersQuery.data ?? [];
@@ -116,7 +142,7 @@ export function TaskSheet({
     setError(null);
     try {
       if (task === null) {
-        await createTask.mutateAsync({
+        const id = await createTask.mutateAsync({
           uid: user.uid,
           input: {
             title,
@@ -127,6 +153,7 @@ export function TaskSheet({
             reminderAt: parseInputValue(reminder),
           },
         });
+        onCreated?.(id);
       } else {
         await updateTask.mutateAsync({
           id: task.id,

@@ -16,7 +16,8 @@ export type AiJobType =
   | "transcribe_audio"
   | "ocr_image"
   | "dispatch_agent"
-  | "redact_highlights";
+  | "redact_highlights"
+  | "chat_digest";
 
 export type AiJobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
@@ -88,6 +89,43 @@ export async function retryAiJob(jobId: string): Promise<boolean> {
     throw new Error("No se pudo reintentar el trabajo.");
   }
   return data === true;
+}
+
+/** Resultado crudo de un trabajo (para el resumen de no leídos). */
+export async function getAiJobResult(jobId: string): Promise<Record<string, unknown> | null> {
+  const { data, error } = await getSupabaseClient()
+    .from("ai_jobs")
+    .select("result")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (error !== null || data === null) return null;
+  const result = (data as { result: unknown }).result;
+  return typeof result === "object" && result !== null
+    ? (result as Record<string, unknown>)
+    : null;
+}
+
+/** Resumen cacheado por (usuario, chat, último mensaje incluido). */
+export async function getCachedChatDigest(
+  uid: string,
+  wsId: string,
+  chatId: string,
+): Promise<{ digest: Record<string, unknown>; lastMessageId: string | null } | null> {
+  const { data, error } = await getSupabaseClient()
+    .from("ai_summaries")
+    .select("summary, last_message_id")
+    .eq("user_id", uid)
+    .eq("chat_key", `${wsId}:${chatId}`)
+    .maybeSingle();
+  if (error !== null || data === null) return null;
+  const row = data as { summary: string; last_message_id: string | null };
+  try {
+    const digest: unknown = JSON.parse(row.summary);
+    if (typeof digest !== "object" || digest === null) return null;
+    return { digest: digest as Record<string, unknown>, lastMessageId: row.last_message_id };
+  } catch {
+    return null;
+  }
 }
 
 export type Unsubscribe = () => void;

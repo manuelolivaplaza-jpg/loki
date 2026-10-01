@@ -5,6 +5,13 @@ import { MessageCircle, Sparkles } from "lucide-react";
 import { AiConnecting } from "@/components/chat/ai-connecting";
 import { AiSuggestions } from "@/components/chat/ai-suggestions";
 import { AiToolCard, UndoBar, type CardConfirmPayload } from "@/components/chat/ai-tool-card";
+import { ConvertSheet, type ConvertKind } from "@/components/chat/convert-sheet";
+import {
+  DigestJobStatus,
+  DigestPanel,
+  DigestPill,
+  type ChatDigest,
+} from "@/components/chat/digest-panel";
 import { Composer } from "@/components/chat/composer";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { MessageList } from "@/components/chat/message-list";
@@ -28,6 +35,8 @@ import {
 import {
   deleteMessage,
   editMessage,
+  fetchMyRead,
+  fetchUnreadWindow,
   membersToCandidates,
   newMessageId,
   toggleReaction,
@@ -60,6 +69,12 @@ import {
 } from "@/lib/ai/tools-client";
 import { useProjects } from "@/hooks/use-organizer";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import {
+  getAiJobResult,
+  getCachedChatDigest,
+  listenAiJob,
+  requestAiJob,
+} from "@/lib/data/ai-jobs";
 import { useMessageStatusStore } from "@/lib/chat/message-status";
 import { Timestamp } from "@/lib/timestamp";
 import { useProfileStore } from "@/stores/profile-store";
@@ -126,6 +141,24 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
   const [toolSending, setToolSending] = React.useState(false);
   // Resultado con enlaces + deshacer tras confirmar (protocolo `created`).
   const [created, setCreated] = React.useState<CreatedResult | null>(null);
+  // Conversión mensaje -> tarea/evento/recordatorio.
+  const [converting, setConverting] = React.useState<{
+    message: MessageDoc;
+    kind: ConvertKind;
+  } | null>(null);
+  // Resumen de no leídos (pastilla + trabajo + tarjeta privada).
+  const [digestWindow, setDigestWindow] = React.useState<{
+    count: number;
+    lastId: string | null;
+    since: string | null;
+  } | null>(null);
+  const [digestJobId, setDigestJobId] = React.useState<string | null>(null);
+  const [digestJobError, setDigestJobError] = React.useState<string | null>(null);
+  const [digest, setDigest] = React.useState<{
+    data: ChatDigest;
+    cached: boolean;
+  } | null>(null);
+  const [digestBusy, setDigestBusy] = React.useState(false);
   type ToolCtx =
     | { mode: "personal" }
     | { mode: "mention"; workspaceId: string; chatId: string; threadParentId?: string };
@@ -282,6 +315,12 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
     setThreadParent(null);
     // Ni acciones de Loki pendientes de confirmar.
     setToolPending(null);
+    setCreated(null);
+    setConverting(null);
+    setDigestWindow(null);
+    setDigestJobId(null);
+    setDigestJobError(null);
+    setDigest(null);
     toolCtxRef.current = null;
   }, [chatId]);
 
@@ -453,6 +492,125 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
     return currentWorkspaceId;
   }, [toolPending, currentWorkspaceId]);
   const toolProjectsQuery = useProjects(toolPending === null ? null : toolWsId);
+
+  // Ventana de no leídos (solo chats de espacio): para la pastilla de resumen.
+  React.useEffect(() => {
+    if (isLoki || wsForLive === null || currentUid === null) {
+      setDigestWindow(null);
+      return;
+    }
+    let cancelled = false;
+    const wsId = wsForLive;
+    const uid = currentUid;
+    void (async () => {
+      const read = await fetchMyRead(wsId, chatId, uid).catch(() => null);
+      const lastRead = read?.lastReadAt ?? null;
+      const sinceMs = lastRead === null ? null : lastRead.toDate().getTime();
+      const window = await fetchUnreadWindow(wsId, chatId, uid, sinceMs).catch(() => null);
+      if (!cancelled && window !== null) setDigestWindow(window);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoki, wsForLive, currentUid, chatId, messages.length]);
+
+  function digestToPanel(result: Record<string, unknown>): ChatDigest {
+    const strList = (value: unknown): string[] =>
+      Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === "string").slice(0, 8)
+        : [];
+    const pointsRaw = Array.isArray(result["points"]) ? result["points"] : [];
+    const points = pointsRaw.slice(0, 8).map((p) => {
+      if (typeof p === "string") return { text: p.slice(0, 300), msg: "" };
+      if (typeof p === "object" && p !== null) {
+        const rec = p as Record<string, unknown>;
+        return {
+          text: typeof rec["text"] === "string" ? rec["text"].slice(0, 300) : "",
+          msg: typeof rec["msg"] === "string" ? rec["msg"] : "",
+        };
+      }
+      return { text: "", msg: "" };
+    }).filter((p) => p.text !== "");
+    return {
+      points,
+      decisions: strList(result["decisions"]),
+      questions: strList(result["questions"]),
+      mentions: strList(result["mentions"]),
+    };
+  }
+
+  /** Pide el resumen: caché vigente primero, si no encola el trabajo. */
+  const handleDigest = React.useCallback(async () => {
+    if (
+      isLoki || wsForLive === null || currentUid === null || digestWindow === null ||
+      digestWindow.lastId === null || digestBusy
+    ) {
+      return;
+    }
+    setDigestBusy(true);
+    setDigestJobError(null);
+    try {
+      const cached = await getCachedChatDigest(currentUid, wsForLive, chatId);
+      if (cached !== null && cached.lastMessageId === digestWindow.lastId) {
+        setDigest({ data: digestToPanel(cached.digest), cached: true });
+        return;
+      }
+      const jobId = await requestAiJob(wsForLive, currentUid, "chat_digest", {
+        chat_id: chatId,
+        after: digestWindow.since,
+        upto: digestWindow.lastId,
+      }, `digest:${wsForLive}:${chatId}:${digestWindow.lastId}`);
+      setDigestJobId(jobId);
+    } catch (error) {
+      setDigestJobError(error instanceof Error ? error.message : "No se pudo pedir el resumen.");
+    } finally {
+      setDigestBusy(false);
+    }
+  }, [isLoki, wsForLive, currentUid, digestWindow, digestBusy, chatId]);
+
+  // Resultado del trabajo en vivo: al terminar se lee el resultado.
+  React.useEffect(() => {
+    if (digestJobId === null) return;
+    const stop = listenAiJob(digestJobId, (job) => {
+      if (job === null || job.status === "queued" || job.status === "running") return;
+      stop();
+      setDigestJobId(null);
+      if (job.status !== "done") {
+        setDigestJobError(job.error ?? "El resumen falló. Reinténtalo.");
+        return;
+      }
+      void getAiJobResult(digestJobId).then((result) => {
+        if (result !== null) setDigest({ data: digestToPanel(result), cached: false });
+      });
+    });
+    return stop;
+  }, [digestJobId]);
+
+  /** Un punto del resumen se convierte en tarea (mismo flujo manual). */
+  const handleDigestPoint = React.useCallback(
+    (title: string) => {
+      const pseudo: MessageDoc = {
+        id: `digest-point-${Date.now()}`,
+        authorId: currentUid ?? "",
+        authorName: chatName,
+        text: title,
+        mentions: [],
+        replyTo: null,
+        threadParentId: null,
+        threadCount: 0,
+        lastReplyAt: null,
+        attachments: [],
+        reactions: {},
+        lastReaction: null,
+        createdAt: Timestamp.now(),
+        editedAt: null,
+        deleted: false,
+        type: "user",
+      };
+      setConverting({ message: pseudo, kind: "task" });
+    },
+    [currentUid, chatName],
+  );
 
   const handleSend = React.useCallback(
     (text: string, mentions: string[], attachments?: MessageAttachment[]) => {
@@ -850,6 +1008,11 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
               onCopy={handleCopy}
               onEdit={handleEdit}
               onDelete={handleDelete}
+              onConvert={
+                isLoki || wsForLive === null
+                  ? undefined
+                  : (message, kind) => setConverting({ message, kind })
+              }
             />
             {streamingMessage !== null ? (
               <div className="px-4 pb-2">
@@ -869,8 +1032,23 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
       {!isLoki ? <TypingIndicator names={typingNames} /> : null}
       {isLoki && aiConnecting ? <AiConnecting /> : null}
       <div className="relative bg-gradient-to-t from-background via-background/85 to-transparent">
-        <div className="absolute -top-12 left-0 right-0 flex justify-center">
+        <div className="absolute -top-12 left-0 right-0 flex flex-col items-center gap-2">
           <NewMessagesPill visible={showNewPill} onClick={handlePillClick} />
+          {!isLoki && digestWindow !== null && digestWindow.count >= 15 && digest === null && digestJobId === null ? (
+            <DigestPill
+              count={digestWindow.count}
+              disabled={lokiConfigured === false || digestBusy}
+              disabledReason={
+                lokiConfigured === false ? "Loki IA sin configurar" : undefined
+              }
+              onClick={() => void handleDigest()}
+            />
+          ) : null}
+          {digestJobError !== null ? (
+            <p role="alert" className="text-center text-body-sm text-danger">
+              {digestJobError}
+            </p>
+          ) : null}
         </div>
         {sendError !== null ? (
           <p role="alert" className="px-4 pb-1 text-center text-body-sm text-danger">
@@ -918,6 +1096,42 @@ export function ConversationView({ chatId }: { chatId: string }): React.JSX.Elem
               items={created.undo}
               onUndo={(items) => void handleUndo(items)}
               onDone={() => setCreated(null)}
+            />
+          </div>
+        ) : null}
+        {digestJobId !== null ? (
+          <div className="mx-auto w-full max-w-[760px] px-4 pb-2">
+            <DigestJobStatus jobId={digestJobId} />
+          </div>
+        ) : null}
+        {digest !== null ? (
+          <div className="mx-auto w-full max-w-[760px] px-4 pb-2">
+            <DigestPanel
+              digest={digest.data}
+              cached={digest.cached}
+              refreshing={digestBusy}
+              onConvertPoint={handleDigestPoint}
+              onRefresh={() => {
+                setDigest(null);
+                void handleDigest();
+              }}
+            />
+          </div>
+        ) : null}
+        {converting !== null && wsForLive !== null && currentUid !== null ? (
+          <div className="mx-auto w-full max-w-[760px] px-0 pb-2">
+            <ConvertSheet
+              message={converting.message}
+              wsId={wsForLive}
+              chatId={chatId}
+              uid={currentUid}
+              authorName={authorName}
+              kind={converting.kind}
+              members={(membersQuery.data ?? []).map((member) => ({
+                uid: member.uid,
+                name: member.displayName,
+              }))}
+              onClose={() => setConverting(null)}
             />
           </div>
         ) : null}

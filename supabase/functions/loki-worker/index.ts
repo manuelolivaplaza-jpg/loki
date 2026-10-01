@@ -398,6 +398,8 @@ async function processJob(job: Job): Promise<Record<string, unknown>> {
     case "day_digest":
     case "redact_highlights":
       return processDigest(job, job.type === "redact_highlights");
+    case "chat_digest":
+      return processChatDigest(job);
     case "transcribe_audio":
     case "ocr_image":
     case "dispatch_agent":
@@ -408,6 +410,84 @@ async function processJob(job: Job): Promise<Record<string, unknown>> {
     default:
       throw Object.assign(new Error("Tipo de trabajo desconocido."), { terminal: true });
   }
+}
+
+/**
+ * Resumen privado de no leídos: puntos, decisiones, preguntas y menciones,
+ * con ids de mensajes para enlazar. Solo mensajes que el usuario puede leer
+ * (miembro del espacio; en DMs, parte del chat). Guarda caché en
+ * ai_summaries (chat_key `ws:chat` + last_message_id).
+ */
+async function processChatDigest(job: Job): Promise<Record<string, unknown>> {
+  const userId = job.requested_by;
+  if (userId === null) throw Object.assign(new Error("Sin usuario."), { terminal: true });
+  const ws = job.workspace_id;
+  const chatId = asString(job.payload["chat_id"]);
+  const after = asString(job.payload["after"]);
+  const upto = asString(job.payload["upto"]);
+  if (chatId === null) throw Object.assign(new Error("Sin chat."), { terminal: true });
+
+  // Membresía del espacio (service role, pero verificada).
+  const member = await svcGet(
+    `/workspace_members?workspace_id=eq.${ws}&user_id=eq.${userId}&select=user_id&limit=1`,
+  );
+  if (!member.ok || !Array.isArray(member.data) || member.data.length === 0) {
+    throw Object.assign(new Error("Sin acceso al espacio."), { terminal: true });
+  }
+  // En DMs, solo si es parte del chat.
+  const chat = await svcGet(
+    `/chats?workspace_id=eq.${ws}&id=eq.${encodeURIComponent(chatId)}&select=type,member_ids&limit=1`,
+  );
+  const chatRow = chat.ok && Array.isArray(chat.data) && isRecord(chat.data[0]) ? chat.data[0] : null;
+  if (chatRow === null) throw Object.assign(new Error("Chat no encontrado."), { terminal: true });
+  if (chatRow["type"] === "dm") {
+    const ids = Array.isArray(chatRow["member_ids"]) ? chatRow["member_ids"] : [];
+    if (!ids.includes(userId)) {
+      throw Object.assign(new Error("Sin acceso a ese chat."), { terminal: true });
+    }
+  }
+
+  let path =
+    `/messages?workspace_id=eq.${ws}&chat_id=eq.${encodeURIComponent(chatId)}` +
+    `&thread_parent_id=is.null&deleted=is.false&select=id,author_name,text,created_at` +
+    `&order=created_at.asc&limit=60`;
+  if (after !== null) path += `&created_at=gt.${encodeURIComponent(after)}`;
+  const msgs = await svcGet(path);
+  const rows = msgs.ok && Array.isArray(msgs.data) ? msgs.data as Record<string, unknown>[] : [];
+  if (rows.length === 0) {
+    return { points: [], decisions: [], questions: [], mentions: [], empty: true };
+  }
+  if (!llmConfigured()) throw Object.assign(new Error("Loki IA sin configurar."), { terminal: true });
+  const corpus = rows
+    .map((m) => `[${String(m["id"] ?? "").slice(0, 8)}] ${String(m["author_name"] ?? "")}: ${String(m["text"] ?? "").slice(0, 300)}`)
+    .join("\n");
+  const q = await reserve(ws, userId, "chat_digest", Math.max(2, Math.ceil(corpus.length / 250)));
+  if (!q.allowed) throw Object.assign(new Error(quotaMessage(q.reason)), { terminal: true });
+  const raw = (await completeFast(
+    "Resumes mensajes de un chat en español. Devuelves SOLO un JSON {\"points\": [{\"text\": string, \"msg\": string (los 8 chars del id entre corchetes)}], \"decisions\": [string], \"questions\": [string], \"mentions\": [string]}. Máximo 6 puntos. Sin adornos ni markdown.",
+    corpus.slice(0, 8000),
+  )).trim();
+  let digest: Record<string, unknown> = { points: [], decisions: [], questions: [], mentions: [] };
+  try {
+    const parsed: unknown = JSON.parse(raw.replace(/^```json|```$/g, "").trim());
+    if (isRecord(parsed)) digest = parsed;
+  } catch {
+    digest = { points: [{ text: raw.slice(0, 500), msg: "" }], decisions: [], questions: [], mentions: [] };
+  }
+  // Caché por (usuario, chat, último mensaje).
+  const chatKey = `${ws}:${chatId}`;
+  const cacheText = JSON.stringify(digest).slice(0, 4000);
+  await fetch(`${SUPABASE_URL}/rest/v1/ai_summaries`, {
+    method: "POST",
+    headers: { ...svcHeaders(), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      user_id: userId,
+      chat_key: chatKey,
+      summary: cacheText,
+      last_message_id: upto,
+    }),
+  }).catch(() => undefined);
+  return { ...digest, chat_key: chatKey, upto };
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {

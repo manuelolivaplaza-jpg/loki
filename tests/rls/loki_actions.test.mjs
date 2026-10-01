@@ -114,4 +114,54 @@ describe("RLS: acciones de Loki (Bandeja)", () => {
     assert.equal(error, null, "el tope no es error SQL");
     assert.equal(blocked, false, "el aviso 11 se bloquea");
   });
+
+  it("vínculos mensaje->tarea: miembros sí, ajenos no", async () => {
+    const { data: tasks } = await member.client
+      .from("tasks")
+      .insert({
+        workspace_id: ws,
+        project_id: inbox,
+        title: "Tarea vinculada",
+        created_by: member.id,
+      })
+      .select("id");
+    const taskId = tasks[0].id;
+    const { data: msgs } = await member.client
+      .from("messages")
+      .insert({
+        workspace_id: ws,
+        chat_id: "general",
+        author_id: member.id,
+        author_name: "Member",
+        text: "hay que comprar la torta",
+        type: "user",
+      })
+      .select("id");
+    const messageId = msgs[0].id;
+    assertAllowed(
+      await member.client.from("message_links").insert({
+        workspace_id: ws,
+        message_id: messageId,
+        kind: "task",
+        task_id: taskId,
+        created_by: member.id,
+      }),
+      "un miembro vincula",
+    );
+    assertDenied(
+      await stranger.client.from("message_links").insert({
+        workspace_id: ws,
+        message_id: messageId,
+        kind: "task",
+        task_id: taskId,
+        created_by: stranger.id,
+      }),
+      "un ajeno no vincula",
+    );
+    const { data: seen } = await member.client
+      .from("message_links")
+      .select("id")
+      .eq("message_id", messageId);
+    assert.ok((seen ?? []).length >= 1, "el miembro ve el vínculo");
+  });
 });

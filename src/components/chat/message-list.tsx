@@ -28,6 +28,8 @@ type MessageListProps = {
   onCopy: (message: MessageDoc) => void;
   onEdit: (message: MessageDoc) => void;
   onDelete: (message: MessageDoc) => void;
+  /** Convertir el mensaje en tarea/evento/recordatorio (opcional). */
+  onConvert?: (message: MessageDoc, kind: "task" | "event" | "reminder") => void;
   /** Chat de IA: oculta reacciones en los mensajes propios. */
   disableOwnReactions?: boolean;
 };
@@ -51,6 +53,7 @@ export function MessageList({
   onCopy,
   onEdit,
   onDelete,
+  onConvert,
   disableOwnReactions = false,
 }: MessageListProps): React.JSX.Element {
   const reduceMotion = useReducedMotion();
@@ -108,6 +111,7 @@ export function MessageList({
                 onCopy={onCopy}
                 onEdit={onEdit}
                 onDelete={onDelete}
+                onConvert={onConvert}
               />
             );
             // w-full en el wrapper: sin él, con items-end del grupo se

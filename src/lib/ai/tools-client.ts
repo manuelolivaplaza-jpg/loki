@@ -331,3 +331,51 @@ export async function confirmLokiAction(
   const outcome = await ssePost(input, { onChunk });
   return outcome.text;
 }
+
+export type ConvertSuggestion = {
+  title: string;
+  dateISO: string | null;
+};
+
+/**
+ * "Mejorar con Loki": el modelo barato propone título y fecha para
+ * convertir un mensaje. Nunca automático: solo sugiere.
+ */
+export async function suggestConvertTitle(text: string): Promise<ConvertSuggestion> {
+  const url = functionUrl();
+  if (url === null) {
+    throw new LokiError("not_configured", LOKI_NOT_CONFIGURED_TITLE);
+  }
+  const { data } = await getSupabaseClient().auth.getSession();
+  const token = data.session?.access_token ?? "";
+  if (token === "") {
+    throw new LokiError("no_session", "Tu sesión expiró. Vuelve a iniciar sesión.");
+  }
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: edgeHeaders(token),
+      body: JSON.stringify({ mode: "suggest", text: text.slice(0, 1000) }),
+    });
+  } catch {
+    throw new LokiError("network", "Error de red. Revisa tu conexión e inténtalo de nuevo.");
+  }
+  if (res.status === 503) {
+    throw new LokiError("not_configured", LOKI_NOT_CONFIGURED_TITLE);
+  }
+  if (res.status === 429) {
+    throw new LokiError("limit", "Llegaste al límite diario de Loki IA. Vuelve mañana.");
+  }
+  if (!res.ok) {
+    throw new LokiError("failed", "Loki no pudo sugerir. Inténtalo de nuevo.");
+  }
+  const body: unknown = await res.json().catch(() => null);
+  if (!isRecord(body)) {
+    throw new LokiError("failed", "Loki no pudo sugerir. Inténtalo de nuevo.");
+  }
+  return {
+    title: typeof body["title"] === "string" ? body["title"].slice(0, 80) : "",
+    dateISO: typeof body["dateISO"] === "string" ? body["dateISO"] : null,
+  };
+}

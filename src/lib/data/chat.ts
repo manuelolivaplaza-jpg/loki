@@ -1349,10 +1349,42 @@ export function listenMyRead(
 }
 
 /**
- * Cuenta mensajes del timeline principal más nuevos que `since`
- * (excluyendo los míos). Sin filtro de fecha en servidor para no pedir
- * índices nuevos: trae los últimos 50 y filtra en cliente.
+ * Ventana de no leídos: conteo + id del último + desde cuándo (para el
+ * resumen de no leídos y su caché). Misma regla que fetchUnreadCount.
  */
+export async function fetchUnreadWindow(
+  wsId: string,
+  chatId: string,
+  uid: string,
+  sinceMs: number | null,
+): Promise<{ count: number; lastId: string | null; since: string | null }> {
+  const { data, error } = await getSupabaseClient()
+    .from("messages")
+    .select("id, author_id, created_at")
+    .eq("workspace_id", wsId)
+    .eq("chat_id", chatId)
+    .is("thread_parent_id", null)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(100);
+  if (error !== null) return { count: 0, lastId: null, since: null };
+  let count = 0;
+  let lastId: string | null = null;
+  let since: string | null = null;
+  for (const row of (data ?? []) as { id: string; author_id: string | null; created_at: string }[]) {
+    if (row.author_id === uid) continue;
+    const ms = new Date(row.created_at).getTime();
+    const isNew = sinceMs === null || Number.isNaN(ms) || ms > sinceMs;
+    if (!isNew) continue;
+    count += 1;
+    // El primero en orden desc es el más nuevo.
+    if (lastId === null) {
+      lastId = row.id;
+      since = row.created_at;
+    }
+  }
+  return { count, lastId, since };
+}
 export async function fetchUnreadCount(
   wsId: string,
   chatId: string,

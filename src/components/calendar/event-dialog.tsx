@@ -59,15 +59,28 @@ function defaultRange(preset: Date | null): { start: Date; end: Date } {
   return { start, end: new Date(start.getTime() + 3_600_000) };
 }
 
+export type EventDialogPreset = {
+  title?: string;
+  description?: string;
+  start?: Date | null;
+  attendees?: string[];
+};
+
 export function EventDialog({
   open,
   event,
   presetStart,
+  preset,
+  onCreated,
   onClose,
 }: {
   open: boolean;
   event: EventItem | null;
   presetStart: Date | null;
+  /** Prefill al convertir un mensaje (solo crear). */
+  preset?: EventDialogPreset;
+  /** Al crear: devuelve el id (para el vínculo con el mensaje). */
+  onCreated?: (id: string) => void;
   onClose: () => void;
 }): React.JSX.Element {
   const user = useSessionStore((state) => state.user);
@@ -109,21 +122,21 @@ export function EventDialog({
         recurrence: event.recurrence ?? "",
       };
     }
-    const range = defaultRange(presetStart);
+    const range = defaultRange(preset?.start ?? presetStart);
     return {
-      title: "",
-      description: "",
+      title: preset?.title ?? "",
+      description: preset?.description ?? "",
       start: toInputValue(range.start),
       end: toInputValue(range.end),
       allDay: false,
       location: "",
       color: AVATAR_COLORS[0]?.value ?? "#1d9bf0",
       projectId: "",
-      attendees: [] as string[],
+      attendees: preset?.attendees ?? ([] as string[]),
       reminders: [] as number[],
       recurrence: "" as "" | EventRecurrence,
     };
-  }, [event, presetStart]);
+  }, [event, presetStart, preset]);
 
   const [title, setTitle] = React.useState(initial.title);
   const [description, setDescription] = React.useState(initial.description);
@@ -202,6 +215,7 @@ export function EventDialog({
             setGcalNotice("Se guardó en Loki, pero no llegó a Google.");
           });
         }
+        onCreated?.(id);
       } else {
         await updateEvent.mutateAsync({
           id: event.id,

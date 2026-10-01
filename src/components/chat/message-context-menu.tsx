@@ -1,7 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { Copy, MessageSquareReply, Pencil, Reply, Trash2 } from "lucide-react";
+import {
+  BellRing,
+  CalendarPlus,
+  Copy,
+  ListPlus,
+  MessageSquareReply,
+  Pencil,
+  Reply,
+  Trash2,
+} from "lucide-react";
 import { MenuCard, MenuItem } from "@/components/ui/menu-card";
 import type { MessageDoc } from "@/types/chat";
 import { cn } from "@/lib/utils";
@@ -11,7 +20,10 @@ export type MessageMenuAction =
   | "thread"
   | "copy"
   | "edit"
-  | "delete";
+  | "delete"
+  | "convert_task"
+  | "convert_event"
+  | "convert_reminder";
 
 type MessageContextMenuProps = {
   message: MessageDoc;
@@ -114,6 +126,31 @@ export function MessageContextMenu({
             onClick={() => onAction("copy")}
           >
             Copiar
+          </MenuItem>
+          <div aria-hidden="true" className="mx-2 my-1 border-t border-divider" />
+          <p className="px-3 pb-1 pt-1 text-meta font-semibold uppercase tracking-wide text-muted-foreground">
+            Convertir en…
+          </p>
+          <MenuItem
+            icon={ListPlus}
+            role="menuitem"
+            onClick={() => onAction("convert_task")}
+          >
+            Tarea
+          </MenuItem>
+          <MenuItem
+            icon={CalendarPlus}
+            role="menuitem"
+            onClick={() => onAction("convert_event")}
+          >
+            Evento
+          </MenuItem>
+          <MenuItem
+            icon={BellRing}
+            role="menuitem"
+            onClick={() => onAction("convert_reminder")}
+          >
+            Recordatorio
           </MenuItem>
           {isMine ? (
             <MenuItem

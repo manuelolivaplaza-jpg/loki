@@ -262,6 +262,25 @@ type AiSpaceLimitRow = {
   updated_at: string;
 };
 
+type AiSummaryRow = {
+  user_id: string;
+  chat_key: string;
+  summary: string;
+  last_message_id: string | null;
+  updated_at: string;
+};
+
+type MessageLinkRow = {
+  id: string;
+  workspace_id: string;
+  message_id: string;
+  kind: string;
+  task_id: string | null;
+  event_id: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
 type PushTokenRow = {
   user_id: string;
   token: string;
@@ -432,6 +451,24 @@ export type Database = {
         };
         Relationships: [];
       };
+      ai_summaries: {
+        Row: AiSummaryRow;
+        Insert: {
+          user_id: string;
+          chat_key: string;
+          summary?: string;
+          last_message_id?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          chat_key?: string;
+          summary?: string;
+          last_message_id?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       chat_reads: {
         Row: ChatReadRow;
         Insert: {
@@ -598,6 +635,30 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      message_links: {
+        Row: MessageLinkRow;
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          message_id: string;
+          kind: string;
+          task_id?: string | null;
+          event_id?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          message_id?: string;
+          kind?: string;
+          task_id?: string | null;
+          event_id?: string | null;
+          created_by?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
       };
       profiles: {
         Row: ProfileRow;

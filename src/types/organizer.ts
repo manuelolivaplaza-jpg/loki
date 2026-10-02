@@ -99,7 +99,8 @@ export type NotificationType =
   | "list"
   | "poll"
   | "memory"
-  | "daily";
+  | "daily"
+  | "agent";
 
 export interface NotificationItem {
   id: string;
@@ -125,7 +126,8 @@ export type NotificationTypeKey =
   | "list"
   | "poll"
   | "memory"
-  | "daily";
+  | "daily"
+  | "agent";
 
 export interface NotificationPrefs {
   mention: boolean;
@@ -142,6 +144,8 @@ export interface NotificationPrefs {
   memory: boolean;
   /** Resumen diario "Tu día" (push de la mañana). */
   daily: boolean;
+  /** Agentes personales ("@mi-bot terminó", "@mi-bot necesita tu respuesta"). */
+  agent: boolean;
   quietStart: string | null;
   quietEnd: string | null;
 }

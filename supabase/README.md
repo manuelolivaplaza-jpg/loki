@@ -15,6 +15,10 @@ Este directorio contiene:
 | `functions/loki-worker/` | Trabajadora de `ai_jobs`: resúmenes, digest, transcripción de audio y OCR de imágenes |
 | `functions/push-send/` | Envío de FCM (respeta `notification_prefs` y el horario de silencio) |
 | `functions/google-calendar/` | Sincronización bidireccional con Google Calendar |
+| `functions/agent-connections/` | Agentes personales: registro y secretos (cifrados, nunca vuelven al cliente) |
+| `functions/agent-dispatch/` | Agentes personales: despierta por `notify_agent_dispatch` (pg_net) y llama al adaptador |
+| `functions/agent-callback/` | Agentes personales: recibe progreso y resultado del agente (auth propia, `verify_jwt = false`) |
+| `functions/_shared/agents.ts` | Contrato de agentes (tipos, límites, AES-GCM + SHA-256, anti-SSRF). Ver `docs/AGENTES.md` |
 | `functions/_shared/intent.ts` | Analizador determinista de intenciones (copia sincronizada con `src/lib/chat/intent.ts`) |
 | `functions/_shared/memory.ts` | Categorías y utilidades de la memoria del espacio (copia sincronizada con `src/lib/memory/memory.ts`) |
 | `functions/_shared/transcribe.ts` | Voz a texto: `openai` (`/audio/transcriptions`) o `gemini` (`generateContent` con audio inline) |
@@ -281,6 +285,9 @@ que es lo que arregló el commit `ecd83f9` ("arreglo del bundle Deno").
 | `loki-worker` | El trigger `wake_ai_worker` (pg_net) o `pg_cron` | Un trabajo de `ai_jobs` por llamada. `GET /health` dice si hay voz a texto y si hay modelo configurados |
 | `push-send` | El trigger `maybe_push_notification` (pg_net) | FCM, respetando preferencias y horario de silencio |
 | `google-calendar` | El cliente, con su JWT | OAuth y sincronización pull/push |
+| `agent-connections` | El cliente, con su JWT | Registro de agentes: crea, guarda URL/secreto (cifrado) y genera el token entrante (una vez) |
+| `agent-dispatch` | El trigger `notify_agent_dispatch` (pg_net) o el dueño con su JWT (reintento) | Valida grant y cuota, genera el token de la ejecución y llama al adaptador (`generic_webhook` en esta etapa) |
+| `agent-callback` | El agente (sin JWT; auth propia con `run_token`) | Progreso y resultado: `verify_jwt = false`, idempotencia por `event_id`, límites del contrato |
 
 `loki-worker` exige `Authorization: Bearer <WORKER_KEY>` (secreto del servidor,
 el mismo valor que `loki.worker_key` en la base): un cliente nunca puede

@@ -5,6 +5,7 @@ import {
   AtSign,
   BarChart3,
   Bell,
+  Bot,
   Brain,
   CalendarClock,
   ClipboardCheck,
@@ -35,6 +36,7 @@ export const NOTIFICATION_ICONS: Record<NotificationType, LucideIcon> = {
   poll: BarChart3,
   memory: Brain,
   daily: Sunrise,
+  agent: Bot,
 };
 
 /** Campana del header con punto si hay no leídas. */

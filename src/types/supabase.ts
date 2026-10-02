@@ -143,6 +143,8 @@ type NotificationPrefsRow = {
   memory: boolean;
   /** Resumen diario "Tu día" (20261011000000_daily_digest.sql). */
   daily: boolean;
+  /** Agentes personales (20261012000000_agents.sql). */
+  agent: boolean;
   quiet_start: string | null;
   quiet_end: string | null;
   updated_at: string;
@@ -469,6 +471,88 @@ type UserPresenceRow = {
   status_emoji: string;
   status_text: string;
   updated_at: string;
+};
+
+/**
+ * Conexión de agente personal (`agent_connections`, migración
+ * `20261012000000_agents.sql`). Los secretos (`secret_enc`,
+ * `inbound_token_hash`) tienen REVOKE a nivel de columna para
+ * `authenticated`: el cliente usa listas explícitas de columnas, nunca `*`.
+ */
+type AgentConnectionRow = {
+  id: string;
+  owner_id: string;
+  provider: string;
+  name: string;
+  handle: string;
+  description: string;
+  avatar_emoji: string;
+  config: Json;
+  secret_enc: string | null;
+  inbound_token_hash: string | null;
+  status: string;
+  last_error: string | null;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Habilitación por espacio con permisos (`agent_space_grants`). */
+type AgentSpaceGrantRow = {
+  id: string;
+  connection_id: string;
+  workspace_id: string;
+  enabled: boolean;
+  admin_disabled: boolean;
+  allowed_callers: string;
+  allowed_user_ids: string[];
+  allow_context: boolean;
+  context_messages: number;
+  allow_dm_context: boolean;
+  allow_publish: boolean;
+  allow_propose_actions: boolean;
+  daily_limit: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * Ejecución de un agente (`agent_runs`). `run_token_hash` tiene REVOKE a
+ * nivel de columna: el cliente nunca lo selecciona.
+ */
+type AgentRunRow = {
+  id: string;
+  connection_id: string;
+  workspace_id: string;
+  chat_id: string;
+  requested_by: string | null;
+  kind: string;
+  instruction: string;
+  status: string;
+  run_token_hash: string | null;
+  token_expires_at: string | null;
+  deadline_at: string | null;
+  context: Json;
+  result: Json | null;
+  error: string | null;
+  cancel_requested_at: string | null;
+  idempotency_key: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+/** Evento del historial de una ejecución (`agent_run_events`). */
+type AgentRunEventRow = {
+  id: string;
+  run_id: string;
+  seq: number;
+  type: string;
+  text: string;
+  percent: number | null;
+  client_event_id: string | null;
+  payload: Json;
+  created_at: string;
 };
 
 export type Database = {
@@ -1268,6 +1352,7 @@ export type Database = {
           poll?: boolean;
           memory?: boolean;
           daily?: boolean;
+          agent?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
@@ -1286,6 +1371,7 @@ export type Database = {
           poll?: boolean;
           memory?: boolean;
           daily?: boolean;
+          agent?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
@@ -1571,6 +1657,127 @@ export type Database = {
         };
         Relationships: [];
       };
+      agent_connections: {
+        Row: AgentConnectionRow;
+        Insert: {
+          id?: string;
+          owner_id: string;
+          provider: string;
+          name: string;
+          handle: string;
+          description?: string;
+          avatar_emoji?: string;
+          config?: Json;
+          status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          provider?: string;
+          name?: string;
+          handle?: string;
+          description?: string;
+          avatar_emoji?: string;
+          config?: Json;
+          status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      agent_space_grants: {
+        Row: AgentSpaceGrantRow;
+        Insert: {
+          id?: string;
+          connection_id: string;
+          workspace_id: string;
+          enabled?: boolean;
+          admin_disabled?: boolean;
+          allowed_callers?: string;
+          allowed_user_ids?: string[];
+          allow_context?: boolean;
+          context_messages?: number;
+          allow_dm_context?: boolean;
+          allow_publish?: boolean;
+          allow_propose_actions?: boolean;
+          daily_limit?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          connection_id?: string;
+          workspace_id?: string;
+          enabled?: boolean;
+          admin_disabled?: boolean;
+          allowed_callers?: string;
+          allowed_user_ids?: string[];
+          allow_context?: boolean;
+          context_messages?: number;
+          allow_dm_context?: boolean;
+          allow_publish?: boolean;
+          allow_propose_actions?: boolean;
+          daily_limit?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      agent_runs: {
+        Row: AgentRunRow;
+        Insert: {
+          id?: string;
+          connection_id: string;
+          workspace_id: string;
+          chat_id: string;
+          requested_by?: string | null;
+          kind?: string;
+          instruction?: string;
+          idempotency_key?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          connection_id?: string;
+          workspace_id?: string;
+          chat_id?: string;
+          requested_by?: string | null;
+          kind?: string;
+          instruction?: string;
+          idempotency_key?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      agent_run_events: {
+        Row: AgentRunEventRow;
+        Insert: {
+          id?: string;
+          run_id: string;
+          seq: number;
+          type: string;
+          text?: string;
+          percent?: number | null;
+          client_event_id?: string | null;
+          payload?: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          run_id?: string;
+          seq?: number;
+          type?: string;
+          text?: string;
+          percent?: number | null;
+          client_event_id?: string | null;
+          payload?: Json;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       post_likes: {
@@ -1774,6 +1981,46 @@ export type Database = {
       create_daily_digests: {
         Args: Record<string, never>;
         Returns: number;
+      };
+      agent_connection_owner: {
+        Args: {
+          p_connection_id: string;
+        };
+        Returns: string;
+      };
+      agent_can_invoke: {
+        Args: {
+          p_connection_id: string;
+          p_workspace_id: string;
+        };
+        Returns: boolean;
+      };
+      agent_can_read_run: {
+        Args: {
+          p_run_id: string;
+        };
+        Returns: boolean;
+      };
+      validate_agent_handle: {
+        Args: {
+          p_workspace_id: string;
+          p_handle: string;
+          p_ignore_connection_id?: string | null;
+        };
+        Returns: boolean;
+      };
+      request_agent_run_cancel: {
+        Args: {
+          p_run_id: string;
+        };
+        Returns: boolean;
+      };
+      set_agent_grant_admin_disabled: {
+        Args: {
+          p_grant_id: string;
+          p_disabled: boolean;
+        };
+        Returns: boolean;
       };
     };
     Enums: {

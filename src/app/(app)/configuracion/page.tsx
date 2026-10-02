@@ -16,6 +16,8 @@ import { isNativePlatform, registerNativePush } from "@/lib/push/native";
 import { DEFAULT_PREFS } from "@/lib/data/notifications";
 import { DigestSettingsSection } from "@/components/daily/digest-settings-section";
 import { GcalSection } from "@/components/calendar/gcal-section";
+import { AgentsSection } from "@/components/agents/agents-section";
+import { SpaceAgents } from "@/components/agents/space-agents";
 import { AiUsageSection } from "@/components/ai/ai-usage-section";
 import { OcrSettingsSection } from "@/components/search/ocr-settings-section";
 import { useMembers } from "@/hooks/use-chat";
@@ -41,6 +43,7 @@ const PREF_ROWS: readonly { key: keyof Omit<NotificationPrefs, "quietStart" | "q
   { key: "list", label: "Listas", detail: "Novedades de las listas compartidas" },
   { key: "poll", label: "Encuestas", detail: "Cuando falta tu voto antes del cierre" },
   { key: "memory", label: "Memoria", detail: "Recuerdos nuevos o por caducar del espacio" },
+  { key: "agent", label: "Agentes", detail: "Cuando tu bot termina o necesita tu respuesta" },
   { key: "daily", label: "Resumen diario", detail: "Push de la mañana con tu día" },
 ];
 
@@ -55,7 +58,7 @@ export default function ConfiguracionPage(): React.JSX.Element {
   // "Sin configurar". De solo lectura desde el cliente.
   const [lokiConfigured, setLokiConfigured] = React.useState<boolean | null>(null);
   const user = useSessionStore((state) => state.user);
-  const { currentWorkspaceId } = useWorkspaces();
+  const { currentWorkspaceId, workspaces } = useWorkspaces();
   const membersQuery = useMembers(currentWorkspaceId);
   const myRole = (membersQuery.data ?? []).find((m) => m.uid === user?.uid)?.role ?? "member";
   const isSpaceAdmin = myRole === "owner" || myRole === "admin";
@@ -323,6 +326,18 @@ export default function ConfiguracionPage(): React.JSX.Element {
 
       <GcalSection />
 
+      {user !== null ? (
+        <AgentsSection
+          uid={user.uid}
+          spaces={workspaces.map((space) => ({
+            id: space.wsId,
+            name: space.name,
+            emoji: space.emoji,
+          }))}
+          defaultSpaceId={currentWorkspaceId}
+        />
+      ) : null}
+
       <section aria-label="Memoria">
         <SectionLabel>Memoria del espacio</SectionLabel>
         <Card>
@@ -369,6 +384,17 @@ export default function ConfiguracionPage(): React.JSX.Element {
       />
 
       <MembersSection />
+
+      <SpaceAgents
+        workspaceId={currentWorkspaceId}
+        uid={user?.uid ?? null}
+        isSpaceAdmin={isSpaceAdmin}
+        memberNames={
+          new Map(
+            (membersQuery.data ?? []).map((member) => [member.uid, member.displayName] as const),
+          )
+        }
+      />
 
       <section aria-label="Cuenta">
         <SectionLabel>Cuenta</SectionLabel>

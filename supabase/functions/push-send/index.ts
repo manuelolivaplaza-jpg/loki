@@ -229,6 +229,8 @@ function prefKeyFor(type: string): string | null {
     case "memory": return "memory";
     // Resumen diario "Tu día": interruptor propio en Configuración.
     case "daily": return "daily";
+    // Agentes personales: "@mi-bot terminó" o "@mi-bot necesita tu respuesta".
+    case "agent": return "agent";
     default: return null;
   }
 }

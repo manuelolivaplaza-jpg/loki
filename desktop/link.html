@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vincular con Loki</title>
+<style>
+  :root {
+    --bg: #FFFFFF;
+    --surface: #F0F0F0;
+    --surface-soft: #F7F9F9;
+    --text: #0F1419;
+    --muted: #536471;
+    --border: #EFF3F4;
+    --accent: #00B4D8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 24px 20px;
+  }
+  .card {
+    width: 100%;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  h1 { font-size: 20px; margin: 4px 0 0; }
+  p { font-size: 14px; color: var(--muted); margin: 0; line-height: 1.45; }
+  ol { font-size: 13px; color: var(--muted); margin: 0; padding-left: 18px; line-height: 1.6; }
+  input {
+    font-size: 22px;
+    letter-spacing: 6px;
+    text-align: center;
+    text-transform: uppercase;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-soft);
+    color: var(--text);
+    outline: none;
+  }
+  input:focus { border-color: var(--accent); }
+  button {
+    min-height: 44px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.ghost { background: var(--surface); color: var(--text); }
+  #msg { font-size: 13px; min-height: 18px; }
+  #msg.error { color: #B00020; }
+  #msg.ok { color: #1A7F37; }
+  .row { display: flex; gap: 8px; }
+  .row button { flex: 1; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1>Vincular con Loki</h1>
+    <p>Genera un código en <strong>Loki → Configuración → Mis dispositivos → Vincular un PC</strong> y pégalo aquí. Vale 5 minutos y un solo uso.</p>
+    <ol>
+      <li>Pega el código de 6 letras o números.</li>
+      <li>El PC guarda su credencial cifrada (DPAPI) y empieza a escuchar.</li>
+      <li>Desde el chat pide <em>@mi-pc</em> lo que necesites.</li>
+    </ol>
+    <input id="code" maxlength="6" autocomplete="off" placeholder="······" aria-label="Código de vinculación" />
+    <div class="row">
+      <button id="pair">Vincular</button>
+      <button id="recent" class="ghost" type="button">Actividad</button>
+    </div>
+    <p id="msg" role="status"></p>
+  </main>
+  <script>
+    const code = document.getElementById("code");
+    const pair = document.getElementById("pair");
+    const recent = document.getElementById("recent");
+    const msg = document.getElementById("msg");
+
+    function say(text, kind) {
+      msg.textContent = text;
+      msg.className = kind || "";
+    }
+
+    // El shell Tauri ejecuta el sidecar `loki-desktop link --code …`.
+    // Sin Tauri (vista previa en navegador), solo se valida el formato.
+    async function invoke(cmd, args) {
+      if (window.__TAURI__ && window.__TAURI__.core) {
+        return window.__TAURI__.core.invoke(cmd, args);
+      }
+      throw new Error("Abre esta ventana desde la app de escritorio.");
+    }
+
+    pair.addEventListener("click", async () => {
+      const value = (code.value || "").trim().toUpperCase();
+      if (!/^[A-Z2-9]{6}$/.test(value)) {
+        say("Ese código no es válido: son 6 letras o números (sin 0, O, 1 ni I).", "error");
+        return;
+      }
+      pair.disabled = true;
+      say("Vinculando…");
+      try {
+        await invoke("loki_pair", { code: value });
+        say("Vinculado. Ya puedes pedirle cosas a este PC desde Loki.", "ok");
+      } catch (e) {
+        say(e && e.message ? e.message : "No se pudo vincular.", "error");
+      } finally {
+        pair.disabled = false;
+      }
+    });
+
+    recent.addEventListener("click", async () => {
+      try {
+        const out = await invoke("loki_status", {});
+        say(typeof out === "string" ? out.slice(0, 200) : "Al día.", "ok");
+      } catch (e) {
+        say(e && e.message ? e.message : "Sin datos.", "error");
+      }
+    });
+  </script>
+</body>
+</html>

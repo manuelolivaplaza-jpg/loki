@@ -115,3 +115,37 @@ archivos y alcance de chats.
   ni a la push).
 - Sin clave LLM: Loki IA dice "sin configurar", pero la vía determinista
   (`@mi-pc …` claro) sigue funcionando: es código, no IA.
+
+## Anexo A — Compañero de escritorio (implementación, `desktop/`)
+
+Proyecto propio (`desktop/`, su `package.json`/`tsconfig`, excluido del build
+de Next): núcleo Node.js TypeScript + shell Tauri 2 (bandeja, autoarranque,
+ventana de vinculación). Detalle en `desktop/README.md`.
+
+- **Conexión**: una sola saliente (WebSocket de Realtime) con dos
+  suscripciones: `device_commands` con filtro `device_id=eq.<id>` (INSERT para
+  lo nuevo, UPDATE por si un comando vuelve a pendiente) y su propia fila de
+  `user_devices` con filtro `id=eq.<id>` (revocación al instante).
+- **Sin polling**: latido al conectar y con cada comando; el token corto se
+  renueva antes de vencer. Reconnect con backoff (1 s…60 s + jitter) y
+  recogida de pendientes no vencidos (`queued`/`delivered`, `expires_at`
+  futuro, hasta 20 en orden).
+- **Doble control**: el PC reclama con `device_claim_command` (la base
+  revalida catálogo, permisos y confirmación) y reporta con
+  `device_report_result`. El progreso en vivo es el estado (`running` por
+  Realtime → tarjeta `DeviceCommandCard`); lo sensible ya venía aprobado del
+  teléfono (`confirm_device_command`, 5 min).
+- **Permisos efectivos**: Loki ∩ local, siempre lo más restrictivo. Rutas
+  contenidas en la base local (`..`, UNC y symlinks que escapen se
+  rechazan). `run_script` resuelve nombre → ruta fija registrada aquí (Loki
+  nunca manda contenido). `arbitrary_exec` exige doble opt-in, con timeout
+  (30 s) y salida truncada.
+- **Visibilidad local**: notificación del sistema antes de cada ejecución,
+  log rotativo en el PC y actividad reciente en la bandeja. Pausa = no
+  reclamar (los comandos se vencen solos en ≤10 min por `pg_cron`).
+- **Vinculación**: `device-pair` acepta el canje solo con el código (la
+  posesión del código vigente y sin usar es la autorización); con JWT del
+  dueño, además verifica propiedad. La credencial se guarda en DPAPI
+  (Windows), nunca en texto plano.
+- **Pendiente para el lanzamiento**: firma del ejecutable e instalador (sin
+  publicar nada ahora), llavero en macOS/Linux e iconos finales.

@@ -1,0 +1,27 @@
+{
+  "name": "loki-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Companero de escritorio de Loki (Windows primero): vive en la bandeja, escucha comandos por Realtime y ejecuta el catalogo cerrado. Sin puertos abiertos, sin LLM, sin consultas periodicas.",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "loki-desktop": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && node dist/cli.js",
+    "start": "node dist/cli.js run",
+    "link": "node dist/cli.js link",
+    "status": "node dist/cli.js status"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}

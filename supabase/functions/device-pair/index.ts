@@ -2,12 +2,19 @@
 // Vinculación del compañero de escritorio · Edge Function `device-pair` (Deno,
 // sin dependencias externas, solo imports relativos).
 //
-// POST { code, device_name?, platform?, app_version? } con el JWT del dueño:
-//   1. Valida el código corto (un solo uso, 5 min, del mismo usuario).
+// POST { code, device_name?, platform?, app_version? }:
+//   1. Valida el código corto (un solo uso, 5 min).
 //   2. Genera un secreto largo (32 bytes) y guarda solo su hash SHA-256.
 //   3. Crea el dispositivo + su usuario Auth propio
 //      (`device_<id>@devices.loki.internal`, clave = secreto) y el mapeo.
 //   4. Marca el código como usado y devuelve { device_id, email, secret }.
+//
+// Autenticación: el compañero no tiene sesión, así que el canje es SOLO CON
+// EL CÓDIGO (poseer un código vigente y sin usar es la autorización: 6
+// caracteres de 32 símbolos, 5 min de vida, un solo uso, rate limit 30
+// req/min por IP). Si además viene el JWT del dueño, se verifica que el
+// código sea suyo; sin JWT se confía en el código (flujo "pegar el código"
+// del compañero de escritorio).
 //
 // El PC entra después con signIn normal (email + secreto) y obtiene
 // access_tokens de corta duración: nunca ve la contraseña del dueño ni la
@@ -136,9 +143,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return json(503, { code: "not_configured" });
   }
   const me = await authUser(req);
-  if (me === null) {
-    return json(401, { code: "unauthorized", message: "Hay que iniciar sesión." });
-  }
+  // Sin JWT (compañero pegando el código) se sigue: el código vigente y sin
+  // usar es la autorización. Con JWT, además se exige propiedad.
   let body: unknown;
   try {
     body = await req.json();
@@ -164,9 +170,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (row === undefined) {
     return json(404, { code: "invalid_code", message: "Ese código no existe." });
   }
-  if (row["owner_id"] !== me.uid) {
+  if (me !== null && row["owner_id"] !== me.uid) {
     return json(403, { code: "invalid_code", message: "Ese código no es tuyo." });
   }
+  const ownerId = row["owner_id"] as string;
   if (row["used_at"] !== null && row["used_at"] !== undefined) {
     return json(410, { code: "used_code", message: "Ese código ya se usó." });
   }
@@ -186,7 +193,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     method: "POST",
     headers: { ...svcHeaders(), Prefer: "return=representation" },
     body: JSON.stringify({
-      owner_id: me.uid,
+      owner_id: ownerId,
       name,
       platform,
       app_version: appVersion,
@@ -215,7 +222,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       email,
       password: secret,
       email_confirm: true,
-      user_metadata: { kind: "loki_device", device_id: deviceId, owner_id: me.uid },
+      user_metadata: { kind: "loki_device", device_id: deviceId, owner_id: ownerId },
     }),
   }).catch(() => null);
   if (userRes === null || !userRes.ok) {
@@ -252,8 +259,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     headers: svcHeaders(),
     body: JSON.stringify({
       device_id: deviceId,
-      owner_id: me.uid,
-      actor_id: me.uid,
+      owner_id: ownerId,
+      actor_id: ownerId,
       action: "paired",
       detail: `PC vinculado: ${name.slice(0, 80)}.`,
     }),

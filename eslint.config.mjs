@@ -25,6 +25,9 @@ const eslintConfig = [
       // functions/ es un proyecto aparte (su propio package.json, tsconfig
       // y .eslintrc); el eslint de la app no debe revisarlo.
       "functions/**",
+      // desktop/ es otro proyecto aparte (compañero de escritorio, su propio
+      // package.json y tsconfig): no forma parte del build de Next.
+      "desktop/**",
     ],
   },
 ];

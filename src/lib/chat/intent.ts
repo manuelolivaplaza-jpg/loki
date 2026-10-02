@@ -17,7 +17,9 @@ export type IntentAction =
   | "create_task"
   | "create_event"
   | "add_list"
-  | "create_poll";
+  | "create_poll"
+  | "remember"
+  | "recall";
 
 /** Tipos de encuesta que el analizador puede proponer sin modelo. */
 export type PollIntentKind = "single" | "multiple" | "yesno" | "date";
@@ -272,6 +274,32 @@ export interface AnalyzeOptions {
 
 const REMIND_RE =
   /(recuerdame|recuerdale|recuerdanos|avisame|avisale|recordatorio|no (te|se) (olvide|olviden)|no olvidar)/;
+
+// Memoria del espacio: "recuerda que la clave del wifi es…". Distinto de
+// REMIND_RE porque aquí no hay fecha: es un dato, no una tarea con hora.
+const REMEMBER_RE =
+  /(recuerda que|recuerde que|recorda que|recuerda esto|apunta que|anota que|guarda en la memoria|guardar en la memoria|memori[ae]za)/;
+// Pregunta por lo que el espacio ya sabe: "¿cuál era la clave del wifi?".
+const RECALL_RE =
+  /(cual era|cu[aá]l era|que recordaba|que sabemos de|te acuerdas de|recuerdas|recuerda (cual|que)|sabes (cual|la clave|mi |el |los |las )|dime (la|el|mi)|cual es la clave)/;
+const REMEMBER_LEAD_RE =
+  /^(?:por favor\s+)?(?:loki\s*,?\s*)?(?:recuerda que|recuerde que|recorda que|recuerda esto|apunta que|anota que|guarda en la memoria|guardar en la memoria|memori[ae]za)\s+/;
+
+/**
+ * Texto a recordar de "Loki, recuerda que la clave del wifi es X": quita el
+ * saludo y el verbo, y devuelve solo el dato. `null` si no queda nada útil.
+ */
+function parseRemember(original: string, normalized: string): string | null {
+  if (!REMEMBER_RE.test(normalized)) return null;
+  // "guarda en la memoria" puede ir al final ("… es la clave; guárdalo en la
+  // memoria"), así que también se recorta del final.
+  const tail = normalized.match(/\s*(?:y\s+)?(?:guarda[r]?\s+en\s+la\s+memori[ae]za|guarda[r]?\s+esto\s+en\s+la\s+memori[ae]za)\s*$/);
+  let rest = tail === null ? normalized : normalized.slice(0, tail.index);
+  rest = rest.replace(REMEMBER_LEAD_RE, "");
+  rest = rest.replace(/^loki\s*,?\s*/, "");
+  if (rest.trim() === "") return null;
+  return cleanTitle(restoreAccents(original, rest.trim()) || rest);
+}
 const TASK_RE = /(crea|crea|crear|agrega|agrega|anade|anota|suma)\s+(una\s+)?tarea/;
 const EVENT_RE = /(agenda|agendar|crea|crear|agrega|anade|programa)\s+(un\s+)?(evento|cita|reunion|junta|llamada|clase)/;
 const LIST_RE = /(agrega|agrega|anade|suma|anota|pon)\s+(.+?)\s+a la lista(?:\s+(?:(del|de la|de)\s+)?(.+))?$/;
@@ -521,6 +549,23 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
     };
   }
 
+  // Memoria: "recuerda que…" guarda un dato del espacio. Va antes del
+  // recordatorio porque "recuerda que la clave es X" NO es un aviso con fecha.
+  const memory = parseRemember(text, normalized);
+  if (memory !== null) {
+    return {
+      action: "remember",
+      title: memory,
+      dateISO: null,
+      recurrence: null,
+      mentions,
+      listName: null,
+      pollKind: null,
+      pollOptions: [],
+      confident: true,
+    };
+  }
+
   const isRemind = REMIND_RE.test(normalized);
   const listMatch = matchList(normalized);
   const isEvent = EVENT_RE.test(normalized);
@@ -531,6 +576,7 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
   else if (listMatch !== null) action = "add_list";
   else if (isEvent) action = "create_event";
   else if (isTask) action = "create_task";
+  else if (RECALL_RE.test(normalized)) action = "recall";
   if (action === null) return null;
 
   const time = extractTime(normalized);
@@ -649,6 +695,10 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
   if (action === "add_list" && listMatch !== null) {
     title = listMatch.item;
     listName = listMatch.list;
+  } else if (action === "recall") {
+    // Una pregunta de recall se busca tal cual: no se le quita el verbo ni la
+    // interrogación (el texto completo es lo que entiende el buscador).
+    title = text.trim().slice(0, 200);
   } else {
     title = rest;
     for (const verb of [

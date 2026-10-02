@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BarChart3,
+  Brain,
   CalendarPlus,
   FolderPlus,
   Lightbulb,
@@ -45,6 +46,7 @@ export const QUICK_ACTIONS: readonly QuickAction[] = [
   { key: "lista", title: "Nueva lista", description: "Compras, quehaceres o checklist", icon: ListPlus, href: "/proyectos?tab=listas" },
   { key: "encuesta", title: "Nueva encuesta", description: "Decide rápido en el chat", icon: BarChart3, href: null },
   { key: "post", title: "Compartir algo", description: "Publica un post en el espacio", icon: Send, href: "/chat/publicaciones" },
+  { key: "memoria", title: "Recordar algo", description: "Guarda un dato útil del espacio", icon: Brain, href: "/memoria" },
   { key: "dictar", title: "Dictar a Loki", description: "Habla y Loki lo convierte en tareas", icon: Mic, href: "/chat/loki-ia?dictar=1" },
   { key: "invitar", title: "Invitar miembro", description: "Suma a alguien a tu espacio", icon: UserPlus, href: null },
 ];

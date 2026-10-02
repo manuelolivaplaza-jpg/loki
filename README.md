@@ -57,7 +57,8 @@ flowchart LR
   recordatorio) sobre un mensaje con audio transcribe primero y usa la
   transcripción como texto.
 - **Búsqueda universal**: Cmd/Ctrl+K busca en mensajes, **notas de voz
-  transcritas**, tareas, proyectos, eventos y personas.
+  transcritas**, **recuerdos del espacio**, tareas, proyectos, eventos y
+  personas.
 - **Encuestas en el chat** (decidir sin 40 mensajes): desde el `+` del
   composer, desde Acciones rápidas o pidiéndoselo a Loki ("haz una encuesta
   para elegir el día del asado entre viernes y sábado", que además funciona
@@ -71,6 +72,20 @@ flowchart LR
   anónima, sugerencias, fecha de cierre y quién puede cerrar; con recordatorio
   opcional a quien no votó. "Resumir con Loki" solo bajo demanda (trabajo
   `poll_summary`, modelo barato, cuota del espacio).
+- **Memoria del espacio** (`/memoria`): lo que el espacio recuerda y que Loki
+  usa al responder. Se guarda **solo por acción explícita**: "Loki, recuerda
+  que…" (detectado sin IA), la opción "Recordar en el espacio" del menú de un
+  mensaje, el botón de cada punto del resumen de no leídos o la pantalla
+  Memoria con buscador. Consultarlo ("¿cuál era la clave del wifi?") es
+  **full-text en español** (como la búsqueda global, sin costo de IA) y la
+  respuesta cita el recuerdo y quién lo guardó. Categorías: salud, casa,
+  contactos, trabajo y otros; con fijar, editar, borrar y fecha de caducidad
+  opcional ("el código del portón cambia en marzo"). Un recuerdo marcado como
+  **sensible** (claves, datos de salud) sale oculto hasta que alguien pulse
+  "Mostrar", no aparece en el push ni en la búsqueda global, y nunca entra en
+  un resumen; lo que sale de un DM nace "solo yo" hasta que quien lo guarda lo
+  confirme. En móvil se desliza para borrar y se mantiene pulsado para editar;
+  en escritorio, acciones al hover y atajos (Supr borra, Espacio fija).
 - **Loki IA**: chat privado y @Loki en los chats de grupo, con streaming real,
   planes multi-acción con confirmación, recordatorios, ítems de lista, avisos,
   encuestas y barra de deshacer. Cuota por espacio visible en Configuración.

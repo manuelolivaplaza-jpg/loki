@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   BellRing,
+  Brain,
   CalendarPlus,
   Copy,
   ListPlus,
@@ -23,11 +24,14 @@ export type MessageMenuAction =
   | "delete"
   | "convert_task"
   | "convert_event"
-  | "convert_reminder";
+  | "convert_reminder"
+  | "remember";
 
 type MessageContextMenuProps = {
   message: MessageDoc;
   isMine: boolean;
+  /** Muestra "Recordar en el espacio" (solo en chats de espacio). */
+  canRemember?: boolean;
   onAction: (action: MessageMenuAction) => void;
   onClose: () => void;
 };
@@ -44,6 +48,7 @@ type MessageContextMenuProps = {
 export function MessageContextMenu({
   message,
   isMine,
+  canRemember = false,
   onAction,
   onClose,
 }: MessageContextMenuProps): React.JSX.Element | null {
@@ -152,6 +157,18 @@ export function MessageContextMenu({
           >
             Recordatorio
           </MenuItem>
+          {canRemember ? (
+            <>
+              <div aria-hidden="true" className="mx-2 my-1 border-t border-divider" />
+              <MenuItem
+                icon={Brain}
+                role="menuitem"
+                onClick={() => onAction("remember")}
+              >
+                Recordar en el espacio
+              </MenuItem>
+            </>
+          ) : null}
           {isMine ? (
             <MenuItem
               icon={Pencil}

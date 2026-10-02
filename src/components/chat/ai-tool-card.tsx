@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   BarChart3,
   BellRing,
+  Brain,
   CalendarPlus,
   CheckCircle2,
   ListPlus,
@@ -47,6 +48,7 @@ function ActionIcon({ action }: { action: string }): React.JSX.Element {
   if (action === "remove_list_item") return <Undo2 className={className} aria-hidden="true" />;
   if (action === "read_list") return <ListPlus className={className} aria-hidden="true" />;
   if (action === "create_poll") return <BarChart3 className={className} aria-hidden="true" />;
+  if (action === "remember") return <Brain className={className} aria-hidden="true" />;
   return <BellRing className={className} aria-hidden="true" />;
 }
 
@@ -85,7 +87,21 @@ type ItemDraft = {
   pollDates: string[];
   /** Solo create_poll: encuesta anónima. */
   anonymous: boolean;
+  /** Solo remember: categoría del recuerdo. */
+  memoryCategory: string;
+  /** Solo remember: clave o dato de salud (oculto, sin push). */
+  memorySensitive: boolean;
+  /** Solo remember: día de caducidad ("" = nunca). */
+  memoryExpires: string;
 };
+
+const MEMORY_CATEGORY_LABELS: readonly { value: string; label: string }[] = [
+  { value: "salud", label: "Salud" },
+  { value: "casa", label: "Casa" },
+  { value: "contactos", label: "Contactos" },
+  { value: "trabajo", label: "Trabajo" },
+  { value: "otros", label: "Otros" },
+];
 
 const POLL_KIND_LABELS: readonly { value: string; label: string }[] = [
   { value: "single", label: "Una opción" },
@@ -198,24 +214,40 @@ function draftListLines(params: Record<string, unknown>): string {
 
 function draftFromParams(params: Record<string, unknown>): ItemDraft {
   const poll = "question" in params ? draftPollOptions(params) : null;
+  // Memoria: el texto viaja en `content` (no en `title`).
+  const memory = "content" in params ? params : null;
   const title =
     poll !== null
       ? typeof params["question"] === "string"
         ? params["question"].slice(0, 200)
         : ""
-      : typeof params["title"] === "string" || typeof params["text"] === "string" || typeof params["item"] === "string"
-        ? String(params["title"] ?? params["item"] ?? params["text"] ?? "")
-        : draftListLines(params).split("\n")[0] ?? "";
+      : memory !== null
+        ? typeof memory["content"] === "string"
+          ? memory["content"].slice(0, 1000)
+          : ""
+        : typeof params["title"] === "string" || typeof params["text"] === "string" || typeof params["item"] === "string"
+          ? String(params["title"] ?? params["item"] ?? params["text"] ?? "")
+          : draftListLines(params).split("\n")[0] ?? "";
   let date = "";
   let time = "";
-  for (const key of DATE_KEYS) {
-    const raw = params[key];
-    if (typeof raw === "string") {
-      const split = splitDateTime(raw);
-      if (split !== null) {
-        date = split.date;
-        time = split.time;
-        break;
+  // En memoria la única fecha posible es la caducidad (`expiresAt`) y no lleva
+  // hora: por eso no pasa por DATE_KEYS.
+  if (memory !== null) {
+    const rawExpiry = memory["expiresAt"] ?? memory["expires_at"];
+    if (typeof rawExpiry === "string") {
+      const split = splitDateTime(rawExpiry);
+      if (split !== null) date = split.date;
+    }
+  } else {
+    for (const key of DATE_KEYS) {
+      const raw = params[key];
+      if (typeof raw === "string") {
+        const split = splitDateTime(raw);
+        if (split !== null) {
+          date = split.date;
+          time = split.time;
+          break;
+        }
       }
     }
   }
@@ -242,6 +274,12 @@ function draftFromParams(params: Record<string, unknown>): ItemDraft {
     pollKind: poll?.kind ?? "single",
     pollDates: poll?.dates ?? [],
     anonymous: poll?.anonymous ?? false,
+    memoryCategory:
+      memory !== null && typeof memory["category"] === "string"
+        ? memory["category"]
+        : "otros",
+    memorySensitive: memory !== null && memory["sensitive"] === true,
+    memoryExpires: date,
   };
 }
 
@@ -264,6 +302,16 @@ function applyDraft(
   }
   if ("list" in next && draft.listName !== "") next["list"] = draft.listName;
   if ("checked" in next) next["checked"] = draft.checked;
+  // Memoria: texto en `content`, y la fecha es la caducidad (sin hora).
+  if ("content" in next) {
+    next["content"] = draft.title;
+    next["category"] = draft.memoryCategory;
+    next["sensitive"] = draft.memorySensitive;
+    next["expiresAt"] =
+      draft.memoryExpires === ""
+        ? null
+        : (joinDateTime(draft.memoryExpires, "12:00") ?? null);
+  }
   // Encuesta: la pregunta viaja en `question` y las opciones en `options`.
   if ("question" in next) {
     next["question"] = draft.title;
@@ -276,7 +324,9 @@ function applyDraft(
       if (iso !== null) next["closesAt"] = iso;
     }
   }
-  if (draft.date !== "") {
+  if ("content" in next) {
+    // La memoria ya tiene su caducidad: nada más que interpretar fechas aquí.
+  } else if (draft.date !== "") {
     const iso = joinDateTime(draft.date, draft.time);
     if (iso !== null) {
       for (const key of DATE_KEYS) {
@@ -466,6 +516,63 @@ export function AiToolCard({
                 <p role="alert" className="text-body-sm leading-5 text-danger">
                   {item.warning}
                 </p>
+              ) : item.action === "remember" ? (
+                <div className="flex flex-col gap-2">
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClass}>Qué se recuerda</span>
+                    <textarea
+                      aria-label="Recuerdo"
+                      value={draft.title}
+                      onChange={(event) => setDraft(index, { title: event.target.value })}
+                      rows={2}
+                      maxLength={1000}
+                      className="min-h-22 w-full rounded-sm bg-surface-soft px-3 py-2 text-body-sm text-foreground outline-none"
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex flex-col gap-1">
+                      <span className={labelClass}>Categoría</span>
+                      <select
+                        aria-label="Categoría del recuerdo"
+                        value={draft.memoryCategory}
+                        onChange={(event) =>
+                          setDraft(index, { memoryCategory: event.target.value })
+                        }
+                        className={cn(inputClass, "min-h-11")}
+                      >
+                        {MEMORY_CATEGORY_LABELS.map((entry) => (
+                          <option key={entry.value} value={entry.value}>
+                            {entry.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className={labelClass}>Caduca (opcional)</span>
+                      <input
+                        type="date"
+                        aria-label="Fecha de caducidad del recuerdo"
+                        value={draft.memoryExpires}
+                        onChange={(event) =>
+                          setDraft(index, { memoryExpires: event.target.value })
+                        }
+                        className={cn(inputClass, "min-h-11")}
+                      />
+                    </label>
+                  </div>
+                  <label className="flex min-h-11 items-center gap-2 text-body-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      aria-label="Recuerdo sensible"
+                      checked={draft.memorySensitive}
+                      onChange={(event) =>
+                        setDraft(index, { memorySensitive: event.target.checked })
+                      }
+                      className="h-6 w-6 accent-[var(--accent)]"
+                    />
+                    Sensible (queda oculto y nunca sale en push)
+                  </label>
+                </div>
               ) : item.action === "create_poll" ? (
                 <div className="flex flex-col gap-2">
                   <label className="flex flex-col gap-1">

@@ -44,6 +44,9 @@ function getHeaderTitle(pathname: string | null): string {
   ) {
     return "Configuración";
   }
+  if (normalized === "/memoria" || (normalized?.startsWith("/memoria/") ?? false)) {
+    return "Memoria";
+  }
   return getSectionByPath(normalized).label;
 }
 

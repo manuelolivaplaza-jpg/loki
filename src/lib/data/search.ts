@@ -56,6 +56,16 @@ export type SearchTranscriptionHit = {
   createdAt: string;
 };
 
+/** Recuerdo del espacio (los sensibles nunca llegan aquí: la RPC los excluye). */
+export type SearchMemoryHit = {
+  id: string;
+  content: string;
+  category: string;
+  pinned: boolean;
+  authorName: string;
+  createdAt: string;
+};
+
 export type SearchResults = {
   messages: SearchMessageHit[];
   tasks: SearchTaskHit[];
@@ -64,6 +74,8 @@ export type SearchResults = {
   people: SearchPersonHit[];
   /** Texto dictado de las notas de voz (bajo demanda, indexado). */
   transcriptions: SearchTranscriptionHit[];
+  /** Recuerdos del espacio compartidos y no sensibles. */
+  memories: SearchMemoryHit[];
 };
 
 export const EMPTY_RESULTS: SearchResults = {
@@ -73,6 +85,7 @@ export const EMPTY_RESULTS: SearchResults = {
   events: [],
   people: [],
   transcriptions: [],
+  memories: [],
 };
 
 // --- Parseo del jsonb (defensivo: la RPC siempre devuelve el objeto con
@@ -170,6 +183,19 @@ function parseTranscription(item: Record<string, unknown>): SearchTranscriptionH
   };
 }
 
+function parseMemory(item: Record<string, unknown>): SearchMemoryHit | null {
+  const id = asString(item["id"]);
+  if (id === null) return null;
+  return {
+    id,
+    content: asString(item["content"]) ?? "",
+    category: asString(item["category"]) ?? "otros",
+    pinned: item["pinned"] === true,
+    authorName: asString(item["author_name"]) ?? "Alguien",
+    createdAt: asString(item["created_at"]) ?? "",
+  };
+}
+
 /**
  * Busca en todo el espacio con la RPC `global_search`. Con menos de 2
  * letras devuelve vacío sin llamar al servidor (igual que la función).
@@ -192,6 +218,7 @@ export async function searchAll(wsId: string, q: string): Promise<SearchResults>
     events: parseGroup(data["events"], parseEvent),
     people: parseGroup(data["people"], parsePerson),
     transcriptions: parseGroup(data["transcriptions"], parseTranscription),
+    memories: parseGroup(data["memories"], parseMemory),
   };
 }
 

@@ -15,7 +15,7 @@ con Loki IA (Edge Function `loki-chat` con streaming real).
 | `MessageBubble` | `message-bubble.tsx` | Propios `#0F0F0F`/`#2A2A2A`, otros `#F0F0F0`/`#16181C`, radio 22px, 15px/1.45, `break-words`. IA sin burbuja (`Loki` + Sparkles, en `AiReply` con cursor mientras llega el stream), system centrado, eliminado en itálica. Avatar 28px en el último del grupo, hora `HH:mm` bajo el grupo y `· (editado)` si `editedAt`. Color de avatar por `useAuthorAvatarColor`. `variant="post"`: fila plana del feed (avatar 40 + nombre + tiempo relativo), sin burbuja. |
 | `ReactionBar` | `reaction-bar.tsx` | `MenuCard` flotante con 6 emojis rápidos + `+` que abre el grid de 24 (`EXTENDED_REACTIONS`). `role=toolbar`, `aria-label="Reaccionar con X"` por emoji, Escape/click afuera cierran. |
 | `ReactionChips` | `reaction-chips.tsx` | Chips bajo la burbuja (emoji + contador, ordenados por cantidad). El propio lleva `aria-pressed` y borde accent; tocarlo alterna el uid propio. |
-| `MessageContextMenu` | `message-context-menu.tsx` | `role=menu` con Responder, Responder en hilo, Copiar, Editar y Eliminar (las dos últimas solo del autor). Eliminar pide confirmación en línea "Eliminar mensaje?" (Cancelar/Eliminar). |
+| `MessageContextMenu` | `message-context-menu.tsx` | `role=menu` con Responder, Responder en hilo, Copiar, Convertir en… (tarea/evento/recordatorio), **Recordar en el espacio** (solo chats de espacio, abre `MemorySheet`), Editar y Eliminar (las dos últimas solo del autor). Eliminar pide confirmación en línea "Eliminar mensaje?" (Cancelar/Eliminar). |
 | `ThreadPanel` | `thread-panel.tsx` | Hilo en portal a `document.body`: drawer derecho de 420px en escritorio (scrim included) y bottom sheet casi a pantalla completa en móvil. Padre + `useThread` en vivo + `Composer` que envía con `threadParentId`. Desde T17 acepta `title`/`parentLabel` (Publicaciones lo abre como "Comentarios" sobre "Publicación"). |
 | `PostsView` | `posts-view.tsx` | `/chat/publicaciones`: composer arriba (sticky bajo el header, columna de 760px), feed y estado vacío. `usePosts` + `usePublishPost`; errores y reintento con el mismo id de cliente. |
 | `PostRow` | `post-row.tsx` | Fila plana estilo X separada por `border-divider`: `MessageBubble variant="post"` + acciones Me gusta (Heart relleno/`text-danger`/`aria-pressed` con contador) y Comentar (MessageCircle + `threadCount`). Exporta `usePostClock`, un único reloj para todos los tiempos relativos. |
@@ -149,11 +149,25 @@ typing, paging, reacciones ni hilos (todo eso es de los chats de espacio).
 |---|---|---|
 | `AiSuggestions` | `ai-suggestions.tsx` | Los tres chips de arranque, solo con el chat vacío y configurado. `onPick(text)` envía el texto como mensaje del usuario. |
 | `AiConnecting` | `ai-connecting.tsx` | Línea "Conectando con Loki…" (Sparkles + muted) mientras genera la Edge Function. |
-| `AiToolCard` | `ai-tool-card.tsx` | Tarjeta de confirmación: una acción o un plan con casilla por acción, cada una editable (título, fecha/hora, responsable, proyecto, ítems de lista). Enter confirma y Escape cancela. `UndoBar` debajo tras ejecutar. |
+| `AiToolCard` | `ai-tool-card.tsx` | Tarjeta de confirmación: una acción o un plan con casilla por acción, cada una editable (título, fecha/hora, responsable, proyecto, ítems de lista; en `remember`, texto + categoría + sensible + caducidad). Enter confirma y Escape cancela. `UndoBar` debajo tras ejecutar. |
 | `ConvertSheet` | `convert-sheet.tsx` | Mensaje (o transcripción de una nota de voz) → tarea/evento/recordatorio, con prefill del analizador determinista y "Mejorar con Loki". |
 | `VoiceConvertSheet` | `voice-convert-sheet.tsx` | "Convertir en…" sobre una nota de voz: pide la transcripción y, cuando llega, abre el `ConvertSheet` con ese texto. |
 | `DictationBanner` | `dictation-banner.tsx` | El texto dictado, editable, encima de la tarjeta de plan, con "Recalcular con este texto". |
 | `DictateSheet` | `../ai/dictate-sheet.tsx` | Grabar (o subir un archivo) → subir a Storage → transcribir → revisar y enviar a Loki. |
+| `MemorySheet` | `../memory/memory-sheet.tsx` | Alta/edición de un recuerdo (menú del mensaje, resumen de no leídos, pantalla Memoria). Propone categoría y sensible, deja elegir "Solo yo"/"Todo el espacio" y caduca, y avisa cuando lo que sale de un DM se va a compartir. |
+
+### Memoria del espacio
+
+- **Guardar**: "Loki, recuerda que…" (analizador determinista, sin modelo), el
+  menú del mensaje ("Recordar en el espacio"), el botón de cada punto del
+  resumen de no leídos o `+` en `/memoria`. Nada se guarda solo: siempre hay
+  una confirmación (`AiToolCard` con la acción `remember`, o la hoja).
+- **Consultar**: "¿cuál era la clave del wifi?" lo resuelve el analizador con la
+  RPC `search_space_memories` (full-text en español, SQL barato, sin cuota de
+  IA) y la respuesta cita el recuerdo y quién lo guardó.
+- **Nunca en un resumen**: los recuerdos sensibles (claves, datos de salud) no
+  entran en la búsqueda global, no notifican y solo se muestran tras pulsar
+  "Mostrar".
 
 ## Notas de voz y transcripción
 
@@ -197,7 +211,8 @@ typing, paging, reacciones ni hilos (todo eso es de los chats de espacio).
   (`firstTranscribable`) y abre `VoiceConvertSheet`, que transcribe y luego
   convierte.
 - **Buscar**: `global_search` devuelve además el grupo `transcriptions`, que la
-  paleta pinta como "Notas de voz".
+  paleta pinta como "Notas de voz", y el grupo `memories` ("Recuerdos"), que
+  excluye los sensibles.
 
 ### Unitarios
 

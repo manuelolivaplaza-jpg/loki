@@ -97,7 +97,8 @@ export type NotificationType =
   | "invite"
   | "ai_alert"
   | "list"
-  | "poll";
+  | "poll"
+  | "memory";
 
 export interface NotificationItem {
   id: string;
@@ -121,7 +122,8 @@ export type NotificationTypeKey =
   | "invite"
   | "ai_alert"
   | "list"
-  | "poll";
+  | "poll"
+  | "memory";
 
 export interface NotificationPrefs {
   mention: boolean;
@@ -134,6 +136,8 @@ export interface NotificationPrefs {
   ai_alert: boolean;
   list: boolean;
   poll: boolean;
+  /** Memoria del espacio (recuerdo nuevo o por caducar). */
+  memory: boolean;
   quietStart: string | null;
   quietEnd: string | null;
 }
@@ -285,4 +289,66 @@ export interface NewPollInput {
   settings: PollSettings;
   closesAt: Date | null;
   options: PollDraftOption[];
+}
+
+// --- Memoria del espacio (space_memories) ---------------------------------------
+
+/** Categoría del recuerdo (la UI y el analizador comparten esta lista). */
+export type MemoryCategory = "salud" | "casa" | "contactos" | "trabajo" | "otros";
+
+/** 'espacio' lo ven los miembros; 'privado' solo quien lo guardó. */
+export type MemoryVisibility = "espacio" | "privado";
+
+export interface MemoryItem {
+  id: string;
+  workspaceId: string;
+  content: string;
+  category: MemoryCategory;
+  /** Clave, dato de salud o cuenta: oculto con "Mostrar", fuera de push. */
+  sensitive: boolean;
+  pinned: boolean;
+  visibility: MemoryVisibility;
+  sourceMessageId: string | null;
+  /** Confirmación explícita de compartir con el espacio (obligatoria si es DM). */
+  shareConfirmed: boolean;
+  createdBy: string | null;
+  /** "el código del portón cambia en marzo": pasado el día, deja de ofrecerse. */
+  expiresAt: Timestamp | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface NewMemoryInput {
+  content: string;
+  category?: MemoryCategory;
+  sensitive?: boolean;
+  pinned?: boolean;
+  visibility?: MemoryVisibility;
+  sourceMessageId?: string | null;
+  /** Compartir un recuerdo tomado de un DM: lo confirma quien lo guarda. */
+  shareConfirmed?: boolean;
+  expiresAt?: Date | null;
+}
+
+export type UpdateMemoryPatch = {
+  content?: string;
+  category?: MemoryCategory;
+  sensitive?: boolean;
+  pinned?: boolean;
+  visibility?: MemoryVisibility;
+  shareConfirmed?: boolean;
+  expiresAt?: Date | null;
+};
+
+/** Resultado de un recuerdo (RPC `search_space_memories`). */
+export interface MemorySearchHit {
+  id: string;
+  content: string;
+  category: MemoryCategory;
+  sensitive: boolean;
+  pinned: boolean;
+  visibility: MemoryVisibility;
+  expiresAt: string | null;
+  createdAt: string;
+  authorName: string;
 }

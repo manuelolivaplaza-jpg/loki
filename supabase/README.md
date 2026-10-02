@@ -16,6 +16,7 @@ Este directorio contiene:
 | `functions/push-send/` | Envío de FCM (respeta `notification_prefs` y el horario de silencio) |
 | `functions/google-calendar/` | Sincronización bidireccional con Google Calendar |
 | `functions/_shared/intent.ts` | Analizador determinista de intenciones (copia sincronizada con `src/lib/chat/intent.ts`) |
+| `functions/_shared/memory.ts` | Categorías y utilidades de la memoria del espacio (copia sincronizada con `src/lib/memory/memory.ts`) |
 | `functions/_shared/transcribe.ts` | Voz a texto: `openai` (`/audio/transcriptions`) o `gemini` (`generateContent` con audio inline) |
 | `seed.sql` | Datos iniciales, vacío a propósito |
 | `README.md` | Este archivo |
@@ -170,7 +171,8 @@ desde las políticas:
 | `reserve_ai_quota(workspace_id, user_id, job_type, units)` | Reserva atómica de cuota (espacio + usuario) antes de cada llamada a un modelo o a voz a texto |
 | `retry_ai_job(job_id)` | Reencola un trabajo fallido (quien lo pidió o un admin) |
 | `retry_transcription(transcription_id)` | Reencola la transcripción de un audio que falló |
-| `global_search(workspace_id, q)` | Búsqueda de Cmd/Ctrl+K: mensajes, transcripciones, tareas, proyectos, eventos y personas |
+| `global_search(workspace_id, q)` | Búsqueda de Cmd/Ctrl+K: mensajes, transcripciones, **recuerdos no sensibles**, tareas, proyectos, eventos y personas |
+| `search_space_memories(workspace_id, query, limit)` | Memoria del espacio con full-text en español (sin IA): respeta visibilidad, caducidad y membresía. La usan la pantalla Memoria y el recall de `loki-chat` |
 | `poll_results(poll_id)` | Estado de una encuesta: opciones con votos, ganador o empate, quién falta y qué puede hacer cada uno. En las anónimas no expone los uids (la RLS tampoco los deja ver) |
 | `cast_poll_vote(poll_id, option_ids)` | Vota, cambia o retira el voto (lista vacía = retirar). Valida acceso, encuesta abierta y tipo |
 | `close_poll(poll_id)` | Cierre a mano (creador, admin o quien diga `closeBy`) |
@@ -183,14 +185,41 @@ Además, en la migración de encuestas: `close_due_polls()` cierra lo vencido,
 `pg_cron` de 5 minutos (SQL barato, sin IA). El cierre por tiempo también
 ocurre al leer la encuesta, así que la tarjeta nunca sale "abierta" vencida.
 
+### Memoria del espacio (`space_memories`)
+
+Migración `20261009000000_space_memories.sql`: lo que el espacio recuerda y que
+Loki usa al responder ("la clave del wifi es…", "Tomás es alérgico al maní").
+
+- **Nada barre el chat**: no hay proceso ni trigger que lea mensajes buscando
+  datos. Los recuerdos entran por acción explícita (Loki con confirmación, el
+  menú del mensaje o la pantalla Memoria) y Loki los consulta con
+  `search_space_memories` (full-text en español, SQL barato, **sin IA**) cuando
+  alguien pregunta. Si algún día hay `pgvector`, se puede sumar búsqueda
+  semántica al lado, sin cambiar el contrato.
+- **RLS**: los miembros leen lo compartido; cada uno guarda a nombre propio
+  (`created_by = auth.uid()`); edita o borra quien lo guardó o un admin del
+  espacio. `visibility = 'privado'` deja un recuerdo personal dentro del
+  espacio (solo su autor).
+- **Nada de un DM sin permiso**: el trigger `space_memories_guard_source` fuerza
+  `privado` si el recuerdo viene del mensaje de un DM y no viene
+  `share_confirmed`; compartirlo es una decisión explícita de quien lo guarda.
+- **Sensible ≠ push**: `sensitive = true` (claves, datos de salud) sale oculto
+  en la UI, no genera notificación y `global_search` no lo devuelve. El aviso
+  de caducidad (`notify_expiring_memories`, job diario de `pg_cron`, SQL
+  barato) nunca lleva el texto de un sensible.
+- **Notificaciones** tipo `memory` (+ preferencia por tipo): "nuevo recuerdo en
+  el espacio" a los demás miembros y "está por caducar" al autor, ambas con
+  dedupe. El actor no se avisa a sí mismo.
+
 ---
 
 ## Realtime
 
 En la publicación `supabase_realtime`: `messages`, `message_reactions`, `chats`,
 `chat_reads` y las tablas que la UI mira en vivo (`ai_jobs`,
-`audio_transcriptions`, `projects`, `polls`, …). La RLS se aplica también al
-realtime, así que solo llegan eventos de lo que el usuario puede ver.
+`audio_transcriptions`, `projects`, `polls`, `space_memories`, …). La RLS se
+aplica también al realtime, así que solo llegan eventos de lo que el usuario
+puede ver.
 
 Typing y presencia **no** usan tabla: van por Broadcast y Presence en el canal
 `chat:{workspace}:{chat}` (T21).

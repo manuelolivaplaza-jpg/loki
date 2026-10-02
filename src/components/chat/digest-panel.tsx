@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ListPlus, RefreshCw, Sparkles } from "lucide-react";
+import { Brain, ListPlus, RefreshCw, Sparkles } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
 import { AiJobStatusLive } from "@/components/ai/job-status";
 import { cn } from "@/lib/utils";
@@ -25,12 +25,18 @@ export function DigestPanel({
   cached,
   refreshing,
   onConvertPoint,
+  onRememberPoint,
   onRefresh,
 }: {
   digest: ChatDigest;
   cached: boolean;
   refreshing: boolean;
   onConvertPoint: (title: string) => void;
+  /**
+   * Propone un punto del resumen como recuerdo de la memoria del espacio.
+   * Nunca guarda nada por su cuenta: abre la hoja para que alguien confirme.
+   */
+  onRememberPoint: (title: string) => void;
   onRefresh: () => void;
 }): React.JSX.Element {
   return (
@@ -64,6 +70,15 @@ export function DigestPanel({
               <span className="min-w-0 flex-1 text-body-sm leading-5 text-foreground">
                 {point.text}
               </span>
+              <button
+                type="button"
+                onClick={() => onRememberPoint(point.text)}
+                aria-label={`Recordar en el espacio: ${point.text.slice(0, 60)}`}
+                title="Recordar en el espacio"
+                className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none interactive"
+              >
+                <Icon icon={Brain} size={20} />
+              </button>
               <button
                 type="button"
                 onClick={() => onConvertPoint(point.text)}

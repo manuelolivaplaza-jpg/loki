@@ -26,7 +26,8 @@ export const AI_CHAT_NAME = "Loki IA";
 export const AI_SUGGESTIONS: readonly string[] = [
   "¿Qué tengo hoy?",
   "Recuérdame mañana a las 9 sacar la basura",
-  "Organiza el cumpleaños del sábado: evento a las 16 y tarea de comprar la torta",
+  "Loki, recuerda que el desayuno del domingo es a las 11",
+  "¿Cuál era la clave del wifi?",
 ];
 
 /** Texto del estado vacío del chat con Loki. */

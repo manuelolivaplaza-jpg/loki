@@ -65,6 +65,12 @@ type MessageItemProps = {
   onDelete: (message: MessageDoc) => void;
   onConvert?: (message: MessageDoc, kind: "task" | "event" | "reminder") => void;
   /**
+   * "Recordar en el espacio": guarda el mensaje en la memoria del espacio
+   * (abre la hoja con el texto Proposed). Lo pasa MessageList solo en chats
+   * de espacio: en el chat privado con Loki no hay memoria que compartir.
+   */
+  onRemember?: (message: MessageDoc) => void;
+  /**
    * Contexto de las notas de voz ("Ver transcripción"). Lo pasa MessageList
    * solo en chats de espacio: sin él, el audio se reproduce sin transcribir.
    */
@@ -98,6 +104,7 @@ export function MessageItem({
   onEdit,
   onDelete,
   onConvert,
+  onRemember,
   voice = null,
   disableOwnReactions = false,
 }: MessageItemProps): React.JSX.Element {
@@ -189,8 +196,9 @@ export function MessageItem({
       else if (action === "convert_task") onConvert?.(message, "task");
       else if (action === "convert_event") onConvert?.(message, "event");
       else if (action === "convert_reminder") onConvert?.(message, "reminder");
+      else if (action === "remember") onRemember?.(message);
     },
-    [closeUnified, message, onReply, onOpenThread, onCopy, onEdit, onDelete, onConvert],
+    [closeUnified, message, onReply, onOpenThread, onCopy, onEdit, onDelete, onConvert, onRemember],
   );
 
   const selectReaction = React.useCallback(
@@ -411,6 +419,7 @@ export function MessageItem({
             <MessageContextMenu
               message={message}
               isMine={isMine}
+              canRemember={onRemember !== undefined}
               onAction={handleAction}
               onClose={() => setMenuOpen(false)}
             />

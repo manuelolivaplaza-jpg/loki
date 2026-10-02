@@ -34,6 +34,13 @@
 // =============================================================================
 
 import { analyzeIntent, parseQuantity } from "../_shared/intent.ts";
+import {
+  cleanMemoryContent,
+  guessMemoryCategory,
+  looksSensitiveMemory,
+  memoryCategoryLabel,
+  normalizeMemoryCategory,
+} from "../_shared/memory.ts";
 
 const SUPABASE_URL = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
@@ -129,6 +136,12 @@ function validId(value: unknown): string | null {
 
 const SYSTEM_PROMPT =
   "Eres Loki, el asistente personal dentro de la app familiar Loki. " +
+  "Tienes memoria del espacio: con recall busca lo que el espacio recuerda " +
+  "('¿cuál era la clave del wifi?'); al responder cita el recuerdo y quién " +
+  "lo guardó. Con remember guardas un dato útil ('recuerda que la clave es…'): " +
+  "requiere confirmación y la tarjeta deja corregir categoría, sensible y " +
+  "caducidad. Nunca guardes nada por tu cuenta ni sin que te lo pidan, y " +
+  "nunca incluyas recuerdos sensibles (claves, datos de salud) en un resumen. " +
   "Respondes en español, tono cercano y sobrio, con respuestas cortas salvo " +
   "que pidan detalle. No inventes datos del usuario (calendario, tareas, " +
   "notas): si te piden algo que no ves, dilo claramente. " +
@@ -678,7 +691,7 @@ const TOOLS: ToolDef[] = [
             properties: {
               action: {
                 type: "string",
-                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task", "add_list_items", "check_list_item", "remove_list_item", "create_poll"],
+                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task", "add_list_items", "check_list_item", "remove_list_item", "create_poll", "remember"],
               },
               title: { type: "string" },
               startsAt: { type: "string" },
@@ -775,6 +788,45 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "recall",
+    description:
+      "Busca en la memoria del espacio lo que ya se sabe ('¿cuál era la clave del wifi?', '¿quién es el pediatra?'). Devuelve el texto de los recuerdos, quién los guardó y su categoría. Úsala ANTES de decir que no sabes algo del espacio.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        query: { type: "string", description: "La pregunta o palabras clave" },
+        limit: { type: "integer", description: "Máximo 1-8, default 5" },
+      },
+      required: ["workspaceId", "query"],
+    },
+  },
+  {
+    name: "remember",
+    description:
+      "Guarda un dato útil del espacio en su memoria ('la clave del wifi es X', 'Tomás es alérgico al maní', 'el cliente prefiere los martes'). Requiere confirmación: la tarjeta deja corregir categoría, marcarlo sensible y poner fecha de caducidad. No la uses para tareas ni eventos (esas tienen su herramienta).",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        content: { type: "string", description: "El dato completo, máx 1000" },
+        category: {
+          type: "string",
+          enum: ["salud", "casa", "contactos", "trabajo", "otros"],
+        },
+        sensitive: {
+          type: "boolean",
+          description: "true para claves y datos de salud: queda oculto y sin push",
+        },
+        expiresAt: {
+          type: "string",
+          description: "ISO 8601 opcional ('el código del portón cambia en marzo')",
+        },
+      },
+      required: ["workspaceId", "content"],
+    },
+  },
+  {
     name: "create_reminder",
     description: "Crea un recordatorio (tarea con hora de aviso, para mí o para alguien con assigneeIds; sin proyecto va a la Bandeja). Requiere confirmación.",
     parameters: {
@@ -806,6 +858,7 @@ const WRITE_ACTIONS: ReadonlySet<string> = new Set([
   "check_list_item",
   "remove_list_item",
   "create_poll",
+  "remember",
   "propose_plan",
 ]);
 
@@ -822,6 +875,7 @@ const ACTION_LABELS: Record<string, string> = {
   check_list_item: "Marcar ítem",
   remove_list_item: "Quitar ítem",
   create_poll: "Crear encuesta",
+  remember: "Recordar en el espacio",
   propose_plan: "Plan de acciones",
 };
 
@@ -951,6 +1005,34 @@ async function execReadTool(
       .filter((row) => isRecord(row) && row["checked"] !== true)
       .map((row) => isRecord(row) ? String(row["quantity"] ?? "") !== "" ? `${String(row["quantity"])}${String(row["unit"] ?? "") !== "" ? ` ${String(row["unit"])}` : ""} ${String(row["text"] ?? "")}`.trim() : String(row["text"] ?? "") : "");
     return JSON.stringify({ lista: list.title, faltan: open, total: rows.length });
+  }
+  if (name === "recall") {
+    // Memoria del espacio: full-text en español por RPC (SQL barato, sin IA).
+    const rawQuery = asString(args["query"]) ?? "";
+    const rawLimit = args["limit"];
+    const limit =
+      typeof rawLimit === "number" && rawLimit >= 1 && rawLimit <= 8
+        ? Math.floor(rawLimit)
+        : 5;
+    const query = rawQuery.replace(/[¿?]/g, " ").replace(/\s+/g, " ").trim();
+    const res = await userRest("/rpc/search_space_memories", jwt, {
+      method: "POST",
+      body: { p_ws: workspaceId as string, p_query: query, p_limit: limit },
+    });
+    if (!res.ok || !Array.isArray(res.data)) {
+      return "No pude consultar la memoria del espacio.";
+    }
+    const rows = res.data as Record<string, unknown>[];
+    if (rows.length === 0) return "La memoria del espacio no tiene nada sobre eso.";
+    return JSON.stringify({
+      recuerdos: rows.map((row) => ({
+        texto: String(row["content"] ?? ""),
+        categoria: String(row["category"] ?? "otros"),
+        sensible: row["sensitive"] === true,
+        quien: String(row["author_name"] ?? "Alguien"),
+        caduca: row["expires_at"] === null ? "" : String(row["expires_at"]),
+      })),
+    });
   }
   if (name === "search_messages") {
     const query = asString(args["query"]) ?? "";
@@ -1168,6 +1250,15 @@ async function precheckAction(
       );
       const exists = Array.isArray(res.data) && res.data.length > 0;
       if (!exists) return { ok: false, message: "Esa tarea ya no existe." };
+    }
+    return ok;
+  }
+  if (action === "remember") {
+    // Guardar en la memoria del espacio solo necesita ser miembro (lo exige
+    // la RLS del INSERT), pero sin texto no hay nada que confirmar.
+    const content = paramStr(params, "content") ?? paramStr(params, "text");
+    if (workspaceId === null || content === null || cleanMemoryContent(content) === null) {
+      return { ok: false, message: "Dime qué quieres que recuerde." };
     }
     return ok;
   }
@@ -1456,6 +1547,13 @@ function detectIntentFallback(text: string): LlmToolCall {
   }
   if (/(resumen del d[ií]a|qu[eé] hay hoy|mi d[ií]a|agenda de hoy)/.test(lower)) {
     return { name: "get_today_summary", args: {} };
+  }
+  // Memoria del espacio (por si el proveedor no soporta tools).
+  if (/(memoria|recuerda que|anota que|apunta que|recuerdas|cual era|cu[aá]l era|te acuerdas)/.test(lower)) {
+    if (/(recuerda que|anota que|apunta que|guarda en la memoria)/.test(lower)) {
+      return { name: "remember", args: { content: text.trim().slice(0, 1000) } };
+    }
+    return { name: "recall", args: { query: text.trim().slice(0, 120) } };
   }
   if (/(busca|buscar|encuentra|encuentra|dijeron|dijo).*(mensaje|chat)/.test(lower)) {
     return { name: "search_messages", args: { query: text.trim().slice(0, 80) } };
@@ -1919,6 +2017,42 @@ async function execConfirmedAction(
       `Listo: agendé “${title.slice(0, 100)}”.${who}`,
       [link],
       id === "" ? [] : [{ kind: "task", id, label: title.slice(0, 100), workspaceId, projectId }],
+    );
+  }
+
+  if (action === "remember") {
+    // Memoria del espacio: un INSERT con el JWT del usuario (la RLS exige ser
+    // miembro y guardar a nombre propio). `sensitive` y `expires_at` solo si
+    // la tarjeta los trae: nunca se inventa una caducidad.
+    const content = cleanMemoryContent(
+      paramStr(params, "content") ?? paramStr(params, "text") ?? paramStr(params, "title") ?? "",
+    );
+    if (workspaceId === null || content === null) {
+      return fail("Dime qué quieres que recuerde y lo guardo en el espacio.");
+    }
+    const category = normalizeMemoryCategory(paramStr(params, "category") ?? "otros");
+    const sensitive = params["sensitive"] === true || looksSensitiveMemory(content);
+    const expiresAt = paramStr(params, "expiresAt") ?? paramStr(params, "expires_at");
+    const res = await userRest("/space_memories", ctx.jwt, {
+      method: "POST",
+      body: {
+        workspace_id: workspaceId,
+        content,
+        category,
+        sensitive,
+        ...(expiresAt !== null ? { expires_at: expiresAt } : {}),
+        created_by: ctx.uid,
+      },
+    });
+    if (!res.ok || !isRecord(res.data)) {
+      return fail("No pude guardarlo en la memoria. Inténtalo de nuevo.");
+    }
+    const savedSensitive = res.data["sensitive"] === true;
+    return done(
+      `Listo: lo guardé en la memoria del espacio${
+        savedSensitive ? " como sensible (queda oculto hasta que alguien lo muestre)" : ""
+      }.`,
+      ["/memoria"],
     );
   }
 
@@ -2512,6 +2646,81 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // configurado: es código, no IA.
   {
     const quick = analyzeIntent(input.text);
+
+    // Memoria: "Loki, recuerda que la clave del wifi es X" y "¿cuál era la
+    // clave del wifi?". Ambas salen con el analizador (código), sin modelo:
+    // guardar pide tarjeta de confirmación y consultar usa la RPC de
+    // full-text (nada de LLM ni cuota para leer lo que el espacio ya sabe).
+    if (quick !== null && quick.confident && (quick.action === "remember" || quick.action === "recall")) {
+      let wsForMemory: string | undefined;
+      if (input.mode === "mention") {
+        const member = await isMember(input.workspaceId, uid);
+        if (!member) return json(403, { code: "forbidden" });
+        wsForMemory = input.workspaceId;
+      }
+      const wsId = wsForMemory ?? await defaultWorkspaceId(uid, token);
+      if (wsId === null) {
+        return sseReplyStream(null, async (send) => {
+          send("No sé en qué espacio guardar eso. Ábrelo dentro de un espacio y pídemelo ahí.");
+        });
+      }
+      if (quick.action === "remember") {
+        const content = cleanMemoryContent(quick.title);
+        if (content !== null) {
+          const pending = {
+            id: crypto.randomUUID(),
+            action: "remember",
+            label: actionLabel("remember"),
+            params: pendingParams(
+              {
+                content,
+                category: guessMemoryCategory(content),
+                // Solo se propone: la tarjeta lo deja cambiar.
+                sensitive: looksSensitiveMemory(content),
+              },
+              { workspaceId: wsId },
+            ),
+          };
+          return sseReplyStream(null, async (_send, sendPending) => {
+            sendPending(pending);
+          });
+        }
+      }
+      // Recall: la RPC filtra por visibilidad y caducidad; sensible entra
+      // porque la pregunta la hizo un miembro del propio espacio.
+      const found = await userRest("/rpc/search_space_memories", token, {
+        method: "POST",
+        body: { p_ws: wsId, p_query: quick.title.replace(/[¿?]/g, " "), p_limit: 5 },
+      });
+      const rows =
+        found.ok && Array.isArray(found.data) ? (found.data as Record<string, unknown>[]) : [];
+      let saveRecall: ((full: string) => Promise<void>) | null = null;
+      if (input.mode === "mention") {
+        const { workspaceId: ws, chatId, threadParentId } = input;
+        saveRecall = (full: string) => saveMentionReply(ws, chatId, full, threadParentId);
+      } else {
+        const chatId = await ensurePersonalChat(uid);
+        if (chatId !== null) {
+          saveRecall = (full: string) => savePersonalReply(chatId, full);
+        }
+      }
+      return sseReplyStream(saveRecall, async (send) => {
+        if (rows.length === 0) {
+          send("No tengo eso guardado en la memoria del espacio. Si quieres, dímelo y lo recuerdo.");
+          return;
+        }
+        const lines = rows.map((row) => {
+          const autor = asString(row["author_name"]) ?? "Alguien";
+          const categoria = memoryCategoryLabel(asString(row["category"]) ?? "otros");
+          const texto = asString(row["content"]) ?? "";
+          const caduca = asString(row["expires_at"]);
+          const vence =
+            caduca === null ? "" : ` (caduca el ${new Date(caduca).toLocaleDateString("es")})`;
+          return `· ${texto}${vence} — ${autor}, ${categoria.toLowerCase()}`;
+        });
+        send(`Lo encontré en la memoria del espacio:\n${lines.join("\n")}`);
+      });
+    }
     // Listas: "agrega X a la lista…" con lista existente (sin LLM).
     if (quick !== null && quick.confident && quick.action === "add_list") {
       let wsForTool: string | undefined;

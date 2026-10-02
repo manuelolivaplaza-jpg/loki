@@ -6,6 +6,7 @@ import { AiConnecting } from "@/components/chat/ai-connecting";
 import { AiSuggestions } from "@/components/chat/ai-suggestions";
 import { AiToolCard, UndoBar, type CardConfirmPayload } from "@/components/chat/ai-tool-card";
 import { ConvertSheet, type ConvertKind } from "@/components/chat/convert-sheet";
+import { MemorySheet } from "@/components/memory/memory-sheet";
 import { DictationBanner } from "@/components/chat/dictation-banner";
 import { VoiceConvertSheet } from "@/components/chat/voice-convert-sheet";
 import { DictateSheet } from "@/components/ai/dictate-sheet";
@@ -192,6 +193,13 @@ export function ConversationView({
   // Hoja de encuesta (`+` → Encuesta). La encuesta es un mensaje 'card' del
   // chat, así que vive aquí y no en Publicaciones.
   const [creatingPoll, setCreatingPoll] = React.useState(false);
+  // "Recordar en el espacio" (menú del mensaje o resumen de no leídos):
+  // abre la hoja con el texto Proposed; nada se guarda sin confirmar.
+  const [remembering, setRemembering] = React.useState<{
+    text: string;
+    sourceMessageId: string | null;
+    chatType: string;
+  } | null>(null);
   type ToolCtx =
     | { mode: "personal" }
     | { mode: "mention"; workspaceId: string; chatId: string; threadParentId?: string };
@@ -702,6 +710,18 @@ export function ConversationView({
   );
 
   /**
+   * Un punto del resumen se propone como recuerdo de la memoria del espacio
+   * ("¿Guardo esto?"). Loki ya está procesando el resumen, así que no se gasta
+   * nada extra: la hoja pide la confirmación y solo entonces se guarda.
+   */
+  const handleDigestMemory = React.useCallback(
+    (title: string) => {
+      setRemembering({ text: title, sourceMessageId: null, chatType: "group" });
+    },
+    [],
+  );
+
+  /**
    * Envía un texto a Loki IA (chat privado) por el camino de siempre: el
    * mensaje del usuario, la respuesta en streaming y, si el texto trae
    * acciones, la tarjeta de plan. Lo usan tanto el composer como el texto
@@ -937,6 +957,23 @@ export function ConversationView({
       setConverting({ message, kind, fromVoice: firstTranscribable(message) !== null });
     },
     [],
+  );
+
+  /**
+   * "Recordar en el espacio": abre la hoja con el texto del mensaje (o de una
+   * transcripción) propuesto. En un DM el recuerdo nace "solo yo": compartirlo
+   * con el espacio es una decisión explícita dentro de la hoja.
+   */
+  const handleRemember = React.useCallback(
+    (message: MessageDoc) => {
+      if (message.deleted || message.text.trim() === "") return;
+      setRemembering({
+        text: message.text.trim(),
+        sourceMessageId: message.id,
+        chatType: chat?.type ?? "group",
+      });
+    },
+    [chat?.type],
   );
 
   // --- T16: reacciones, citas, edición, borrado e hilos ----------------------
@@ -1177,6 +1214,9 @@ export function ConversationView({
               // "Convertir en…" sobre la transcripción.
               voice={voiceContext}
               onConvert={isLoki || wsForLive === null ? undefined : handleConvert}
+              // Memoria del espacio: solo en chats de espacio (en el chat
+              // privado con Loki la memoria no se comparte).
+              onRemember={isLoki || wsForLive === null ? undefined : handleRemember}
             />
             {streamingMessage !== null ? (
               <div className="px-4 pb-2">
@@ -1299,6 +1339,7 @@ export function ConversationView({
               cached={digest.cached}
               refreshing={digestBusy}
               onConvertPoint={handleDigestPoint}
+              onRememberPoint={handleDigestMemory}
               onRefresh={() => {
                 setDigest(null);
                 void handleDigest();
@@ -1342,6 +1383,19 @@ export function ConversationView({
         ) : null}
         {creatingPoll && wsForLive !== null ? (
           <PollSheet open wsId={wsForLive} chatId={chatId} onClose={() => setCreatingPoll(false)} />
+        ) : null}
+        {remembering !== null && wsForLive !== null ? (
+          <MemorySheet
+            open
+            wsId={wsForLive}
+            memory={null}
+            initialContent={remembering.text}
+            sourceMessageId={remembering.sourceMessageId}
+            // Lo que se dijo en un DM no pasa a todo el espacio sin que
+            // quien lo guarda lo confirme en la hoja.
+            fromDirectMessage={remembering.chatType === "dm"}
+            onClose={() => setRemembering(null)}
+          />
         ) : null}
         <Composer
           chatName={chatName}

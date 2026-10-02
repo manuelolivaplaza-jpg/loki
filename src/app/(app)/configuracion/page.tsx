@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { LogOut } from "lucide-react";
+import { Brain, ChevronRight, LogOut } from "lucide-react";
 import { Card, CardDivider, CardRow } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -38,6 +38,7 @@ const PREF_ROWS: readonly { key: keyof Omit<NotificationPrefs, "quietStart" | "q
   { key: "ai_alert", label: "Avisos de Loki", detail: "Alertas del asistente" },
   { key: "list", label: "Listas", detail: "Novedades de las listas compartidas" },
   { key: "poll", label: "Encuestas", detail: "Cuando falta tu voto antes del cierre" },
+  { key: "memory", label: "Memoria", detail: "Recuerdos nuevos o por caducar del espacio" },
 ];
 
 export default function ConfiguracionPage(): React.JSX.Element {
@@ -316,6 +317,37 @@ export default function ConfiguracionPage(): React.JSX.Element {
       </section>
 
       <GcalSection />
+
+      <section aria-label="Memoria">
+        <SectionLabel>Memoria del espacio</SectionLabel>
+        <Card>
+          <CardRow
+            role="link"
+            tabIndex={0}
+            onClick={() => router.push("/memoria")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                router.push("/memoria");
+              }
+            }}
+            className="cursor-pointer outline-none"
+          >
+            <span aria-hidden="true" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-background text-foreground dark:bg-surface-2">
+              <Icon icon={Brain} size={22} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-body leading-6 text-foreground">
+                Ver la memoria
+              </span>
+              <span className="block text-body-sm leading-5 text-muted-foreground">
+                Lo que el espacio recuerda y que Loki usa al responder
+              </span>
+            </span>
+            <Icon icon={ChevronRight} size={20} className="shrink-0 text-muted-foreground" />
+          </CardRow>
+        </Card>
+      </section>
 
       {user !== null && currentWorkspaceId !== null ? (
         <AiUsageSection

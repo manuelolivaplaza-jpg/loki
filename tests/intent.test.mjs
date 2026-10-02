@@ -183,6 +183,40 @@ equal(p15.pollOptions.every((o) => o.startsAt === null), true, "opciones sin fec
 // "encuesta" suelta no es intención de encuesta (ni de nada): sigue null.
 equal(analyzeIntent("la encuesta de la semana pasada", { now: NOW }), null, "no fuerza encuesta");
 
+// --- Memoria del espacio (sin LLM) ---------------------------------------------
+const mem1 = analyzeIntent("Loki, recuerda que la clave del wifi es Wifi2026", { now: NOW });
+ok(mem1 !== null, "detecta 'recuerda que'");
+equal(mem1.action, "remember", "acción remember");
+equal(mem1.title, "la clave del wifi es Wifi2026", "recupera el texto con tildes del original");
+equal(mem1.dateISO, null, "recordar un dato no lleva fecha");
+equal(mem1.confident, true, "seguro sin modelo");
+
+const mem2 = analyzeIntent("anota que Tomás es alérgico al maní", { now: NOW });
+ok(mem2 !== null, "detecta 'anota que'");
+equal(mem2.action, "remember", "acción remember");
+equal(mem2.title, "Tomás es alérgico al maní", "dato de salud limpio");
+
+// "recuerda que" es memoria, NO recordatorio: no hay fecha que pedir.
+const mem3 = analyzeIntent("recuerda que el portón es 1234", { now: NOW });
+equal(mem3.action, "remember", "no cae en remind");
+
+// El recordatorio clásico sigue siendo recordatorio.
+const mem4 = analyzeIntent("recuérdame mañana a las 9 sacar la basura", { now: NOW });
+equal(mem4.action, "remind", "recuérdame sigue siendo aviso con fecha");
+
+const mem5 = analyzeIntent("¿cuál era la clave del wifi?", { now: NOW });
+ok(mem5 !== null, "detecta la pregunta de recall");
+equal(mem5.action, "recall", "acción recall");
+equal(mem5.title, "cuál era la clave del wifi", "el recall busca la pregunta sin signos");
+
+// Ambiguo ("acuérdate de la reunión" puede ser un aviso): sin una señal clara
+// de memoria, el analizador no fuerza nada y sigue el camino del modelo.
+equal(
+  analyzeIntent("acuérdate de la reunión", { now: NOW }),
+  null,
+  "una frase ambigua no se fuerza a memoria",
+);
+
 // --- Sincronía con la Edge -------------------------------------------------------
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(resolve(here, "../src/lib/chat/intent.ts"), "utf8");
@@ -191,5 +225,14 @@ const edge = readFileSync(
   "utf8",
 );
 equal(edge, src, "la copia de la Edge es idéntica al original");
+
+// `memory.ts` también está duplicado (la Edge lo usa para las tarjetas): la
+// copia debe ser idéntica byte a byte.
+const memorySrc = readFileSync(resolve(here, "../src/lib/memory/memory.ts"), "utf8");
+const memoryEdge = readFileSync(
+  resolve(here, "../supabase/functions/_shared/memory.ts"),
+  "utf8",
+);
+equal(memoryEdge, memorySrc, "la copia de memory.ts en la Edge es idéntica");
 
 console.log(`intent: ${checks} checks ok`);

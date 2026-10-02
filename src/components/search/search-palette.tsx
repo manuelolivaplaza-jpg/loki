@@ -4,14 +4,16 @@
  * Paleta de búsqueda global (Cmd/Ctrl+K y lupa).
  *
  * Montaje único en `AppShell`: overlay + input con grupos de resultados
- * (Mensajes, Notas de voz, Tareas, Proyectos, Eventos y Personas), acciones
- * rápidas y recientes cuando la consulta está vacía. Teclado: ↑↓ navegar,
- * Enter abrir, Esc cerrar. Las coincidencias se resaltan con `<mark>`.
+ * (Mensajes, Notas de voz, Recuerdos, Tareas, Proyectos, Eventos y Personas),
+ * acciones rápidas y recientes cuando la consulta está vacía. Teclado: ↑↓
+ * navegar, Enter abrir, Esc cerrar. Las coincidencias se resaltan con
+ * `<mark>`.
  */
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
+  Brain,
   CalendarDays,
   CalendarPlus,
   ClipboardList,
@@ -51,7 +53,8 @@ type ActionKind =
   | "event"
   | "action"
   | "recent"
-  | "transcription";
+  | "transcription"
+  | "memory";
 
 type PaletteItem = {
   key: string;
@@ -110,6 +113,13 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
     subtitle: "Tu asistente personal",
     href: "/chat/loki-ia",
     icon: Sparkles,
+  },
+  {
+    key: "memoria",
+    title: "Memoria del espacio",
+    subtitle: "Lo que el espacio recuerda",
+    href: "/memoria",
+    icon: Brain,
   },
 ];
 
@@ -316,6 +326,21 @@ export function SearchPalette({
         })),
       });
     }
+    if (results.memories.length > 0) {
+      out.push({
+        label: "Recuerdos",
+        items: results.memories.map((hit) => ({
+          key: `memory:${hit.id}`,
+          kind: "memory",
+          recentKind: "action",
+          title: hit.content,
+          subtitle: `Recuerdo · ${hit.authorName}`,
+          href: "/memoria",
+          icon: Brain,
+          highlightText: hit.content,
+        })),
+      });
+    }
     if (results.tasks.length > 0) {
       out.push({
         label: "Tareas",
@@ -443,6 +468,7 @@ export function SearchPalette({
   const totalHits =
     results.messages.length +
     results.transcriptions.length +
+    results.memories.length +
     results.tasks.length +
     results.projects.length +
     results.events.length +

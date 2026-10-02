@@ -139,8 +139,30 @@ type NotificationPrefsRow = {
   ai_alert: boolean;
   list: boolean;
   poll: boolean;
+  /** Memoria del espacio (20261009000000_space_memories.sql). */
+  memory: boolean;
   quiet_start: string | null;
   quiet_end: string | null;
+  updated_at: string;
+};
+
+/**
+ * Recuerdo del espacio (`space_memories`, migración
+ * `20261009000000_space_memories.sql`).
+ */
+type SpaceMemoryRow = {
+  id: string;
+  workspace_id: string;
+  content: string;
+  category: string;
+  sensitive: boolean;
+  pinned: boolean;
+  visibility: string;
+  source_message_id: string | null;
+  share_confirmed: boolean;
+  created_by: string | null;
+  expires_at: string | null;
+  created_at: string;
   updated_at: string;
 };
 
@@ -1144,6 +1166,7 @@ export type Database = {
           ai_alert?: boolean;
           list?: boolean;
           poll?: boolean;
+          memory?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
@@ -1160,11 +1183,54 @@ export type Database = {
           ai_alert?: boolean;
           list?: boolean;
           poll?: boolean;
+          memory?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
         };
         Relationships: [];
+      };
+      space_memories: {
+        Row: SpaceMemoryRow;
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          content: string;
+          category?: string;
+          sensitive?: boolean;
+          pinned?: boolean;
+          visibility?: string;
+          source_message_id?: string | null;
+          share_confirmed?: boolean;
+          created_by?: string | null;
+          expires_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          content?: string;
+          category?: string;
+          sensitive?: boolean;
+          pinned?: boolean;
+          visibility?: string;
+          source_message_id?: string | null;
+          share_confirmed?: boolean;
+          created_by?: string | null;
+          expires_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "space_memories_source_message_id_fkey";
+            columns: ["source_message_id"];
+            isOneToOne: false;
+            referencedRelation: "messages";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       polls: {
         Row: PollRow;
@@ -1464,6 +1530,24 @@ export type Database = {
           p_q: string;
         };
         Returns: Json;
+      };
+      search_space_memories: {
+        Args: {
+          p_ws: string;
+          p_query: string;
+          p_limit?: number;
+        };
+        Returns: Json;
+      };
+      memory_query_terms: {
+        Args: {
+          p_query: string;
+        };
+        Returns: string[];
+      };
+      notify_expiring_memories: {
+        Args: Record<string, never>;
+        Returns: number;
       };
       is_member: {
         Args: {

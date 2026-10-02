@@ -31,6 +31,8 @@ type MessageListProps = {
   onDelete: (message: MessageDoc) => void;
   /** Convertir el mensaje en tarea/evento/recordatorio (opcional). */
   onConvert?: (message: MessageDoc, kind: "task" | "event" | "reminder") => void;
+  /** "Recordar en el espacio": guarda el mensaje en la memoria (opcional). */
+  onRemember?: (message: MessageDoc) => void;
   /**
    * Habilita "Ver transcripción" en las notas de voz de este chat (el id del
    * mensaje lo pone cada fila, para heredar su visibilidad). `null` en el
@@ -66,6 +68,7 @@ export function MessageList({
   onEdit,
   onDelete,
   onConvert,
+  onRemember,
   voice = null,
   disableOwnReactions = false,
   highlightId = null,
@@ -126,6 +129,7 @@ export function MessageList({
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onConvert={onConvert}
+                onRemember={onRemember}
                 voice={voice}
               />
             );

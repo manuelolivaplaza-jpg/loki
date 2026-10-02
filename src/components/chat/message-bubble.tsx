@@ -282,6 +282,44 @@ function AiReply({
   );
 }
 
+/**
+ * Respuesta de un agente externo (`type: "agent"`, solo service role).
+ *
+ * Sin burbuja y a ancho completo, como la de Loki pero con el handle del bot
+ * (@mi-bot). El contenido es de un tercero: solo texto seguro (SafeText, sin
+ * HTML) y enlaces http/https. El progreso en vivo y las acciones viven en la
+ * tarjeta bajo el mensaje que lo invocó (`AgentRunCard`).
+ */
+function AgentReply({
+  message,
+  showAuthor,
+  showTime,
+}: {
+  message: MessageDoc;
+  showAuthor: boolean;
+  showTime: boolean;
+}): React.JSX.Element {
+  const full = message.deleted ? "" : message.text;
+  return (
+    <div className="w-full px-1">
+      {showAuthor ? (
+        <p className="flex items-center gap-1 text-meta font-semibold leading-5 text-muted-foreground">
+          <span aria-hidden="true" className="text-[14px] leading-none">🤖</span>
+          {message.authorName === "" ? "Bot" : message.authorName}
+        </p>
+      ) : null}
+      <div className="mt-1 w-full text-body-sm leading-6 text-foreground">
+        {message.deleted ? (
+          <span className="italic text-muted-foreground">Mensaje eliminado</span>
+        ) : (
+          <MentionedText text={full} mentions={message.mentions} />
+        )}
+      </div>
+      {showTime ? <MessageMeta message={message} /> : null}
+    </div>
+  );
+}
+
 export function MessageBubble({
   message,
   isMine,
@@ -362,6 +400,16 @@ export function MessageBubble({
         showAuthor={showAuthor}
         showTime={showTime}
         streaming={streaming}
+      />
+    );
+  }
+
+  if (message.type === "agent") {
+    return (
+      <AgentReply
+        message={message}
+        showAuthor={showAuthor}
+        showTime={showTime}
       />
     );
   }

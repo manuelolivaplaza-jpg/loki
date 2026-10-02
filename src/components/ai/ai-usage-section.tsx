@@ -20,6 +20,7 @@ import {
   TRANSCRIPTION_NOT_CONFIGURED,
 } from "@/lib/data/transcriptions";
 import { useMembers } from "@/hooks/use-chat";
+import { useAgentUsageToday, useSpaceAgents } from "@/hooks/use-agents";
 import { cn } from "@/lib/utils";
 
 const JOB_TYPE_LABELS: Record<string, string> = {
@@ -80,6 +81,21 @@ export function AiUsageSection({
   const [saving, setSaving] = React.useState(false);
   const [dailyInput, setDailyInput] = React.useState("");
   const membersQuery = useMembers(isAdmin ? wsId : null);
+  // Agentes externos: ejecuciones de hoy por agente (límites visibles).
+  // Invocar no gasta tokens de Loki (solo el armado del contexto, que es
+  // código); aquí se ven los topes por agente, por usuario y por espacio.
+  const spaceAgentsQuery = useSpaceAgents(wsId === "" ? null : wsId);
+  const agentUsageQuery = useAgentUsageToday(wsId === "" ? null : wsId);
+  const agentUsage = React.useMemo(() => {
+    const rows = agentUsageQuery.data ?? [];
+    const byConnection = new Map<string, number>();
+    let mine = 0;
+    for (const row of rows) {
+      byConnection.set(row.connectionId, (byConnection.get(row.connectionId) ?? 0) + 1);
+      if (row.requestedBy === uid) mine += 1;
+    }
+    return { byConnection, mine, total: rows.length };
+  }, [agentUsageQuery.data, uid]);
 
   React.useEffect(() => {
     if (wsId === "") return;
@@ -255,6 +271,44 @@ export function AiUsageSection({
               </CardRow>
             </>
           ) : null}
+          <CardDivider />
+          <CardRow>
+            <span className="min-w-0 flex-1">
+              <span className="block text-body leading-6 text-foreground">
+                Agentes externos · hoy {agentUsage.total} de 100 del espacio
+              </span>
+              <span className="block text-body-sm leading-5 text-muted-foreground">
+                Invocar no gasta tokens (solo código) · tú llevas {agentUsage.mine} de 30 · un bot no menciona a otro (anti-bucles)
+              </span>
+            </span>
+          </CardRow>
+          {(spaceAgentsQuery.data ?? []).length === 0 ? (
+            <CardRow minHeight="12">
+              <span className="text-body-sm leading-5 text-muted-foreground">
+                Sin agentes habilitados en este espacio.
+              </span>
+            </CardRow>
+          ) : (
+            <div className="flex flex-col gap-3 px-4 pb-4 pt-1">
+              {(spaceAgentsQuery.data ?? []).map((entry) => {
+                const used = agentUsage.byConnection.get(entry.connection.id) ?? 0;
+                const limit = entry.grant.dailyLimit;
+                return (
+                  <div key={entry.connection.id} className="flex flex-col gap-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate text-body-sm text-foreground">
+                        @{entry.connection.handle}
+                      </span>
+                      <span className="shrink-0 text-meta tabular-nums text-muted-foreground">
+                        {used}/{limit} hoy
+                      </span>
+                    </div>
+                    <UsageBar ratio={limit > 0 ? used / limit : 0} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Card>
 
         <Card>

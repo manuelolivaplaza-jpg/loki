@@ -7,9 +7,17 @@
  */
 
 export interface MentionCandidate {
-  /** uid del miembro o "loki" para la IA. */
+  /** uid del miembro, "loki" para la IA o `agent:<connectionId>` para bots. */
   id: string;
   displayName: string;
+  /** kind ausente = miembro (compatibilidad histórica). */
+  kind?: "member" | "loki" | "agent";
+  /** Handle sin @ (solo agentes): el token que se menciona. */
+  handle?: string;
+  /** Dueño visible del bot ("mi-bot · de Manu"). */
+  ownerName?: string;
+  /** Emoji del bot (solo agentes). */
+  avatarEmoji?: string;
 }
 
 export interface MentionSegment {
@@ -53,7 +61,45 @@ export const MENTION_COLOR = "#1D9BF0";
 export const LOKI_CANDIDATE: MentionCandidate = {
   id: LOKI_MENTION_ID,
   displayName: LOKI_DISPLAY_NAME,
+  kind: "loki",
 };
+
+/** Prefijo de los ids de agentes (`agent:<connectionId>`). */
+export const AGENT_MENTION_PREFIX = "agent:";
+
+/** True si el id es la mención a un agente (`agent:<uuid>`). */
+export function isAgentMentionId(id: string): boolean {
+  return id.startsWith(AGENT_MENTION_PREFIX) && id.length > AGENT_MENTION_PREFIX.length;
+}
+
+/** connectionId de un id `agent:<id>` (null si no es de agente). */
+export function agentConnectionIdOf(id: string): string | null {
+  if (!isAgentMentionId(id)) return null;
+  const connectionId = id.slice(AGENT_MENTION_PREFIX.length).trim();
+  return connectionId === "" ? null : connectionId;
+}
+
+/**
+ * Candidato de un agente habilitado en el espacio. displayName es el handle
+ * (sin @) para que el token `@handle` resuelva exacto; el menú muestra el
+ * distintivo de bot y su dueño ("mi-bot · de Manu").
+ */
+export function buildAgentCandidate(input: {
+  connectionId: string;
+  handle: string;
+  ownerName?: string;
+  avatarEmoji?: string;
+}): MentionCandidate {
+  const handle = input.handle.trim().replace(/^@+/, "");
+  return {
+    id: `${AGENT_MENTION_PREFIX}${input.connectionId}`,
+    displayName: handle === "" ? "bot" : handle,
+    kind: "agent",
+    handle: handle === "" ? "bot" : handle,
+    ownerName: input.ownerName?.trim() ?? "",
+    avatarEmoji: input.avatarEmoji ?? "🤖",
+  };
+}
 
 /** Minúsculas sin tildes para comparar nombres/queries. */
 export function normalizeMention(value: string): string {
@@ -97,7 +143,14 @@ export function getMentionQuery(
 }
 
 function candidateKeys(candidate: MentionCandidate): string[] {
-  if (candidate.id === LOKI_MENTION_ID) return [...LOKI_ALIASES];
+  if (candidate.id === LOKI_MENTION_ID || candidate.kind === "loki") {
+    return [...LOKI_ALIASES];
+  }
+  if (candidate.kind === "agent") {
+    const handle = (candidate.handle ?? candidate.displayName).trim();
+    const keys = [candidate.displayName, handle];
+    return [...new Set(keys.filter((key) => key !== ""))];
+  }
   const compact = candidate.displayName.replace(/\s+/g, "");
   const keys = [candidate.displayName, compact];
   if (compact !== candidate.displayName) {
@@ -109,7 +162,10 @@ function candidateKeys(candidate: MentionCandidate): string[] {
 
 /** Primer nombre normalizado (para match "@Lucia" si es único). */
 function firstNameKey(candidate: MentionCandidate): string {
-  if (candidate.id === LOKI_MENTION_ID) return "";
+  if (candidate.id === LOKI_MENTION_ID || candidate.kind === "loki") return "";
+  // Los agentes solo resuelven por handle exacto (nunca por primer nombre):
+  // dos bots "mi-bot" y "mi-bot-2" no deben ambiguarse.
+  if (candidate.kind === "agent") return "";
   const first = candidate.displayName.split(/\s+/).filter(Boolean)[0] ?? "";
   return normalizeMention(first);
 }
@@ -121,7 +177,13 @@ function firstNameKey(candidate: MentionCandidate): string {
  * displayName con espacios; solo el token insertado va compacto.
  */
 export function buildMentionToken(candidate: MentionCandidate): string {
-  if (candidate.id === LOKI_MENTION_ID) return `@${LOKI_DISPLAY_NAME}`;
+  if (candidate.id === LOKI_MENTION_ID || candidate.kind === "loki") {
+    return `@${LOKI_DISPLAY_NAME}`;
+  }
+  if (candidate.kind === "agent") {
+    const handle = (candidate.handle ?? candidate.displayName).trim().replace(/\s+/g, "");
+    return `@${handle === "" ? "bot" : handle}`;
+  }
   const compact = candidate.displayName.replace(/\s+/g, "");
   return `@${compact}`;
 }
@@ -208,6 +270,49 @@ export function resolveMentionIds(
     }
   }
   return ids;
+}
+
+/**
+ * Agentes invocados en el texto final (subconjunto de `resolveMentionIds`).
+ * Una mención dispara UNA ejecución por agente (dedupe por connectionId);
+ * el despacho además usa idempotency_key por mensaje para no duplicar.
+ */
+export function findInvokedAgents(
+  text: string,
+  candidates: readonly MentionCandidate[],
+): MentionCandidate[] {
+  const ids = new Set(resolveMentionIds(text, candidates));
+  const out: MentionCandidate[] = [];
+  for (const candidate of candidates) {
+    if (candidate.kind !== "agent") continue;
+    if (!ids.has(candidate.id)) continue;
+    if (out.some((item) => item.id === candidate.id)) continue;
+    out.push(candidate);
+  }
+  return out;
+}
+
+/**
+ * Instrucción para el agente: el texto sin la primera mención a ese bot
+ * (p. ej. "@mi-bot revisa el presupuesto" → "revisa el presupuesto").
+ * Si queda vacía, quien llama pide aclaración en vez de invocar en vacío.
+ */
+export function stripAgentMention(
+  text: string,
+  candidate: MentionCandidate,
+): string {
+  const token = buildMentionToken(candidate);
+  const index = text.indexOf(token);
+  if (index === -1) {
+    // Fallback insensible a mayúsculas (el token se insertó tal cual, pero
+    // el usuario pudo reescribirlo a mano).
+    const lower = normalizeMention(text);
+    const needle = normalizeMention(token);
+    const at = lower.indexOf(needle);
+    if (at === -1) return text.trim();
+    return `${text.slice(0, at)}${text.slice(at + token.length)}`.replace(/\s+/g, " ").trim();
+  }
+  return `${text.slice(0, index)}${text.slice(index + token.length)}`.replace(/\s+/g, " ").trim();
 }
 
 /**

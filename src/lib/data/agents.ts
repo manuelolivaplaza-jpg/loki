@@ -44,7 +44,7 @@ const GRANT_COLUMNS =
 
 /** Columnas seguras de agent_runs (sin run_token_hash). */
 const RUN_COLUMNS =
-  "id, connection_id, workspace_id, chat_id, requested_by, kind, instruction, status, token_expires_at, deadline_at, result, error, cancel_requested_at, created_at, finished_at";
+  "id, connection_id, workspace_id, chat_id, requested_by, kind, instruction, status, token_expires_at, deadline_at, context, history, result, error, cancel_requested_at, idempotency_key, message_id, created_at, finished_at";
 
 const EVENT_COLUMNS = "id, run_id, seq, type, text, percent, created_at";
 
@@ -208,6 +208,10 @@ function toRun(row: RunRow): AgentRun {
     result: row.result === null ? null : parseResult(row.result),
     error: row.error,
     cancelRequestedAt: toTimestamp(row.cancel_requested_at),
+    messageId: typeof (row as unknown as Record<string, unknown>)["message_id"] === "string" &&
+        ((row as unknown as Record<string, unknown>)["message_id"] as string) !== ""
+      ? ((row as unknown as Record<string, unknown>)["message_id"] as string)
+      : null,
     createdAt: toTimestampNow(row.created_at),
     finishedAt: toTimestamp(row.finished_at),
   };
@@ -672,7 +676,128 @@ export async function cancelAgentRun(runId: string): Promise<boolean> {
     p_run_id: runId,
   });
   if (error !== null) throw new Error(rowError(error, "No se pudo cancelar."));
+  // Aviso best-effort al proveedor (si el adaptador lo soporta): no bloquea.
+  void notifyDispatchCancel(runId);
   return data === true;
+}
+
+/** Avisa a agent-dispatch de la cancelación (POST con JWT, best-effort). */
+async function notifyDispatchCancel(runId: string): Promise<void> {
+  const url = functionUrl("agent-dispatch");
+  if (url === null) return;
+  try {
+    const { data } = await getSupabaseClient().auth.getSession();
+    const token = data.session?.access_token ?? "";
+    if (token === "") return;
+    await fetch(url, {
+      method: "POST",
+      headers: edgeHeaders(token),
+      body: JSON.stringify({ run_id: runId, action: "cancel" }),
+    }).catch(() => undefined);
+  } catch {
+    // El 409 del callback ya detiene al agente en su próximo reporte.
+  }
+}
+
+/**
+ * Invoca un agente desde un mensaje del chat (@handle).
+ * Inserta el mensaje normal por separado; aquí va la fila queued en
+ * agent_runs (el trigger despierta a agent-dispatch por pg_net).
+ * Idempotente por mensaje+agente: reenviar no despierta dos veces.
+ */
+export async function startAgentTask(input: {
+  connectionId: string;
+  workspaceId: string;
+  chatId: string;
+  messageId: string | null;
+  uid: string;
+  instruction: string;
+}): Promise<AgentRun> {
+  const instruction = input.instruction.trim().slice(0, 4000);
+  if (instruction === "") {
+    throw new AgentError("empty_instruction", "Escribe qué debe hacer el bot después de @mencionarlo.");
+  }
+  const idempotencyKey = input.messageId !== null && input.messageId !== ""
+    ? `msg:${input.messageId}:${input.connectionId}`
+    : `manual:${input.connectionId}:${input.uid}:${Date.now()}`;
+  const { data, error } = await getSupabaseClient()
+    .from("agent_runs")
+    .insert({
+      connection_id: input.connectionId,
+      workspace_id: input.workspaceId,
+      chat_id: input.chatId,
+      requested_by: input.uid,
+      kind: "task",
+      instruction,
+      idempotency_key: idempotencyKey,
+      message_id: input.messageId,
+    })
+    .select(RUN_COLUMNS)
+    .single();
+  if (error !== null) {
+    // Dedupe: la mención ya despertó una ejecución (mismo mensaje+agente).
+    if (typeof error === "object" && error !== null && (error as { code?: unknown }).code === "23505") {
+      const existing = await getSupabaseClient()
+        .from("agent_runs")
+        .select(RUN_COLUMNS)
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle();
+      if (existing.data !== null) {
+        return toRun(existing.data as unknown as RunRow);
+      }
+    }
+    throw new Error(rowError(error, "No se pudo invocar al agente."));
+  }
+  if (data === null) throw new Error("No se pudo invocar al agente.");
+  return toRun(data as unknown as RunRow);
+}
+
+/** Ejecuciones disparadas por unos mensajes (la tarjeta vive bajo cada uno). */
+export async function fetchRunsForMessages(messageIds: string[]): Promise<AgentRun[]> {
+  const ids = messageIds.filter((id) => id !== "");
+  if (ids.length === 0) return [];
+  const { data, error } = await getSupabaseClient()
+    .from("agent_runs")
+    .select(RUN_COLUMNS)
+    .in("message_id", ids.slice(0, 50))
+    .order("created_at", { ascending: true });
+  if (error !== null) throw new Error(rowError(error, "No se pudo cargar el progreso."));
+  return ((data ?? []) as unknown as RunRow[]).map(toRun);
+}
+
+/**
+ * Respuesta en el hilo a un needs_input (quien invocó).
+ * Guarda en history vía RPC y despierta al despacho; el texto del hilo ya
+ * quedó como mensaje normal por separado.
+ */
+export async function continueAgentRun(runId: string, text: string): Promise<boolean> {
+  const clean = text.trim();
+  if (clean === "") return false;
+  const { data, error } = await getSupabaseClient().rpc("agent_continue_run", {
+    p_run_id: runId,
+    p_text: clean.slice(0, 4000),
+  });
+  if (error !== null) throw new Error(rowError(error, "No se pudo responder al bot."));
+  return data === true;
+}
+
+/** Ejecuciones de hoy por agente y por usuario (límites visibles en Uso de IA). */
+export async function getAgentUsageToday(workspaceId: string): Promise<
+  { connectionId: string; requestedBy: string | null }[]
+> {
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const { data, error } = await getSupabaseClient()
+    .from("agent_runs")
+    .select("connection_id, requested_by")
+    .eq("workspace_id", workspaceId)
+    .gte("created_at", dayStart.toISOString())
+    .limit(500);
+  if (error !== null) return [];
+  return ((data ?? []) as { connection_id: string; requested_by: string | null }[]).map((row) => ({
+    connectionId: row.connection_id,
+    requestedBy: row.requested_by,
+  }));
 }
 
 // --- Realtime ------------------------------------------------------------------

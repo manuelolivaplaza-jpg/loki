@@ -46,6 +46,11 @@ type MessageListProps = {
    * la fila se marca y el contenedor la centra al abrir el chat.
    */
   highlightId?: string | null;
+  /**
+   * Tarjetas bajo el mensaje (p. ej. ejecuciones de agentes invocados con
+   * @handle). El chat principal pasa `AgentCardsForMessage`.
+   */
+  agentSlot?: (message: MessageDoc) => React.ReactNode;
 };
 
 /**
@@ -72,6 +77,7 @@ export function MessageList({
   voice = null,
   disableOwnReactions = false,
   highlightId = null,
+  agentSlot,
 }: MessageListProps): React.JSX.Element {
   const reduceMotion = useReducedMotion();
   const groups = React.useMemo(
@@ -95,7 +101,7 @@ export function MessageList({
         </li>,
       );
     }
-    const isAiGroup = first.type === "ai";
+    const isAiGroup = first.type === "ai" || first.type === "agent";
     items.push(
       <li
         key={group.key}
@@ -104,10 +110,10 @@ export function MessageList({
         <div
           className={cn(
             "flex w-full flex-col",
-            group.isMine && first.type !== "ai" && first.type !== "system"
+            group.isMine && first.type !== "ai" && first.type !== "agent" && first.type !== "system"
               ? "items-end gap-[2px]"
               : "gap-[2px]",
-            !group.isMine && first.type !== "ai" && first.type !== "system" && "gap-[2px]",
+            !group.isMine && first.type !== "ai" && first.type !== "agent" && first.type !== "system" && "gap-[2px]",
           )}
         >
           {group.messages.map((message, index) => {
@@ -148,6 +154,7 @@ export function MessageList({
                   )}
                 >
                   {bubble}
+                  {agentSlot?.(message)}
                 </div>
               );
             }
@@ -164,6 +171,7 @@ export function MessageList({
                 transition={spring}
               >
                 {bubble}
+                {agentSlot?.(message)}
               </motion.div>
             );
           })}

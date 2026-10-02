@@ -138,7 +138,8 @@ function MentionOption({
   onSelect: (candidate: MentionCandidate) => void;
   onHover: () => void;
 }): React.JSX.Element {
-  const isLoki = candidate.id === LOKI_CANDIDATE.id;
+  const isLoki = candidate.id === LOKI_CANDIDATE.id || candidate.kind === "loki";
+  const isAgent = candidate.kind === "agent";
   const color = useAuthorAvatarColor(candidate.id);
   return (
     <button
@@ -159,6 +160,13 @@ function MentionOption({
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-foreground text-background dark:bg-white dark:text-black">
           <Icon icon={Sparkles} size={20} />
         </span>
+      ) : isAgent ? (
+        <span
+          aria-hidden="true"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface text-[16px] leading-none"
+        >
+          {candidate.avatarEmoji ?? "🤖"}
+        </span>
       ) : (
         <Avatar
           initial={candidate.displayName.charAt(0).toUpperCase()}
@@ -172,6 +180,10 @@ function MentionOption({
       {isLoki ? (
         <span className="shrink-0 text-meta leading-5 text-muted-foreground">
           @ai · asistente
+        </span>
+      ) : isAgent ? (
+        <span className="shrink-0 text-meta leading-5 text-muted-foreground">
+          bot{(candidate.ownerName ?? "") !== "" ? ` · de ${candidate.ownerName}` : ""}
         </span>
       ) : null}
     </button>

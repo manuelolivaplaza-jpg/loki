@@ -21,10 +21,13 @@ import {
   AgentError,
   agentsConfigured,
   cancelAgentRun,
+  continueAgentRun,
   createAgent,
   deleteAgent,
   fetchAgentRun,
   fetchDefaultChatId,
+  fetchRunsForMessages,
+  getAgentUsageToday,
   listGrants,
   listMyAgents,
   listRunEvents,
@@ -38,6 +41,7 @@ import {
   setAgentStatus,
   setGrantAdminDisabled,
   startAgentPing,
+  startAgentTask,
   updateAgent,
   updateAgentGrant,
   type AgentGrantInput,
@@ -284,5 +288,190 @@ export function useAgentMutations(uid: string | null): {
       }),
     cancelRun: (runId) => guarded(() => cancelAgentRun(runId)),
     clearError: () => setError(null),
+  };
+}
+
+/**
+ * Candidatos @ de agentes invocables por este usuario en el espacio.
+ * (La vista del chat combina miembros + estos con `spaceAgentsToCandidates`.)
+ */
+export function useSpaceAgentCandidates(
+  workspaceId: string | null,
+  uid: string | null,
+  memberNames: Map<string, string>,
+): { candidates: import("@/lib/chat/mentions").MentionCandidate[]; isPending: boolean } {
+  const spaceAgents = useSpaceAgents(workspaceId);
+  const candidates = React.useMemo(() => {
+    if (workspaceId === null || uid === null) return [];
+    const out: import("@/lib/chat/mentions").MentionCandidate[] = [];
+    for (const entry of spaceAgents.data ?? []) {
+      const grant = entry.grant;
+      const allowed = entry.ownerId === uid ||
+        (grant.enabled && !grant.adminDisabled &&
+          (grant.allowedCallers === "space_members" ||
+            (grant.allowedCallers === "listed" && grant.allowedUserIds.includes(uid)) ||
+            (grant.allowedCallers === "owner_only" && entry.ownerId === uid)));
+      if (!allowed) continue;
+      if (entry.connection.status !== "active") continue;
+      const ownerName = memberNames.get(entry.ownerId)?.trim() ?? "";
+      out.push({
+        id: `agent:${entry.connection.id}`,
+        displayName: entry.connection.handle,
+        kind: "agent",
+        handle: entry.connection.handle,
+        ownerName,
+        avatarEmoji: entry.connection.avatarEmoji,
+      });
+    }
+    out.sort((a, b) => a.displayName.localeCompare(b.displayName, "es"));
+    return out;
+  }, [spaceAgents.data, workspaceId, uid, memberNames]);
+  return { candidates, isPending: spaceAgents.isPending };
+}
+
+/** Ejecuciones disparadas por un mensaje (tarjeta bajo él), en vivo. */
+export function useMessageAgentRuns(messageId: string | null): {
+  runs: AgentRun[];
+  isPending: boolean;
+} {
+  const queryClient = useQueryClient();
+  const query = useQuery<AgentRun[], Error>({
+    queryKey: [...AGENTS_QUERY_KEY, "by-message", messageId],
+    queryFn: () => fetchRunsForMessages(messageId === null ? [] : [messageId]),
+    enabled: messageId !== null && messageId !== "",
+    staleTime: 5_000,
+    retry: false,
+    // La fila queued la crea el cliente justo después del mensaje: mientras no
+    // haya filas se reintenta corto (el trigger despierta al despacho en
+    // segundos); con filas, manda el Realtime por ejecución.
+    refetchInterval: (data) =>
+      data !== undefined && data.length === 0 ? 5_000 : false,
+  });
+  React.useEffect(() => {
+    if (messageId === null || messageId === "") return;
+    // Realtime por ejecución conocida + refresco de la lista (el insert
+    // inicial llega como evento de agent_runs del espacio).
+    const cleanups: (() => void)[] = [];
+    for (const run of query.data ?? []) {
+      cleanups.push(
+        listenAgentRun(run.id, () => {
+          void queryClient.invalidateQueries({
+            queryKey: [...AGENTS_QUERY_KEY, "by-message", messageId],
+          });
+          void queryClient.invalidateQueries({
+            queryKey: [...AGENTS_QUERY_KEY, "run", run.id],
+          });
+        }),
+      );
+    }
+    // La primera ejecución aún no se conoce al suscribirse: reintento corto
+    // mientras no haya filas (el trigger despierta al despacho en segundos).
+    if ((query.data ?? []).length === 0) {
+      const timer = setTimeout(() => {
+        void queryClient.invalidateQueries({
+          queryKey: [...AGENTS_QUERY_KEY, "by-message", messageId],
+        });
+      }, 4000);
+      return () => {
+        clearTimeout(timer);
+        for (const cleanup of cleanups) cleanup();
+      };
+    }
+    return () => {
+      for (const cleanup of cleanups) cleanup();
+    };
+  }, [messageId, query.data, queryClient]);
+  return { runs: query.data ?? [], isPending: query.isPending };
+}
+
+/** Invoca agentes desde un mensaje ya enviado (una fila queued por agente). */
+export function useInvokeAgents(): {
+  invoke: (input: {
+    agents: { connectionId: string; handle: string }[];
+    workspaceId: string;
+    chatId: string;
+    messageId: string;
+    uid: string;
+    text: string;
+  }) => Promise<AgentRun[]>;
+  invoking: boolean;
+  error: string | null;
+} {
+  const queryClient = useQueryClient();
+  const [error, setError] = React.useState<string | null>(null);
+  const mutation = useMutation<AgentRun[], Error, Parameters<typeof invokeMany>[0]>({
+    mutationFn: invokeMany,
+    onSuccess: () => {
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: [...AGENTS_QUERY_KEY, "by-message"] });
+    },
+    onError: (err) => setError(toMessage(err)),
+  });
+  return {
+    invoke: (input) => mutation.mutateAsync(input),
+    invoking: mutation.isPending,
+    error,
+  };
+}
+
+async function invokeMany(input: {
+  agents: { connectionId: string; handle: string }[];
+  workspaceId: string;
+  chatId: string;
+  messageId: string;
+  uid: string;
+  text: string;
+}): Promise<AgentRun[]> {
+  const out: AgentRun[] = [];
+  for (const agent of input.agents) {
+    // Instrucción sin la mención; si queda vacía se manda el texto tal cual
+    // (el despacho valida) para no perder la intención.
+    const token = `@${agent.handle}`;
+    const at = input.text.indexOf(token);
+    const instruction = at === -1
+      ? input.text.trim()
+      : `${input.text.slice(0, at)}${input.text.slice(at + token.length)}`.replace(/\s+/g, " ").trim();
+    const run = await startAgentTask({
+      connectionId: agent.connectionId,
+      workspaceId: input.workspaceId,
+      chatId: input.chatId,
+      messageId: input.messageId,
+      uid: input.uid,
+      instruction: instruction === "" ? input.text.trim() : instruction,
+    });
+    out.push(run);
+  }
+  return out;
+}
+
+/** Uso de hoy por agente/espacio/usuario (límites visibles en Uso de IA). */
+export function useAgentUsageToday(
+  workspaceId: string | null,
+): UseQueryResult<{ connectionId: string; requestedBy: string | null }[], Error> {
+  return useQuery({
+    queryKey: [...AGENTS_QUERY_KEY, "usage-today", workspaceId],
+    queryFn: () => getAgentUsageToday(workspaceId ?? ""),
+    enabled: workspaceId !== null && workspaceId !== "",
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+/** Continúa un needs_input con la respuesta del hilo. */
+export function useContinueAgentRun(): {
+  cont: (runId: string, text: string) => Promise<boolean>;
+  continuing: boolean;
+} {
+  const [continuing, setContinuing] = React.useState(false);
+  return {
+    continuing,
+    cont: async (runId, text) => {
+      setContinuing(true);
+      try {
+        return await continueAgentRun(runId, text);
+      } finally {
+        setContinuing(false);
+      }
+    },
   };
 }

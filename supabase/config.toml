@@ -457,3 +457,6 @@ verify_jwt = false
 
 [functions.agent-callback]
 verify_jwt = false
+
+[functions.agent-task]
+verify_jwt = false

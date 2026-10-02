@@ -3,33 +3,50 @@
 // salvo `../_shared/agents.ts`).
 //
 // La despierta el trigger `notify_agent_dispatch` (pg_net) con la clave
-// interna AGENT_DISPATCH_KEY, o un usuario con su JWT (reintento manual).
-// Nada queda escuchando: corre solo cuando hay una ejecución encolada.
+// interna AGENT_DISPATCH_KEY, un usuario con su JWT (reintento manual) o la
+// RPC `agent_continue_run` (continuación tras needs_input). Nada queda
+// escuchando: corre solo cuando hay una ejecución encolada o continuada.
 //
-// Pasos: valida conexión activa + grant + cuota diaria, genera el token de la
-// ejecución (guarda solo su hash), arma el contexto permitido (mensajes
-// recientes solo si el grant lo autoriza; nunca DMs salvo invocación ahí y
-// permiso), y llama al adaptador del proveedor con el cuerpo mínimo
-// {type:"loki.agent_task", v:1, run_id, run_token, attempt}.
+// Pasos: valida conexión activa + grant + cuotas (por agente/espacio, por
+// usuario y por espacio), genera el token de la ejecución (guarda solo su
+// hash), arma el contexto permitido (mensajes recientes solo si el grant lo
+// autoriza; nunca DMs salvo invocación ahí y permiso), y llama al adaptador
+// del proveedor. Después marca dispatched y termina.
 //
-// Adaptadores en esta etapa: `generic_webhook` (POST a dispatch_url con
-// Bearer del secreto saliente). `grokbot`, `hermes` y `a2a` responden
-// 501 {code:'not_implemented'}: los conecta el prompt 13 sin tocar este
-// contrato. La orden y el contexto NUNCA viajan en el webhook: el agente los
-// baja con el token (o los recibe por el callback del prompt 13).
+// Adaptadores (todo configurable desde la conexión, nada hardcodeado):
+//   · generic_webhook (referencia): POST mínimo firmado con HMAC-SHA256
+//     (`X-Loki-Signature` + `X-Loki-Timestamp`) + Bearer por compatibilidad.
+//     La tarea completa se baja con el token en `agent-task`.
+//   · grokbot: disparo de rutina por webhook con la tarea, la URL de
+//     agent-callback y el token en el cuerpo (fallback: la rutina hace POST al
+//     callback según sus instrucciones; no verificado canal oficial de
+//     retorno). URL, cabeceras y campos extra configurables.
+//   · hermes: sin API oficial verificada: `config.mode="a2a"` usa el camino
+//     A2A; si no, el webhook genérico. Ver docs/AGENTES.md qué verificar.
+//   · a2a: mapea la tarea de Loki a Task A2A (tasks/send) con metadata de
+//     retorno a agent-callback. Ver mapa en docs/AGENTES.md.
 //
 // Secretos (supabase/functions/.env): AGENT_TOKEN_KEY (cifra lo saliente),
 // AGENT_DISPATCH_KEY (clave interna del trigger), AGENT_ALLOW_PRIVATE=true
-// solo en desarrollo (permite URLs locales).
+// solo en desarrollo (permite URLs locales), AGENT_PUBLIC_FUNCTIONS_URL (base
+// https que el agente usa para el callback y la tarea).
 // =============================================================================
 
 import {
+  a2AStateToLoki,
+  callbackUrlOf,
   cleanUrl,
   decryptSecret,
+  grokbotDispatchBody,
+  hmacSha256Hex,
   isAgentProvider,
   isBlockedDispatchHost,
+  lokiTaskToA2A,
+  publicFunctionsBase,
   randomToken,
   sha256Hex,
+  taskUrlOf,
+  type AgentTaskFull,
 } from "../_shared/agents.ts";
 
 const SUPABASE_URL = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
@@ -37,6 +54,7 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const AGENT_TOKEN_KEY = Deno.env.get("AGENT_TOKEN_KEY") ?? "";
 const AGENT_DISPATCH_KEY = Deno.env.get("AGENT_DISPATCH_KEY") ?? "";
+const PUBLIC_BASE = publicFunctionsBase(Deno.env.get("AGENT_PUBLIC_FUNCTIONS_URL") ?? "");
 const ALLOW_PRIVATE = (Deno.env.get("AGENT_ALLOW_PRIVATE") ?? "").toLowerCase() ===
   "true";
 
@@ -49,6 +67,10 @@ const CORS: Record<string, string> = {
 const DISPATCH_TIMEOUT_MS = 10_000;
 const DEFAULT_DEADLINE_MIN = 15;
 const MAX_CONTEXT_CHARS = 2000;
+// Topes diarios visibles (además del daily_limit del grant, que se muestra en
+// Uso de IA): por usuario y por espacio, para que un bot no acapare el chat.
+const USER_DAILY_LIMIT = 30;
+const SPACE_DAILY_LIMIT = 100;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -164,15 +186,67 @@ async function failRun(
     },
   );
   await appendEvent(runId, "dispatch_failed", message);
-  await svcRest(
-    `/agent_connections?id=eq.${encodeURIComponent(connectionId)}`,
-    {
-      method: "PATCH",
-      body: { status: "error", last_error: message.slice(0, 280) },
-      prefer: "return=minimal",
-    },
-  );
+  if (connectionId !== "") {
+    await svcRest(
+      `/agent_connections?id=eq.${encodeURIComponent(connectionId)}`,
+      {
+        method: "PATCH",
+        body: { status: "error", last_error: message.slice(0, 280) },
+        prefer: "return=minimal",
+      },
+    );
+  }
   return json(502, { code: "dispatch_failed", message });
+}
+
+/** Quita menciones a otros agentes de la instrucción (anti-bucles). */
+function stripAgentMentions(instruction: string, handles: string[]): string {
+  let out = instruction;
+  for (const handle of handles) {
+    if (handle === "") continue;
+    const escaped = handle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`@${escaped}\\b`, "gi"), "@mención");
+  }
+  return out.slice(0, 4000);
+}
+
+async function postSigned(
+  url: string,
+  body: unknown,
+  secret: string | null,
+  extraHeaders: Record<string, string>,
+): Promise<number> {
+  const raw = JSON.stringify(body);
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    ...extraHeaders,
+  };
+  if (secret !== null && secret !== "") {
+    const stamp = String(Date.now());
+    headers["authorization"] = `Bearer ${secret}`;
+    try {
+      headers["x-loki-signature"] = await hmacSha256Hex(secret, `${stamp}.${raw}`);
+      headers["x-loki-timestamp"] = stamp;
+    } catch {
+      // Sin firma igual se intenta el envío con Bearer.
+    }
+  }
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: raw,
+      signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
+    });
+    try {
+      await res.text();
+    } catch {
+      // Sin cuerpo: igual vale el código de estado.
+    }
+    return res.status;
+  } catch {
+    return 0;
+  }
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -199,9 +273,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   } catch {
     body = null;
   }
-  const runId = isRecord(body) && typeof body["run_id"] === "string"
-    ? body["run_id"].trim()
-    : "";
+  const record = isRecord(body) ? body : {};
+  const runId = typeof record["run_id"] === "string" ? record["run_id"].trim() : "";
+  const action = typeof record["action"] === "string" ? record["action"].trim() : "";
   if (runId === "") {
     return json(400, { code: "bad_request", message: "Falta run_id." });
   }
@@ -211,7 +285,37 @@ Deno.serve(async (req: Request): Promise<Response> => {
   );
   const run = pickRow(runRes.data);
   if (run === null) return json(404, { code: "not_found" });
-  if (run["status"] !== "queued") {
+
+  // Cancelación best-effort: avisa al proveedor si configuró cancel_url.
+  if (action === "cancel") {
+    const connRes = await svcRest(
+      `/agent_connections?id=eq.${encodeURIComponent(String(run["connection_id"] ?? ""))}&select=*`,
+    );
+    const conn = pickRow(connRes.data);
+    const config = conn !== null && isRecord(conn["config"]) ? conn["config"] : {};
+    const cancelUrl = cleanUrl(config["cancel_url"]);
+    if (cancelUrl !== null) {
+      try {
+        const parsed = new URL(cancelUrl);
+        if (!isBlockedDispatchHost(parsed.hostname, ALLOW_PRIVATE)) {
+          await fetch(cancelUrl, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ run_id: runId, status: "cancelled" }),
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => undefined);
+        }
+      } catch {
+        // Best-effort: el 409 del callback ya detiene al agente.
+      }
+    }
+    await appendEvent(runId, "cancelled", "Ejecución cancelada.");
+    return json(200, { ok: true, status: "cancelled" });
+  }
+
+  const isContinue = action === "continue" ||
+    (internal && (run["status"] === "running" || run["status"] === "needs_input"));
+  if (!isContinue && run["status"] !== "queued") {
     return json(200, { ok: true, status: String(run["status"] ?? "") });
   }
 
@@ -263,30 +367,49 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
   }
 
-  // Cuota diaria del grant (SQL barato, sin LLM).
-  const dailyLimit = typeof grant?.["daily_limit"] === "number"
-    ? (grant["daily_limit"] as number)
-    : 20;
+  // Cuotas visibles (grant + usuario + espacio). SQL barato, sin LLM.
   const dayStart = new Date();
   dayStart.setUTCHours(0, 0, 0, 0);
-  const usedRes = await svcRest(
-    `/agent_runs?connection_id=eq.${encodeURIComponent(connectionId)}&workspace_id=eq.${encodeURIComponent(wsId)}&created_at=gte.${encodeURIComponent(dayStart.toISOString())}&select=id`,
-  );
-  const used = Array.isArray(usedRes.data) ? usedRes.data.length : 0;
-  if (used > dailyLimit) {
-    return failRun(
-      runId,
-      connectionId,
-      "Este agente llegó a su tope diario en este espacio. Inténtalo mañana.",
+  const dayIso = dayStart.toISOString();
+  if (!isContinue) {
+    const dailyLimit = typeof grant?.["daily_limit"] === "number"
+      ? (grant["daily_limit"] as number)
+      : 20;
+    const usedRes = await svcRest(
+      `/agent_runs?connection_id=eq.${encodeURIComponent(connectionId)}&workspace_id=eq.${encodeURIComponent(wsId)}&created_at=gte.${encodeURIComponent(dayIso)}&select=id`,
     );
-  }
-
-  if (!isAgentProvider(provider) || provider !== "generic_webhook") {
-    return failRun(
-      runId,
-      connectionId,
-      `El adaptador ${provider} se conecta en el prompt 13; por ahora usa generic_webhook.`,
+    const used = Array.isArray(usedRes.data) ? usedRes.data.length : 0;
+    if (used >= dailyLimit) {
+      return failRun(
+        runId,
+        connectionId,
+        "Este agente llegó a su tope diario en este espacio. Inténtalo mañana.",
+      );
+    }
+    if (requestedBy !== "") {
+      const userRes = await svcRest(
+        `/agent_runs?workspace_id=eq.${encodeURIComponent(wsId)}&requested_by=eq.${encodeURIComponent(requestedBy)}&created_at=gte.${encodeURIComponent(dayIso)}&select=id`,
+      );
+      const userUsed = Array.isArray(userRes.data) ? userRes.data.length : 0;
+      if (userUsed >= USER_DAILY_LIMIT) {
+        return failRun(
+          runId,
+          connectionId,
+          "Llegaste a tu tope diario de invocaciones en este espacio. Inténtalo mañana.",
+        );
+      }
+    }
+    const spaceRes = await svcRest(
+      `/agent_runs?workspace_id=eq.${encodeURIComponent(wsId)}&created_at=gte.${encodeURIComponent(dayIso)}&select=id`,
     );
+    const spaceUsed = Array.isArray(spaceRes.data) ? spaceRes.data.length : 0;
+    if (spaceUsed >= SPACE_DAILY_LIMIT) {
+      return failRun(
+        runId,
+        connectionId,
+        "Este espacio llegó a su tope diario de invocaciones. Inténtalo mañana.",
+      );
+    }
   }
 
   if (AGENT_TOKEN_KEY.length < 32) {
@@ -317,12 +440,34 @@ Deno.serve(async (req: Request): Promise<Response> => {
       "La URL de disparo apunta a una dirección interna (bloqueada por seguridad).",
     );
   }
+  const extraHeaders: Record<string, string> = {};
+  if (isRecord(config["headers"])) {
+    for (const [key, value] of Object.entries(config["headers"])) {
+      if (typeof value === "string" && value !== "" && key.length <= 64) {
+        extraHeaders[key.toLowerCase()] = value.slice(0, 500);
+      }
+    }
+  }
+  delete extraHeaders["authorization"];
 
   // Token de la ejecución: el claro viaja SOLO al agente; aquí queda su hash.
-  const runToken = randomToken();
-  const tokenHash = await sha256Hex(runToken);
+  // En continuaciones se reutiliza el token vivo (si sigue vigente).
+  let runToken = "";
+  let tokenHash = typeof run["run_token_hash"] === "string"
+    ? (run["run_token_hash"] as string)
+    : "";
+  let tokenExpires = typeof run["token_expires_at"] === "string"
+    ? String(run["token_expires_at"])
+    : "";
+  const tokenAlive = tokenHash !== "" && tokenExpires !== "" &&
+    Date.parse(tokenExpires) > Date.now() + 60_000;
   const deadline = new Date(Date.now() + DEFAULT_DEADLINE_MIN * 60_000);
-  const tokenExpires = new Date(deadline.getTime() + 10 * 60_000);
+  const tokenExpiresDate = new Date(deadline.getTime() + 10 * 60_000);
+  if (!isContinue || !tokenAlive) {
+    runToken = randomToken();
+    tokenHash = await sha256Hex(runToken);
+    tokenExpires = tokenExpiresDate.toISOString();
+  }
 
   // Contexto mínimo: últimos mensajes si el grant lo autoriza. Nada de DMs
   // salvo invocación dentro de ese DM con permiso explícito.
@@ -359,9 +504,25 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
   }
-  const instruction = run["kind"] === "ping"
+  // Anti-bucles: la instrucción nunca arrastra menciones a otros agentes.
+  const handlesRes = await svcRest(
+    `/agent_connections?select=handle&limit=100`,
+  );
+  const handles = Array.isArray(handlesRes.data)
+    ? handlesRes.data.filter(isRecord).map((row) =>
+      typeof row["handle"] === "string" ? (row["handle"] as string) : ""
+    ).filter((h) => h !== "")
+    : [];
+  const rawInstruction = run["kind"] === "ping"
     ? "Ping de prueba de Loki: responde con un evento result con el texto «Conexión lista»."
     : String(run["instruction"] ?? "").slice(0, 4000);
+  const instruction = stripAgentMentions(rawInstruction, handles);
+  if (run["kind"] !== "ping" && instruction.trim() === "") {
+    return failRun(runId, connectionId, "La instrucción quedó vacía al quitar menciones.");
+  }
+
+  const history = Array.isArray(run["history"]) ? run["history"] : [];
+  const attempt = typeof run["attempts"] === "number" ? run["attempts"] as number : 0;
 
   await svcRest(
     `/agent_runs?id=eq.${encodeURIComponent(runId)}`,
@@ -369,8 +530,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
       method: "PATCH",
       body: {
         run_token_hash: tokenHash,
-        token_expires_at: tokenExpires.toISOString(),
-        deadline_at: deadline.toISOString(),
+        token_expires_at: tokenExpires,
+        deadline_at: isContinue && typeof run["deadline_at"] === "string"
+          ? run["deadline_at"]
+          : deadline.toISOString(),
         context,
         instruction,
       },
@@ -378,10 +541,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     },
   );
 
-  // Adaptador generic_webhook: cuerpo mínimo + Bearer del secreto saliente.
-  // La orden y el contexto NUNCA van en el webhook: el agente los baja con
-  // el token (prompt 13: agent-task) o trabaja solo con el pedido mínimo.
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  // Secreto saliente (para HMAC/Bearer). Si cambió la clave del servidor, se
+  // avisa en vez de mandar un pedido sin firmar.
+  let outboundSecret: string | null = null;
   if (typeof conn["secret_enc"] === "string" && conn["secret_enc"] !== "") {
     const secret = await decryptSecret(
       AGENT_TOKEN_KEY,
@@ -394,43 +556,120 @@ Deno.serve(async (req: Request): Promise<Response> => {
         "El secreto del agente ya no se puede leer (cambió la clave del servidor). Pégalo de nuevo en Mis agentes.",
       );
     }
-    headers["authorization"] = `Bearer ${secret}`;
+    outboundSecret = secret;
   }
-  let status = 0;
-  try {
-    const res = await fetch(dispatchUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        type: "loki.agent_task",
-        v: 1,
-        run_id: runId,
-        run_token: runToken,
-        attempt: 0,
+
+  const handle = typeof conn["handle"] === "string" ? (conn["handle"] as string) : "bot";
+  const connectionName = typeof conn["name"] === "string" && conn["name"] !== ""
+    ? (conn["name"] as string)
+    : handle;
+  const callbackUrl = callbackUrlOf(PUBLIC_BASE);
+  const taskUrl = taskUrlOf(PUBLIC_BASE);
+  const fullTask: AgentTaskFull = {
+    run_id: runId,
+    connection_id: connectionId,
+    handle,
+    instruction,
+    requested_by: requestedBy,
+    space: { id: wsId, name: "" },
+    chat: { id: String(run["chat_id"] ?? ""), name: "" },
+    context_messages: context,
+    history: history.filter(isRecord).map((entry) => ({
+      from: entry["from"] === "user" ? "user" as const : "agent" as const,
+      text: String(entry["text"] ?? "").slice(0, 4000),
+      at: String(entry["at"] ?? ""),
+    })),
+    allowed_actions: grant === null || grant["allow_propose_actions"] !== false
+      ? ["create_task", "create_event", "create_reminder", "add_list_items"]
+      : [],
+    limits: { max_events: 30, result_chars: 16384, max_links: 10 },
+    deadline_at: isContinue && typeof run["deadline_at"] === "string"
+      ? String(run["deadline_at"])
+      : deadline.toISOString(),
+  };
+
+  let payload: unknown;
+  if (provider === "grokbot") {
+    // Rutina por webhook: tarea + retorno en el cuerpo (el callback lo hace
+    // la propia rutina según sus instrucciones; ver docs/AGENTES.md).
+    payload = {
+      ...grokbotDispatchBody(fullTask, {
+        runToken: tokenAlive && runToken === "" ? "" : runToken,
+        attempt: attempt + 1,
+        callbackUrl,
+        taskUrl,
+        handle,
       }),
-      signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
-    });
-    status = res.status;
-    // Se consume el cuerpo para no dejar la conexión colgada; no se exige forma.
-    try {
-      await res.text();
-    } catch {
-      // Sin cuerpo: igual vale el código de estado.
+      space_name: connectionName,
+    };
+    // Si el token se reutilizó (continuación), el claro no está en memoria:
+    // se genera uno nuevo para no mandar vacío.
+    const bodyRecord = payload as Record<string, unknown>;
+    if (bodyRecord["run_token"] === "") {
+      const fresh = randomToken();
+      bodyRecord["run_token"] = fresh;
+      await svcRest(`/agent_runs?id=eq.${encodeURIComponent(runId)}`, {
+        method: "PATCH",
+        body: {
+          run_token_hash: await sha256Hex(fresh),
+          token_expires_at: tokenExpiresDate.toISOString(),
+        },
+        prefer: "return=minimal",
+      });
     }
-  } catch {
-    status = 0;
+  } else if (provider === "a2a" || (provider === "hermes" && config["mode"] === "a2a")) {
+    payload = lokiTaskToA2A(fullTask, {
+      callbackUrl,
+      runToken: tokenAlive && runToken === "" ? "" : runToken,
+    });
+    const params = (payload as { params: Record<string, unknown> }).params;
+    if (params["metadata"] !== undefined && isRecord(params["metadata"])) {
+      (params["metadata"] as Record<string, unknown>)["loki_provider"] = provider;
+    }
+    void a2AStateToLoki;
+  } else {
+    // generic_webhook (referencia) y hermes en modo webhook: pedido mínimo
+    // firmado; la tarea completa se baja con el token en agent-task.
+    payload = {
+      type: "loki.agent_task",
+      v: 1,
+      run_id: runId,
+      run_token: tokenAlive && runToken === "" ? "" : runToken,
+      attempt: attempt + 1,
+      ...(callbackUrl !== null ? { callback_url: callbackUrl } : {}),
+      ...(taskUrl !== null ? { task_url: taskUrl } : {}),
+    };
+    const minimal = payload as Record<string, unknown>;
+    if (minimal["run_token"] === "") {
+      const fresh = randomToken();
+      minimal["run_token"] = fresh;
+      await svcRest(`/agent_runs?id=eq.${encodeURIComponent(runId)}`, {
+        method: "PATCH",
+        body: {
+          run_token_hash: await sha256Hex(fresh),
+          token_expires_at: tokenExpiresDate.toISOString(),
+        },
+        prefer: "return=minimal",
+      });
+    }
   }
+
+  const status = await postSigned(dispatchUrl, payload, outboundSecret, extraHeaders);
 
   if (status >= 200 && status < 300) {
     await svcRest(
       `/agent_runs?id=eq.${encodeURIComponent(runId)}`,
       {
         method: "PATCH",
-        body: { status: "dispatched" },
+        body: isContinue ? {} : { status: "dispatched" },
         prefer: "return=minimal",
       },
     );
-    await appendEvent(runId, "ack", "Pedido enviado al agente.");
+    if (!isContinue) {
+      await appendEvent(runId, "ack", "Pedido enviado al agente.");
+    } else {
+      await appendEvent(runId, "progress", "Respuesta enviada al agente.");
+    }
     await svcRest(
       `/agent_connections?id=eq.${encodeURIComponent(connectionId)}`,
       {
@@ -443,7 +682,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
         prefer: "return=minimal",
       },
     );
-    return json(200, { ok: true, status: "dispatched" });
+    return json(200, { ok: true, status: isContinue ? "running" : "dispatched" });
+  }
+  if (isContinue) {
+    await appendEvent(runId, "progress", "No se pudo reenviar al agente; reinténtalo.");
+    return json(502, {
+      code: "dispatch_failed",
+      message: "No se pudo reenviar la respuesta al agente.",
+    });
   }
   const reason = status === 0
     ? "No se pudo llegar a la URL de disparo (red o tiempo agotado). Revisa la URL en Mis agentes."

@@ -40,8 +40,8 @@ async function copyText(value: string): Promise<boolean> {
  * Asistente "Conectar agente" (crear): hoja inferior en móvil, diálogo amplio
  * en escritorio (el Dialog ya lo es). Pasos: 1 agente, 2 conexión (URL y
  * secreto), 3 token entrante (se muestra una vez), 4 espacios y permisos,
- * 5 probar. Los proveedores aún no cableados se eligen igual pero avisan que
- * llegan en el prompt 13.
+ * 5 probar. Todos los proveedores están cableados (webhook firmado de
+ * referencia + grokbot/hermes/a2a configurables, ver docs/AGENTES.md).
  */
 export function AgentConnectDialog(props: {
   open: boolean;
@@ -266,6 +266,15 @@ export function AgentConnectDialog(props: {
               {providerInfo !== undefined && !providerInfo.ready ? (
                 <p className="mt-2 text-body-sm text-muted-foreground">
                   Puedes dejarlo registrado con sus permisos; el adaptador se conecta en el prompt 13.
+                </p>
+              ) : provider === "grokbot" ? (
+                <p className="mt-2 text-body-sm text-muted-foreground">
+                  La rutina recibe la tarea + callback + token en el cuerpo; sus instrucciones deben
+                  mandar el resultado de vuelta al callback (ver docs/AGENTES.md).
+                </p>
+              ) : provider === "hermes" ? (
+                <p className="mt-2 text-body-sm text-muted-foreground">
+                  Sin API oficial verificada: usa el webhook genérico (o A2A según su docs).
                 </p>
               ) : null}
             </fieldset>

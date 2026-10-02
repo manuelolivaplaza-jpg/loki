@@ -369,6 +369,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
       },
     );
   }
+  // Publicación por eventos (nada 24/7): el resultado vive en el chat como
+  // mensaje `agent` (service role) solo si el grant permite publicar; si no,
+  // es privado (solo tarjeta + notificación a quien invocó). needs_input y
+  // errores también avisan a quien invocó por notificación tipo `agent`
+  // (dispara el push por maybe_push_notification).
+  try {
+    await publishAgentOutcome({
+      runId,
+      run,
+      conn,
+      type,
+      text,
+    });
+  } catch {
+    // El evento ya quedó guardado: publicar es best-effort.
+  }
   return json(200, {
     ok: true,
     status: String(
@@ -376,3 +392,89 @@ Deno.serve(async (req: Request): Promise<Response> => {
     ),
   });
 });
+
+/** Publica el mensaje `agent` y/o la notificación a quien invocó. */
+async function publishAgentOutcome(input: {
+  runId: string;
+  run: Record<string, unknown>;
+  conn: Record<string, unknown>;
+  type: string;
+  text: string;
+}): Promise<void> {
+  const { runId, run, conn, type, text } = input;
+  const wsId = String(run["workspace_id"] ?? "");
+  const chatId = String(run["chat_id"] ?? "");
+  const requestedBy = typeof run["requested_by"] === "string" &&
+      run["requested_by"] !== ""
+    ? (run["requested_by"] as string)
+    : null;
+  const handle = typeof conn["handle"] === "string" && conn["handle"] !== ""
+    ? (conn["handle"] as string)
+    : "bot";
+  const tag = `@${handle}`;
+  if (wsId === "" || chatId === "") return;
+
+  const grantRes = await svcRest(
+    `/agent_space_grants?connection_id=eq.${encodeURIComponent(String(conn["id"] ?? ""))}&workspace_id=eq.${encodeURIComponent(wsId)}&select=allow_publish`,
+  );
+  const grant = pickRow(grantRes.data);
+  const allowPublish = grant === null || grant["allow_publish"] !== false;
+  const isPing = run["kind"] === "ping";
+
+  async function notify(title: string, body: string): Promise<void> {
+    if (requestedBy === null) return;
+    const link = typeof run["message_id"] === "string" && run["message_id"] !== ""
+      ? `/chat/c?id=${chatId}&msg=${run["message_id"]}`
+      : `/chat/c?id=${chatId}`;
+    await svcRest("/notifications", {
+      method: "POST",
+      body: {
+        user_id: requestedBy,
+        workspace_id: wsId,
+        type: "agent",
+        title: title.slice(0, 120),
+        body: body.slice(0, 300),
+        link,
+      },
+      prefer: "return=minimal",
+    });
+  }
+
+  async function postChatMessage(messageText: string): Promise<void> {
+    await svcRest("/messages", {
+      method: "POST",
+      body: {
+        workspace_id: wsId,
+        chat_id: chatId,
+        author_id: null,
+        author_name: tag,
+        text: messageText.slice(0, 4000),
+        type: "agent",
+        mentions: [],
+        thread_parent_id: null,
+        attachments: [],
+        meta: {},
+      },
+      prefer: "return=minimal",
+    });
+  }
+
+  if (type === "needs_input") {
+    await notify(tag, "necesita tu respuesta.");
+    return;
+  }
+  if (type === "error") {
+    if (allowPublish && !isPing) {
+      await postChatMessage(`${tag} no pudo terminar: ${text.slice(0, 500)}`);
+    }
+    await notify(tag, "no pudo terminar.");
+    return;
+  }
+  if (type === "result") {
+    const clean = text.trim() === "" ? "Listo." : text;
+    if (allowPublish && !isPing) {
+      await postChatMessage(`${tag}: ${clean}`.slice(0, 4000));
+    }
+    await notify(tag, clean.slice(0, 200));
+  }
+}

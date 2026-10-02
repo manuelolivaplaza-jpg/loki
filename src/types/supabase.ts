@@ -533,10 +533,12 @@ type AgentRunRow = {
   token_expires_at: string | null;
   deadline_at: string | null;
   context: Json;
+  history: Json;
   result: Json | null;
   error: string | null;
   cancel_requested_at: string | null;
   idempotency_key: string | null;
+  message_id: string | null;
   created_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -1735,6 +1737,7 @@ export type Database = {
           kind?: string;
           instruction?: string;
           idempotency_key?: string | null;
+          message_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1747,6 +1750,7 @@ export type Database = {
           kind?: string;
           instruction?: string;
           idempotency_key?: string | null;
+          message_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -2014,6 +2018,17 @@ export type Database = {
           p_run_id: string;
         };
         Returns: boolean;
+      };
+      agent_continue_run: {
+        Args: {
+          p_run_id: string;
+          p_text: string;
+        };
+        Returns: boolean;
+      };
+      expire_agent_runs: {
+        Args: Record<string, never>;
+        Returns: number;
       };
       set_agent_grant_admin_disabled: {
         Args: {

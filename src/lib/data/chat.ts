@@ -29,6 +29,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { avatarColorFor } from "@/lib/avatar-color";
 import { AI_AUTHOR_ID } from "@/lib/ai/constants";
 import {
+  buildAgentCandidate,
   LOKI_CANDIDATE,
   LOKI_DISPLAY_NAME,
   type MentionCandidate,
@@ -594,6 +595,71 @@ export function mentionCandidatesWithLoki(
   members: readonly WorkspaceMember[],
 ): MentionCandidate[] {
   return [LOKI_CANDIDATE, ...membersToCandidates(members)];
+}
+
+export type SpaceAgentForMention = {
+  connectionId: string;
+  handle: string;
+  avatarEmoji: string;
+  ownerId: string;
+  ownerName: string;
+  grant: {
+    enabled: boolean;
+    adminDisabled: boolean;
+    allowedCallers: "owner_only" | "space_members" | "listed";
+    allowedUserIds: string[];
+  };
+};
+
+/** ¿Puede este usuario invocar este agente en este espacio? (espejo de agent_can_invoke). */
+export function canInvokeAgent(
+  agent: Pick<SpaceAgentForMention, "ownerId" | "grant">,
+  uid: string | null,
+): boolean {
+  if (uid === null || uid === "") return false;
+  if (agent.ownerId === uid) return true;
+  const grant = agent.grant;
+  if (!grant.enabled || grant.adminDisabled) return false;
+  if (grant.allowedCallers === "space_members") return true;
+  if (grant.allowedCallers === "listed") return grant.allowedUserIds.includes(uid);
+  return false;
+}
+
+/**
+ * Agentes habilitados → candidatos @ con distintivo de bot y dueño
+ * ("mi-bot · de Manu"). Solo los que el usuario puede invocar.
+ */
+export function spaceAgentsToCandidates(
+  agents: readonly SpaceAgentForMention[],
+  uid: string | null,
+): MentionCandidate[] {
+  const out: MentionCandidate[] = [];
+  for (const agent of agents) {
+    if (!canInvokeAgent(agent, uid)) continue;
+    out.push(
+      buildAgentCandidate({
+        connectionId: agent.connectionId,
+        handle: agent.handle,
+        ownerName: agent.ownerName,
+        avatarEmoji: agent.avatarEmoji,
+      }),
+    );
+  }
+  out.sort((a, b) => a.displayName.localeCompare(b.displayName, "es"));
+  return out;
+}
+
+/** Menú @ completo: Loki + miembros + agentes invocables. */
+export function mentionCandidatesWithAgents(
+  members: readonly WorkspaceMember[],
+  agents: readonly SpaceAgentForMention[],
+  uid: string | null,
+): MentionCandidate[] {
+  return [
+    LOKI_CANDIDATE,
+    ...membersToCandidates(members),
+    ...spaceAgentsToCandidates(agents, uid),
+  ];
 }
 
 // --- Mensajes: lectura -------------------------------------------------------

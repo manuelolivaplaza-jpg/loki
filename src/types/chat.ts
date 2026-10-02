@@ -23,7 +23,7 @@ export interface ChatDoc {
   lastMessage: ChatLastMessage | null;
 }
 
-export type MessageType = "user" | "ai" | "system" | "post" | "card";
+export type MessageType = "user" | "ai" | "system" | "post" | "card" | "agent";
 
 /** Datos de tarjeta (lista viva, etc.). Nunca se renderiza como HTML. */
 export type MessageMeta = {

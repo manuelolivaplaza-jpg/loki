@@ -6,6 +6,11 @@
 import assert from "node:assert/strict";
 
 import {
+  AGENT_MENTION_PREFIX,
+  agentConnectionIdOf,
+  buildAgentCandidate,
+  findInvokedAgents,
+  isAgentMentionId,
   LOKI_CANDIDATE,
   LOKI_DISABLED_MENTION,
   LOKI_DISABLED_TEXT,
@@ -21,6 +26,7 @@ import {
   normalizeMention,
   parseMentionSegments,
   resolveMentionIds,
+  stripAgentMention,
 } from "../src/lib/chat/mentions.ts";
 
 let checks = 0;
@@ -235,5 +241,83 @@ equal(LOKI_DISPLAY_NAME, "Loki", "nombre visible de la IA");
   );
 }
 equal(normalizeMention("Niño"), "nino", "normalize quita tildes");
+
+// --- Agentes (@mi-bot, prompt 13) -------------------------------------------
+{
+  const miBot = buildAgentCandidate({
+    connectionId: "conn-1",
+    handle: "mi-bot",
+    ownerName: "Manu",
+  });
+  const otroBot = buildAgentCandidate({
+    connectionId: "conn-2",
+    handle: "otro-bot",
+    ownerName: "Ana",
+  });
+  const ALL_AGENTS = [LOKI_CANDIDATE, ...MEMBERS, miBot, otroBot];
+  equal(miBot.id, `${AGENT_MENTION_PREFIX}conn-1`, "id agent:<connectionId>");
+  equal(miBot.displayName, "mi-bot", "displayName es el handle");
+  equal(miBot.ownerName, "Manu", "dueño visible para el distintivo");
+  ok(isAgentMentionId(miBot.id), "isAgentMentionId reconoce bots");
+  ok(!isAgentMentionId("ana-uid"), "miembros no son bots");
+  equal(agentConnectionIdOf(miBot.id), "conn-1", "connectionId del id");
+  equal(agentConnectionIdOf("ana-uid"), null, "miembro sin connectionId");
+  equal(buildMentionToken(miBot), "@mi-bot", "token @handle sin espacios");
+  // El menú solo trae los invocables y filtra por handle.
+  deep(
+    filterMentionCandidates(ALL_AGENTS, "mi-b"),
+    [miBot],
+    "@mi-b filtra a mi-bot (no a miembros ni a Loki)",
+  );
+  deep(filterMentionCandidates(ALL_AGENTS, ""), ALL_AGENTS, "query vacía trae bots también");
+  // Resolver + invocados: una mención dispara una ejecución por agente.
+  deep(
+    resolveMentionIds("@mi-bot revisa el presupuesto", ALL_AGENTS),
+    [miBot.id],
+    "@mi-bot resuelve a su connectionId",
+  );
+  deep(
+    findInvokedAgents("@mi-bot revisa el presupuesto", ALL_AGENTS),
+    [miBot],
+    "findInvokedAgents trae el bot mencionado",
+  );
+  deep(findInvokedAgents("hola @Ana", ALL_AGENTS), [], "sin bots no hay invocados");
+  deep(
+    findInvokedAgents("@mi-bot y @otro-bot ayuden", ALL_AGENTS),
+    [miBot, otroBot],
+    "dos bots = dos invocados (uno por agente)",
+  );
+  // La instrucción viaja sin la mención.
+  equal(
+    stripAgentMention("@mi-bot revisa el presupuesto adjunto", miBot),
+    "revisa el presupuesto adjunto",
+    "stripAgentMention quita el token del bot",
+  );
+  // Insertar desde el menú deja "@mi-bot " y resuelve.
+  {
+    const inserted = insertMention("oye @mi", 4, 7, miBot);
+    deep(
+      inserted,
+      { text: "oye @mi-bot ", caret: 4 + "@mi-bot".length + 1 },
+      "insertMention inserta @mi-bot con espacio separador",
+    );
+    deep(
+      resolveMentionIds(inserted.text, ALL_AGENTS),
+      [miBot.id],
+      "@mi-bot insertado resuelve",
+    );
+  }
+  // Los bots no resuelven por primer nombre ni se confunden con miembros.
+  {
+    const casiMiembro = { id: "bot-uid", displayName: "Ana" };
+    deep(
+      resolveMentionIds("hola @Ana", [LOKI_CANDIDATE, casiMiembro, miBot]),
+      [casiMiembro.id],
+      "@Ana no arrastra al bot",
+    );
+  }
+  // mentionsLoki no se activa con bots (son otro camino, no Loki IA).
+  ok(!mentionsLoki("@mi-bot ayuda"), "@mi-bot no es mención a Loki");
+}
 
 console.log(`mentions.test.mjs: ${checks} checks OK`);

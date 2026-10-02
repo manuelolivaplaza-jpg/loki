@@ -12,7 +12,7 @@ Loki IA. Diseño claro estilo Grok Bot.
 | App web / móvil | `src/` (Next.js App Router) | Export estático (`output: "export"` con `BUILD_TARGET=capacitor`); sin SSR ni cookies de servidor |
 | Base de datos, auth, realtime, storage | Supabase local (Postgres + RLS + Realtime + Storage) | `supabase/`; detalle en [`supabase/README.md`](supabase/README.md) |
 | Loki IA real | Edge Function `supabase/functions/loki-chat` (Deno) | Proveedor por entorno; sin clave responde 503 y la UI muestra "Loki IA sin configurar" |
-| Agentes personales | Edge Functions `agent-connections`, `agent-dispatch`, `agent-callback` (Deno) | Contrato en [`docs/AGENTES.md`](docs/AGENTES.md); sin `AGENT_TOKEN_KEY` la UI muestra "Agentes sin configurar" |
+| Agentes personales | Edge Functions `agent-connections`, `agent-dispatch`, `agent-callback`, `agent-task` (Deno) | Contrato en [`docs/AGENTES.md`](docs/AGENTES.md); sin `AGENT_TOKEN_KEY` la UI muestra "Agentes sin configurar" |
 | IA por trabajos (resúmenes, transcripción) | `ai_jobs` + Edge Function `supabase/functions/loki-worker` (Deno) | Por eventos: un insert → trigger → `pg_net` → la función se despierta → Realtime. Nada escuchando 24/7 |
 | Voz a texto | `supabase/functions/_shared/transcribe.ts` (lo usa `loki-worker`) | `STT_PROVIDER=openai` o `gemini`; sin clave la UI muestra "Transcripción sin configurar" |
 | Push | Firebase **solo** para FCM en el cliente (`src/lib/push/fcm.ts`, `src/lib/push/native.ts`) + Edge Function `supabase/functions/push-send` | Sin config, "Notificaciones no configuradas en este entorno" |

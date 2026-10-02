@@ -370,3 +370,154 @@ export function randomToken(): string {
     "",
   );
 }
+
+// --- Firma saliente + URLs públicas (prompt 13) --------------------------------
+// El webhook genérico va FIRMADO (HMAC-SHA256 del cuerpo con el secreto
+// saliente): el agente verifica `X-Loki-Signature` (hex) y `X-Loki-Timestamp`
+// para saber que el pedido viene de Loki. Se conserva además el Bearer por
+// compatibilidad con agentes ya conectados en la etapa anterior.
+
+/** HMAC-SHA256 hex (WebCrypto, sin dependencias). */
+export async function hmacSha256Hex(key: string, data: string): Promise<string> {
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    cryptoKey,
+    new TextEncoder().encode(data),
+  );
+  return Array.from(new Uint8Array(sig))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Base pública de Functions tal como la ve el agente (sin barra final). */
+export function publicFunctionsBase(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const clean = raw.trim().replace(/\/+$/, "");
+  if (clean === "" || clean.length > 2000) return null;
+  if (!/^https:\/\//i.test(clean)) return null;
+  try {
+    const parsed = new URL(clean);
+    if (parsed.protocol !== "https:") return null;
+    return clean;
+  } catch {
+    return null;
+  }
+}
+
+/** URL de retorno que el agente llama con el run_token (Bearer). */
+export function callbackUrlOf(publicBase: string | null): string | null {
+  if (publicBase === null) return null;
+  return `${publicBase}/agent-callback`;
+}
+
+/** URL donde el agente baja la tarea completa con su token. */
+export function taskUrlOf(publicBase: string | null): string | null {
+  if (publicBase === null) return null;
+  return `${publicBase}/agent-task`;
+}
+
+// --- Adaptadores por proveedor (todo configurable, nada hardcodeado) -----------
+// Estado de verificación (02-10-2026, sin acceso a docs oficiales desde este
+// entorno; ver docs/AGENTES.md):
+//   · generic_webhook: referencia, implementado y verificado contra el contrato
+//     propio de docs/AGENTES.md.
+//   · grokbot: disparo por webhook de rutina con la tarea + callback + token en
+//     el cuerpo. NO verificado que Grok Bot tenga canal oficial de retorno: se
+//     usa el fallback (la rutina hace POST a agent-callback según sus
+//     instrucciones). URL, cabeceras y nombres de campo configurables.
+//   · hermes: sin API oficial verificada: usa el webhook genérico o A2A según
+//     `config.mode` ("webhook"|"a2a"). Ver docs/AGENTES.md qué verificar.
+//   · a2a: mapea la tarea de Loki a Task A2A y los estados a TaskStatus.state
+//     según la spec (ver tabla en docs/AGENTES.md). El retorno viaja por
+//     agent-callback salvo que la conexión configure callback A2A propio.
+
+export type A2ATaskSend = {
+  jsonrpc: "2.0";
+  id: string;
+  method: string;
+  params: Record<string, unknown>;
+};
+
+/** Loki → A2A: la tarea equivale a un Task (id = taskId). */
+export function lokiTaskToA2A(task: AgentTaskFull, extra: {
+  callbackUrl: string | null;
+  runToken: string;
+}): A2ATaskSend {
+  const parts: Array<Record<string, unknown>> = [
+    { type: "text", text: task.instruction },
+  ];
+  for (const msg of task.context_messages) {
+    parts.push({
+      type: "text",
+      text: `${msg.author}: ${msg.text}`,
+    });
+  }
+  return {
+    jsonrpc: "2.0",
+    id: task.run_id,
+    method: "tasks/send",
+    params: {
+      id: task.run_id,
+      message: { role: "user", parts },
+      metadata: {
+        loki_run_id: task.run_id,
+        loki_callback_url: extra.callbackUrl,
+        loki_run_token: extra.runToken,
+        loki_deadline_at: task.deadline_at,
+        loki_allowed_actions: task.allowed_actions,
+      },
+    },
+  };
+}
+
+/** A2A → Loki: TaskStatus.state al estado que entiende el chat. */
+export function a2AStateToLoki(state: unknown): string {
+  switch (String(state ?? "")) {
+    case "completed":
+      return "done";
+    case "failed":
+      return "error";
+    case "canceled":
+      return "cancelled";
+    case "input-required":
+      return "needs_input";
+    case "working":
+    case "submitted":
+      return "running";
+    default:
+      return "running";
+  }
+}
+
+/** Cuerpo de disparo para rutinas tipo Grok Bot: tarea + retorno configurable. */
+export function grokbotDispatchBody(task: AgentTaskFull, extra: {
+  runToken: string;
+  attempt: number;
+  callbackUrl: string | null;
+  taskUrl: string | null;
+  handle: string;
+}): Record<string, unknown> {
+  return {
+    type: "loki.agent_task",
+    v: 1,
+    run_id: task.run_id,
+    run_token: extra.runToken,
+    attempt: extra.attempt,
+    handle: extra.handle,
+    instruction: task.instruction,
+    context_messages: task.context_messages,
+    history: task.history,
+    allowed_actions: task.allowed_actions,
+    limits: task.limits,
+    deadline_at: task.deadline_at,
+    callback_url: extra.callbackUrl,
+    task_url: extra.taskUrl,
+  };
+}

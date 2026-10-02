@@ -45,12 +45,16 @@ import {
   fetchUnreadWindow,
   membersToCandidates,
   newMessageId,
+  spaceAgentsToCandidates,
   toggleReaction,
 } from "@/lib/data/chat";
 import {
   buildLokiDisabledMessage,
+  findInvokedAgents,
   LOKI_CANDIDATE,
   mentionsLoki,
+  stripAgentMention,
+  type MentionCandidate,
 } from "@/lib/chat/mentions";
 import {
   AI_AUTHOR_ID,
@@ -82,6 +86,9 @@ import {
   requestAiJob,
 } from "@/lib/data/ai-jobs";
 import { useMessageStatusStore } from "@/lib/chat/message-status";
+import { AgentCardsForMessage } from "@/components/agents/agent-cards-for-message";
+import { startAgentTask } from "@/lib/data/agents";
+import { useSpaceAgents } from "@/hooks/use-agents";
 import { Timestamp } from "@/lib/timestamp";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSearchStore } from "@/stores/search-store";
@@ -287,11 +294,39 @@ export function ConversationView({
   const wsForLive = isLoki ? null : currentWorkspaceId;
   const chatForLive = isLoki ? null : chatId;
   const typingNames = useTyping(wsForLive, chatForLive, currentUid);
-  // T15: miembros del espacio para el menú @ del composer.
+  // T15: miembros del espacio para el menú @ del composer, más los agentes
+  // habilitados que este usuario puede invocar (@handle con distintivo de
+  // bot y dueño). Sin Loki: el Composer antepone LOKI_CANDIDATE él mismo.
   const membersQuery = useMembers(wsForLive);
-  const mentionMembers = React.useMemo(
-    () => membersToCandidates(membersQuery.data ?? []),
-    [membersQuery.data],
+  const spaceAgentsQuery = useSpaceAgents(isLoki ? null : wsForLive);
+  const mentionMembers = React.useMemo<MentionCandidate[]>(
+    () => {
+      const members = membersToCandidates(membersQuery.data ?? []);
+      const agents = spaceAgentsToCandidates(
+        (spaceAgentsQuery.data ?? []).map((entry) => ({
+          connectionId: entry.connection.id,
+          handle: entry.connection.handle,
+          avatarEmoji: entry.connection.avatarEmoji,
+          ownerId: entry.ownerId,
+          ownerName:
+            (membersQuery.data ?? []).find((member) => member.uid === entry.ownerId)
+              ?.displayName.trim() ?? "",
+          grant: {
+            enabled: entry.grant.enabled,
+            adminDisabled: entry.grant.adminDisabled,
+            allowedCallers: entry.grant.allowedCallers,
+            allowedUserIds: entry.grant.allowedUserIds,
+          },
+        })),
+        currentUid,
+      );
+      return [...members, ...agents];
+    },
+    [membersQuery.data, spaceAgentsQuery.data, currentUid],
+  );
+  const allCandidates = React.useMemo<MentionCandidate[]>(
+    () => [LOKI_CANDIDATE, ...mentionMembers],
+    [mentionMembers],
   );
   // En el chat privado con Loki no hay menú de menciones (se habla con la IA
   // sin escribir @nombre). `wsForLive` es null ahí, así que `useMembers` no
@@ -895,12 +930,53 @@ export function ConversationView({
                 }
               })();
             }
+            // Agentes externos (@handle): una fila queued por agente (el
+            // trigger despierta a agent-dispatch por pg_net; nada queda
+            // escuchando). La tarjeta bajo el mensaje muestra el progreso en
+            // vivo por Realtime. Best-effort: el mensaje ya quedó enviado.
+            {
+              const invoked = findInvokedAgents(text, allCandidates);
+              if (
+                invoked.length > 0 &&
+                wsForLive !== null && chatForLive !== null && currentUid !== null
+              ) {
+                const invokeWsId = wsForLive;
+                const invokeChatId = chatForLive;
+                const invokeUid = currentUid;
+                const invokeText = text;
+                const invokeMessageId = messageId;
+                const invokeCandidates = allCandidates;
+                void (async () => {
+                  for (const candidate of findInvokedAgents(invokeText, invokeCandidates)) {
+                    if (candidate.kind !== "agent") continue;
+                    const connectionId = candidate.id.slice("agent:".length);
+                    if (connectionId === "") continue;
+                    const instruction = stripAgentMention(invokeText, candidate);
+                    try {
+                      await startAgentTask({
+                        connectionId,
+                        workspaceId: invokeWsId,
+                        chatId: invokeChatId,
+                        messageId: invokeMessageId,
+                        uid: invokeUid,
+                        instruction: instruction === "" ? invokeText : instruction,
+                      });
+                    } catch (err) {
+                      setSendError(
+                        err instanceof Error ? err.message : "No se pudo invocar al agente.",
+                      );
+                      break;
+                    }
+                  }
+                })();
+              }
+            }
           },
           onError: (error) => setSendError(error.message),
         },
       );
     },
-    [isLoki, currentUid, authorName, sendToLoki, sendMutation, wsForLive, chatForLive, replyTo, threadParent],
+    [isLoki, currentUid, authorName, sendToLoki, sendMutation, wsForLive, chatForLive, replyTo, threadParent, allCandidates],
   );
 
   // --- Voz a acción: "Dictar a Loki" ----------------------------------------
@@ -1233,6 +1309,18 @@ export function ConversationView({
               // Memoria del espacio: solo en chats de espacio (en el chat
               // privado con Loki la memoria no se comparte).
               onRemember={isLoki || wsForLive === null ? undefined : handleRemember}
+              agentSlot={
+                isLoki || wsForLive === null
+                  ? undefined
+                  : (message) => (
+                    <AgentCardsForMessage
+                      wsId={wsForLive}
+                      messageId={message.id}
+                      uid={currentUid}
+                      onOpenThread={() => handleOpenThread(message)}
+                    />
+                  )
+              }
             />
             {streamingMessage !== null ? (
               <div className="px-4 pb-2">
@@ -1449,7 +1537,7 @@ export function ConversationView({
           parent={threadParentLive}
           currentUid={currentUid}
           authorName={authorName}
-          members={[LOKI_CANDIDATE, ...mentionMembers]}
+          members={mentionMembers}
           onClose={handleCloseThread}
         />
       ) : null}

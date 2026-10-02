@@ -15,6 +15,13 @@ import { Icon } from "@/components/ui/icon";
 import { QueryRetry } from "@/components/ui/query-retry";
 import { useNotifyTyping, useThread } from "@/hooks/use-chat";
 import { sendMessage } from "@/lib/data/chat";
+import { continueAgentRun, fetchRunsForMessages, startAgentTask } from "@/lib/data/agents";
+import { AgentCardsForMessage } from "@/components/agents/agent-cards-for-message";
+import {
+  findInvokedAgents,
+  LOKI_CANDIDATE,
+  stripAgentMention,
+} from "@/lib/chat/mentions";
 import { POSTS_CHAT_ID } from "@/lib/chat/posts";
 import { fade, fadeScale } from "@/lib/motion";
 import type { MentionCandidate } from "@/lib/chat/mentions";
@@ -112,6 +119,8 @@ export function ThreadPanel({
       if (currentUid === null || sending) return;
       setSending(true);
       setError(null);
+      const candidates: MentionCandidate[] = [LOKI_CANDIDATE, ...members];
+      const invoked = findInvokedAgents(text, candidates);
       void sendMessage(wsId, chatId, {
         authorId: currentUid,
         authorName,
@@ -121,6 +130,49 @@ export function ThreadPanel({
         attachments,
         type: "user",
       })
+        .then((replyId) => {
+          // needs_input: la respuesta en el hilo viaja como continuación
+          // (solo quien invocó; la RPC lo valida).
+          if (currentUid !== null) {
+            const replyUid = currentUid;
+            const replyText = text;
+            const replyParentId = parent.id;
+            void fetchRunsForMessages([replyParentId])
+              .then((runs) => {
+                for (const run of runs) {
+                  if (run.status !== "needs_input") continue;
+                  if (run.requestedBy !== replyUid) continue;
+                  void continueAgentRun(run.id, replyText).catch(() => undefined);
+                }
+              })
+              .catch(() => undefined);
+          }
+          // @handle en el hilo también invoca (tarjeta bajo la respuesta).
+          if (invoked.length > 0 && currentUid !== null) {
+            const invokeUid = currentUid;
+            void (async () => {
+              for (const candidate of invoked) {
+                if (candidate.kind !== "agent") continue;
+                const connectionId = candidate.id.slice("agent:".length);
+                if (connectionId === "") continue;
+                const instruction = stripAgentMention(text, candidate);
+                try {
+                  await startAgentTask({
+                    connectionId,
+                    workspaceId: wsId,
+                    chatId,
+                    messageId: replyId,
+                    uid: invokeUid,
+                    instruction: instruction === "" ? text : instruction,
+                  });
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "No se pudo invocar al agente.");
+                  break;
+                }
+              }
+            })();
+          }
+        })
         .catch((err: unknown) => {
           setError(err instanceof Error ? err.message : "No se pudo enviar.");
         })
@@ -128,7 +180,7 @@ export function ThreadPanel({
           setSending(false);
         });
     },
-    [currentUid, sending, wsId, chatId, authorName, parent.id],
+    [currentUid, sending, wsId, chatId, authorName, parent.id, members],
   );
 
   if (!mounted) return null;
@@ -192,6 +244,11 @@ export function ThreadPanel({
                 variant="post"
                 voice={voice}
               />
+              <AgentCardsForMessage
+                wsId={wsId}
+                messageId={parent.id}
+                uid={currentUid}
+              />
             </div>
           ) : (
             <div className="rounded-xl border-l-2 border-accent bg-surface-2 p-3">
@@ -211,6 +268,11 @@ export function ThreadPanel({
                   />
                 </div>
               </div>
+              <AgentCardsForMessage
+                wsId={wsId}
+                messageId={parent.id}
+                uid={currentUid}
+              />
             </div>
           )}
           <p className="px-1 py-2 text-meta leading-5 text-muted-foreground">
@@ -238,6 +300,9 @@ export function ThreadPanel({
             {replies.map((reply) => (
               <li key={reply.id}>
                 <MessageReply reply={reply} currentUid={currentUid} voice={voice} />
+                <div className="pt-1.5">
+                  <AgentCardsForMessage wsId={wsId} messageId={reply.id} uid={currentUid} />
+                </div>
               </li>
             ))}
           </ul>

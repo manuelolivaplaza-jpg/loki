@@ -27,20 +27,20 @@ export const AGENT_PROVIDERS: readonly {
   {
     value: "grokbot",
     label: "Grok Bot",
-    detail: "Tu bot de Grok Bot (rutina con trigger webhook). Se conecta en el prompt 13.",
-    ready: false,
+    detail: "Rutina con trigger webhook: manda la tarea + callback + token. Retorno por POST al callback (ver docs/AGENTES.md).",
+    ready: true,
   },
   {
     value: "hermes",
     label: "Hermes Agent",
-    detail: "Se conecta en el prompt 13.",
-    ready: false,
+    detail: "Webhook genérico o A2A según su docs (config.mode). Ver qué verificar en docs/AGENTES.md.",
+    ready: true,
   },
   {
     value: "a2a",
     label: "A2A (Agent2Agent)",
-    detail: "Agente compatible con el protocolo abierto A2A. Se conecta en el prompt 13.",
-    ready: false,
+    detail: "Agente compatible con el protocolo abierto A2A (tasks/send). Retorno por agent-callback.",
+    ready: true,
   },
 ];
 
@@ -109,6 +109,8 @@ export interface AgentRun {
   result: AgentRunResult | null;
   error: string | null;
   cancelRequestedAt: Timestamp | null;
+  /** Mensaje que disparó la ejecución (la tarjeta vive bajo él). */
+  messageId: string | null;
   createdAt: Timestamp;
   finishedAt: Timestamp | null;
 }

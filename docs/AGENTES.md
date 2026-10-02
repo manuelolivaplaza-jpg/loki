@@ -1,7 +1,10 @@
 # Agentes personales de Loki (contrato y seguridad)
 
-Etapa 2, prompt 12: capa genérica de "conectores de agentes". El prompt 13 la
-conecta al chat (@menciones) y a cada proveedor (Grok Bot, Hermes, A2A).
+Etapa 2: capa genérica de "conectores de agentes" (prompt 12) conectada al
+chat (@menciones) y a cada proveedor (prompt 13: `generic_webhook` de
+referencia + `grokbot`, `hermes` y `a2a` configurables, `agent-task`,
+tarjeta en vivo, mensaje `agent`, confirmación de acciones y push tipo
+`agent`).
 
 ## Idea central
 
@@ -171,10 +174,123 @@ revisar la spec vigente (cambian rápido).
 5. Pausar cancela lo encolado; un admin desactiva el grant y el despacho falla
    con mensaje claro.
 
-## Lo que falta (prompt 13)
+## Invocar desde el chat (prompt 13)
 
-Menciones `@handle` en el chat (disparan `agent_runs` con `idempotency_key`),
-tarjeta de ejecución en vivo, mensaje `agent` con el resultado, tarjeta de
-confirmación para `proposed_actions`, push tipo `agent`, y los adaptadores
-`grokbot`, `hermes` y `a2a` (hoy responden `not_implemented`) más
-`agent-task` (el agente baja la tarea completa con su token).
+Escribe `@mi-bot revisa el presupuesto adjunto` en cualquier chat del espacio:
+
+1. El menú @ trae los agentes habilitados que puedes invocar, con distintivo
+   de bot y dueño (`mi-bot · de Manu`). El composer resuelve `@handle` a
+   `agent:<connectionId>` (ver `src/lib/chat/mentions.ts`).
+2. Al enviar se inserta el mensaje normal y una fila `agent_runs` (queued,
+   `idempotency_key = msg:<messageId>:<connectionId>`). El trigger
+   `notify_agent_dispatch` despierta a `agent-dispatch` por `pg_net`.
+3. La tarjeta bajo el mensaje muestra `mi-bot está trabajando…` con los
+   eventos en vivo (Realtime sobre `agent_run_events`), Cancelar y, al
+   terminar, el resultado con safe-text + enlaces + acciones propuestas para
+   confirmar (el agente nunca escribe directo en Loki).
+4. Si pide aclaración (`needs_input`), responde en el hilo: viaja como
+   continuación (`agent_continue_run` → `history` → redespacho).
+5. Si no responde antes del `deadline_at`, `expire_agent_runs()` (pg_cron,
+   SQL barato) marca `expired` y avisa en el chat + notificación.
+6. Los demás ven el resultado solo si el grant permite publicar
+   (`allow_publish`); si no, es privado (tarjeta + notificación solo para
+   quien invocó y el dueño).
+
+## Adaptadores (todo configurable desde la conexión)
+
+Nada hardcodeado: cada conexión guarda `config.dispatch_url`,
+`config.headers` (extras), `config.cancel_url` (opcional) y, según el
+proveedor, `config.mode` / campos propios. Estado de verificación
+(02-10-2026): sin acceso a documentación oficial vigente desde este entorno
+(la búsqueda web no respondió), así que ningún adaptador inventa endpoints
+del proveedor: todo sale de la config editable por el dueño.
+
+| Proveedor | Qué manda | Qué se configura | Qué verificar en la docs oficial |
+|---|---|---|---|
+| `generic_webhook` (referencia) | POST mínimo firmado `{type, v, run_id, run_token, attempt, callback_url?, task_url?}` + `X-Loki-Signature` (HMAC-SHA256 de `<timestamp>.<cuerpo>`) + `X-Loki-Timestamp` + Bearer por compatibilidad | `dispatch_url`, secreto saliente, `headers` extras | Nada: es el contrato propio (ver ejemplo mínimo abajo) |
+| `grokbot` | POST con la tarea + `callback_url` + `task_url` + `run_token` en el cuerpo (ver `grokbotDispatchBody`) | `dispatch_url` (webhook de la rutina), secreto opcional (firma igual), `headers` extras | Si Grok Bot ofrece canal oficial de retorno/estado, úsalo además del fallback. Fallback vigente: la rutina hace POST a `callback_url` con el `run_token` (las instrucciones de la rutina deben decirlo). No verificado: revisa su docs de rutinas/webhooks antes de producción |
+| `hermes` | `config.mode="a2a"` → camino A2A; si no, webhook genérico | `dispatch_url`, `mode`, secreto, `headers` | Qué protocolo expone Hermes (webhook propio o A2A), nombres de campos, firma esperada y canal de estado. Anota aquí lo que encuentres antes de usarlo en producción |
+| `a2a` | `tasks/send` (JSON-RPC) con `id = run_id`, `message.parts` (instrucción + contexto) y `metadata` de retorno (`loki_run_id`, `loki_callback_url`, `loki_run_token`, `loki_deadline_at`) | `dispatch_url` (endpoint de tareas del agente), `headers` (auth del agente), `mode` si viene de hermes | Versión de la spec A2A vigente, método exacto (`tasks/send` vs `tasks/sendSubscribe`), formato de `parts` y de `TaskStatus`/`Artifact`. El retorno viaja por `agent-callback` salvo que configures callback A2A propio |
+
+### Ejemplo mínimo: conectar tu propio agente (webhook genérico)
+
+1. Recibes el POST en tu `dispatch_url` (verifica la firma):
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verifica(req, secreto) {
+  const stamp = req.headers["x-loki-timestamp"] ?? "";
+  const firma = req.headers["x-loki-signature"] ?? "";
+  const esperada = createHmac("sha256", secreto)
+    .update(`${stamp}.${JSON.stringify(req.body)}`)
+    .digest("hex");
+  return firma.length === esperada.length &&
+    timingSafeEqual(Buffer.from(firma), Buffer.from(esperada));
+}
+// body: { type:"loki.agent_task", v:1, run_id, run_token, attempt,
+//         callback_url?, task_url? }
+```
+
+2. Baja la tarea completa (instrucción + contexto permitido + límites):
+
+```bash
+curl "$TASK_URL?run_id=<run_id>" -H "Authorization: Bearer <run_token>"
+# → { task: { run_id, handle, instruction, context_messages, history,
+#             allowed_actions, limits, deadline_at } }
+```
+
+3. Reporta progreso y resultado (firma: solo el `run_token` + `event_id`
+   único por evento; repetido → `200 {duplicate:true}`):
+
+```bash
+curl "$CALLBACK_URL" -X POST \
+  -H "Authorization: Bearer <run_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"run_id":"<run_id>","event_id":"<uuid>","type":"progress","text":"Revisando…","percent":40}'
+
+curl "$CALLBACK_URL" -X POST \
+  -H "Authorization: Bearer <run_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"run_id":"<run_id>","event_id":"<uuid>","type":"result","text":"Listo: …",
+       "links":[{"title":"…","url":"https://…"}],
+       "proposed_actions":[{"type":"create_task","title":"…"}]}'
+# Tipos: progress | needs_input (con "question") | result | error.
+# Respuestas: 200 {ok} · 200 {duplicate} · 409 {status} (detente) ·
+# 401 (token inválido) · 410 (vencido) · 429 en español (baja el ritmo).
+```
+
+4. Para rutinas tipo Grok Bot, las instrucciones de la rutina deben decir:
+   "al terminar haz POST a `callback_url` con `run_token` como Bearer y el
+   evento `result`".
+
+## Costo, límites y seguridad
+- Invocar no gasta tokens de Loki (armado de contexto = código). Solo cuesta
+  cuota si pides un resumen del resultado con el modelo barato (bajo demanda,
+  `poll_summary`/`day_highlights` style). Visible en Configuración → Uso de
+  IA: por agente (`usado/límite` hoy), por usuario (30/día) y por espacio
+  (100/día), además del `daily_limit` del grant.
+- Anti-bucles: la instrucción pierde las `@menciones` a otros agentes y las
+  continuaciones también; un mensaje `agent` nunca dispara ejecuciones.
+- `agent-callback` valida token (hash, tiempo constante, vigencia),
+  `event_id` idempotente, tipos y tamaños, rate limit (60/min por conexión,
+  progreso 1/20 s, 30 eventos) y nunca ejecuta el contenido (texto de un
+  tercero: SafeText, solo enlaces http/https). La URL saliente bloquea
+  localhost/redes privadas salvo `AGENT_ALLOW_PRIVATE=true` (desarrollo).
+- Cancelar marca `cancelled` e intenta POST best-effort a `config.cancel_url`
+  si existe; si no, el agente lo sabe en su próximo callback (`409`).
+
+## Web y móvil
+
+- El @ con agentes usa el mismo menú del composer (encima del teclado: el
+  composer ya se eleva con `window.visualViewport`), con flechas + Enter en
+  escritorio y toque en Android. Sin resultados, el menú se cierra.
+- La tarjeta es compacta en móvil (último evento + "Ver progreso" colapsable)
+  y extendida en escritorio (línea de tiempo con `· línea de tiempo` y más
+  alto). El hilo (`thread-panel.tsx`) es hoja inferior en móvil y drawer de
+  420 px en escritorio; las tarjetas también viven bajo el padre y las
+  respuestas ahí.
+- Sin gestos nuevos que aprender: Cancelar/Reintentar/Crear son botones ≥44 px
+  (táctil y click), Enter confirma y Escape cancela en la tarjeta de Loki.
+- Push nativo y web ya cableados: la notificación tipo `agent` llega aunque la
+  app esté cerrada y abre el chat en el mensaje (`?msg=`).

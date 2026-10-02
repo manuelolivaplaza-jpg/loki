@@ -1,100 +1,61 @@
 # PROGRESO de Loki (traspaso a Forja nuevo)
 
-Actualizado: 01-10-2026 (hora de Chile, UTC-3).
+Actualizado: 02-10-2026 ~02:45 (hora de Chile, UTC-3), tras la tanda de prompts 7-16.
 
 ## Datos básicos
 - **Proyecto:** `C:\Users\manue\OneDrive\Desktop\loki` (PC de Manu, Windows + PowerShell).
-- **Rama:** `main`, sincronizada con `origin/main` (GitHub `manuelolivaplaza-jpg/loki`). No hacer push sin OK de Manu.
-- **Modelo de opencode:** `opencode/space-bunny-free` (siempre con `--auto`; lanzador `.forja\run.ps1 <tarea>`, que deja `.forja\<tarea>.log` terminado en `EXIT n`).
-  - Nota: hasta T16 se usó `muse-spark-1.3-contributor-free`, que cortó con "Rate limit exceeded" (t16.log y t16b.log, EXIT 1). Desde T16c se usa space-bunny. No volver a muse-spark salvo que Manu lo pida.
+- **Rama:** `main`. Commits de p07-p15 y este doc son **locales, sin push** (`origin/main` no los tiene). No hacer push sin OK de Manu.
+- **Modelo de opencode:** la tanda p10-p16 corrió con `muse-spark-1.3-contributor-free` (`--auto`, log en `.forja\pNN.log` terminado en `EXIT n`; estado en `.forja\pseq-status.txt`). p16 terminó por **"Rate limit exceeded"** (EXIT 1), igual que pasó en T16: muse-spark corta en sesiones largas.
 - **Stack:** Next.js 15 (export estático) + TypeScript estricto + Tailwind + shadcn/ui + Capacitor (Android). Supabase local vía CLI dentro de WSL2 Ubuntu con Docker Engine (`scripts/supabase.mjs`).
 
-## Fase actual
-Roadmap T1–T36 **completo y commiteado**. Fase actual: integración real y pulido después del roadmap (Google Calendar, push nativo en Android, ajustes de UI). Manu avanza por su cuenta con opencode.
+## Tanda de prompts 6-16 (01-10 18:00 → 02-10 02:40)
 
-### Lote actual (implementado, SIN commit y SIN verificar)
+| Prompt | Tema | Estado | Commit(s) |
+|---|---|---|---|
+| 6 | Tareas recurrentes y turnos rotativos | **NO hecho**: no hay commit, rama, stash, migración ni archivos (`recurr*`/`turno*`) de p06. HEAD antes de p07 era `21d313e` (prompt 5, listas). | — |
+| 7 | Encuestas y decisiones rápidas en el chat | Hecho | `702faf8` + `86e800b` (completar) |
+| 8 | Notas de voz que se vuelven acción | Hecho | `1bbf109` + `f9b9aa2` (completar) |
+| 9 | Memoria del espacio | Hecho | `56a9868` + `fb41b23` (completar) |
+| 10 | Búsqueda universal | Hecho | `1265b3c` |
+| 11 | Resumen diario | Hecho | `1002d3e` |
+| 12 | Agentes personales: registro, permisos y contrato | Hecho | `44f837a` |
+| 13 | Agentes en el chat: menciones, ejecución por eventos y adaptadores | Hecho | `6b76812` |
+| 14 | Control del PC (1/2): emparejamiento, permisos, comandos y auditoría | Hecho | `9e6a698` |
+| 15 | Control del PC (2/2): compañero de escritorio para Windows | Hecho | `ff8d7d6` |
+| 16 | Verificación y regresión completa | **Incompleto** (EXIT 1, rate limit, 01:02 → 02:40, ~98 min). Arreglos **sin commit** en el árbol. | — |
 
-**Resumen diario "Tu día"** (push de la mañana + vista):
-- **Migración NUEVA** `supabase/migrations/20261011000000_daily_digest.sql`:
-  desprograma `loki-ai-daily-8am`, notificación tipo `daily` (+ columna en
-  `notification_prefs`), tabla `daily_digest_prefs` (hora local 08:00, zona
-  America/Santiago, días, espacios, aviso en vacío) con RLS propia,
-  `create_daily_digests()` cada 15 min (SQL sin LLM, hora local por
-  `AT TIME ZONE`, dedupe por día local, respeta interruptor/silencio/hábiles,
-  sin duplicar `create_due_reminders`) y `day_highlights` en `ai_jobs`.
-- **Edges**: `push-send` mapea `daily`; `loki-chat` amplía `get_today_summary`
-  (atrasadas, listas fijadas, encuestas sin mi voto); `loki-worker` procesa
-  `day_highlights` (menciones + recientes, modelo barato con cuota, cacheado
-  por día en `ai_summaries` con `chat_key = 'day:…'`, determinista sin clave).
-- **App**: `src/lib/data/daily-digest.ts`, `src/hooks/use-daily-digest.ts`,
-  `src/components/daily/today-view.tsx` (acciones directas, 1 col móvil / 2
-  col escritorio) + `digest-settings-section.tsx`, tarjeta "Tu día" en Inicio
-  y vista `/inicio?vista=dia`, compacto en el right-panel, sección en
-  Configuración, icono `daily`, clic de la push web abre el link
-  (`firebase-messaging-sw.js`).
-- **Tests**: `tests/rls/daily_digest.test.mjs` (prefs, tipo daily, agrupado +
-  idempotente, hábiles/vacío, `day_highlights`). Se ejecutan en el prompt
-  final, no ahora.
+- Stash `stash@{0}`: **"p09c parcial (descartado)"** (no aplicar). Rama local `p09c-descartado` apunta a `fb41b23`.
+- `.forja\orphan-p10-spacebunny\`: archivos de una sesión space-bunny huérfana de p10 (apartados, no usados).
 
-**Encuestas en el chat** (decidir sin 40 mensajes) — segunda pasada, completa
-lo que había quedado a medias:
+## Resultado de p16 (verificación) — estado al cortar
 
-- **Ya estaba** (commit `702faf8`, p07): migración
-  `20261007000000_polls.sql` (polls/poll_options/poll_votes con RLS, RPCs
-  `poll_results`, `cast_poll_vote`, `close_poll`, `poll_option_busy`, tick de
-  pg_cron con recordatorio "falta tu voto", notificación tipo `poll`), tipos en
-  `src/types/organizer.ts` y `src/types/supabase.ts`, capa de datos
-  (`src/lib/data/polls.ts`), helpers puros (`src/lib/polls/poll.ts`), hooks
-  (`src/hooks/use-polls.ts`), `poll-card.tsx`, `poll-result-actions.tsx` y
-  `tests/rls/polls.test.mjs`.
-- **Faltaba y se agregó**: `poll-summary.tsx` (estaba importada y no existía),
-  `poll-sheet.tsx` (crear), `poll-settings.tsx` (ajustar), la tarjeta en el
-  chat (`MessageBubble` con `meta.kind === "poll"`), los puntos de entrada
-  (`+` del composer → "Encuesta", acción rápida "Nueva encuesta"), la
-  herramienta `create_poll` de `loki-chat` (con tarjeta de confirmación y
-  editor de opciones con fecha), el analizador determinista `create_poll`
-  (intento nuevo, copia sincronizada en la Edge + tests), el trabajo
-  `poll_summary` en `loki-worker` (resultado con SQL + modelo barato bajo
-  demanda, cuota del espacio) con su tipo nuevo en el CHECK de `ai_jobs`, la
-  push "falta tu voto" abriendo el chat en la encuesta (`?msg=`), los iconos
-  de notificación que faltaban (`list`, `poll`) y sus interruptores en
-  Configuración. También se arreglaron errores de typecheck que dejaron las
-  sesiones p07/p08 (`UploadProgress` sin `onCancel`, `voice` de `MessageList`,
-  `useClosePoll`, casts de `transcriptions.ts`).
+| Chequeo | Resultado |
+|---|---|
+| `npm run sb:reset` | **OK** (tras arreglos): aplican las 22 migraciones, incluida la nueva `20261015000000_reparacion_verificacion.sql`. Antes fallaba en `polls` (helpers `language sql` antes de crear la tabla) y en `agents` (política que usaba `agent_space_grants` antes de crearla); se reordenaron esas migraciones. |
+| `npm run typecheck` | **OK** (0) tras arreglar ~40 errores de p12-p15 (`IconSize` con números, `run`/`prefs`/`device` posiblemente null, `Json`, hooks de agentes). |
+| `npm run lint` | **OK** (0 errores, 12 warnings preexistentes). |
+| `npm run test:unit` | **OK**: mentions 70, preview 8, intent 105 (se corrigieron tests y el intent de "mi PC"). |
+| `npm run test:rls` | **FALLA: 169/178** (de 27 fallos bajó a 9). |
+| `npm run build` | **No se corrió** (p16 cortó antes). |
+| `npm run build:capacitor` | **No se corrió**. |
 
-**Notas de voz que se convierten en cosas** (transcripción + voz a acción):
+**Arreglado en p16 (sin commit):** orden de las migraciones `polls`, `agents` y `devices`; migración nueva de reparación (recursión infinita en políticas de agentes, `poll_electors` leído como `e.user_id`, `on conflict` que no casaba con el índice parcial de `ai_jobs` en transcripciones/OCR, palabras con tilde en la memoria, PC revocado que seguía leyendo su ficha y sus comandos); typecheck, lint y tests unitarios; ajustes en tests RLS (`daily_digest`, `memories`, `search`).
 
-- **Migración NUEVA** `supabase/migrations/20261008000000_transcriptions.sql`:
-  tabla `audio_transcriptions` (una fila por archivo de audio ya subido, con
-  texto, idioma, duración, proveedor y estado), CHECK
-  `storage_workspace_id(object_path) = workspace_id`, índice único por
-  `(workspace_id, object_path)`, RLS que hereda la visibilidad del mensaje
-  (`can_access_chat`, así en un DM solo sus miembros) y deja el dictado suelto
-  en privado, encolado por evento (`audio_transcriptions_enqueue` -> `ai_jobs`
-  `transcribe_audio` -> `wake_ai_worker` por `pg_net`), `retry_transcription()`
-  y `global_search` reemplazada por la misma firma **con un grupo más**
-  (`transcriptions`).
-- **Edge:** `supabase/functions/_shared/transcribe.ts` (nuevo, sin dependencias
-  externas, imports relativos) con `STT_PROVIDER=openai|gemini`, `STT_MODEL`,
-  `STT_API_KEY`, `STT_BASE_URL`; `loki-worker` implementa `processTranscribe`
-  (verifica membresía y acceso al chat, reserva cuota **antes** de bajar el
-  audio, descarga con la service role y guarda el texto) y un `GET /health` que
-  dice si hay voz a texto configurada.
-- **App:** `src/lib/data/transcriptions.ts`,
-  `src/hooks/use-voice-transcription.ts`,
-  `src/components/media/transcription-panel.tsx` ("Ver transcripción" bajo
-  demanda), `src/components/ai/dictate-sheet.tsx` ("Dictar a Loki"),
-  `src/components/chat/dictation-banner.tsx` (texto editable encima del plan) y
-  `src/components/chat/voice-convert-sheet.tsx` ("Convertir en…" sobre una nota
-  de voz). `VoiceRecorder` gana modo `toggle`, hápticos y corte en segundo plano.
-  Búsqueda: nuevo grupo "Notas de voz" en la paleta. Android: `RECORD_AUDIO` +
-  `MODIFY_AUDIO_SETTINGS` en el manifest (Capacitor 8 ya reenvía
-  `AUDIO_CAPTURE` a la petición en tiempo de ejecución).
-- **Tests:** `tests/rls/transcriptions.test.mjs` (RLS, ciclo, reintento y el
-  grupo nuevo de `global_search`).
-- **Docs:** README, `supabase/README.md` y `src/components/chat/README.md`
-  actualizados (la UI de adjuntos YA funcionaba de punta a punta; el README
-  decía que no).
+**Sigue roto (9 tests RLS, 4 focos):**
+1. **Agentes – INSERT de `agent_runs`** (6 tests: pedir ejecución, abrir grant, resultado privado, eventos, cancelar, `message_id`): `insert ... returning` da 42501. Causa confirmada: la función `agent_can_read_run` (SECURITY DEFINER, `stable`) no ve la fila recién insertada al evaluar la política SELECT en el RETURNING. Falta el arreglo (p. ej. política SELECT que no dependa de releer la fila, o no pedir `returning`/`select` en el insert).
+2. **Encuestas – tick** "cierra lo vencido y avisa UNA vez a quien no votó".
+3. **Búsqueda – DM ajeno/sensible** sale en `global_search`: el parser deja `regalo-secreto.png` como un solo token; revisar los predicados de adjuntos en `20261010000000_search_all.sql` (líneas ~763 y ~1060).
+4. **Transcripciones – DM:** el otro miembro del DM no ve la transcripción.
+
+**Restos de diagnóstico de p16 (limpiar):**
+- Archivos sueltos sin seguimiento en la raíz: `diag-fn*.sql`, `diag-pol*.sql`, `diag-seq*.sql` (13). No commitear; borrarlos.
+- La base **local** quedó con objetos de depuración creados a mano (política `debug_p` en `agent_runs`, tabla `debug_log`, secuencias `seq_dbg_*`, funciones de diagnóstico, `grant select on agent_runs`). Un `npm run sb:reset` la deja limpia. PostgREST local (`supabase_rest_loki`) se reinició una vez.
+
+## Pendientes para Manu (tras esta tanda)
+- Decidir cómo terminar p16: relanzar un "p16c" (ojalá con un modelo sin rate limit) para cerrar los 4 focos RLS, correr `build` y `build:capacitor`, y commitear `p16: Verificacion y regresion completa`. Los 22 archivos modificados + la migración nueva siguen sin commit.
+- **Prompt 6 (tareas recurrentes y turnos rotativos) nunca se hizo**: decidir si se corre ahora (encima de p16) o se descarta.
+- Revisar y aprobar el push de p07-p16 a `origin/main` (todo local por ahora).
+- Lo de siempre: clave de IA, Google OAuth, FCM real, prueba en teléfono, RAM de WSL (ver "Pendientes y bloqueos").
 
 ## Terminado (hashes)
 - T1–T9 (scaffold, tokens Grok, shell, Firebase inicial, auth, onboarding, espacios, navegación): `5b58d0f` … `ab4fc29`.
@@ -102,17 +63,18 @@ lo que había quedado a medias:
 - T16 `263eccf` · T17 `10a8d0b` · T18 `08ea3be` (verificados con E2E y capturas por Loki).
 - T19 `8711c5c`: Supabase local, esquema, RLS, triggers y Storage (verificado: sb:reset, RLS 55/55, typecheck, lint, build y cap en 0).
 - **T20–T36 en un solo commit `f4eb6c2`** ("T34-T36: Pulido, calidad y lanzamiento", 209 archivos), con Auth (T20, que ya no queda sin commit), chats, IA, FCM, calendario, proyectos, notificaciones, invitaciones, búsqueda, PWA, pulido, CI y docs.
-- Después (Manu): `ecd83f9` arreglo del bundle Deno · `466be8b` canal realtime compartido · `4d8b40b`/`772a95f`/`85534fe`/`f54f321` sidebar · `a45cee6` Google Calendar bidireccional · `615ec76` apikey en Edge · `c8d4ba6` realtime auto-recuperable · `836699d`/`1b473ff`/`d1af2f4` invitar y unirse · `51a3ee5`/`0c17c0f`/`9615d6c` GCal · `8037776` chat · `54cd726` rediseño del calendario · `8e9d2fb`/`072d7e0` push · `eaf5c45`/`d12ef59` Android · `21d313e` listas · `702faf8` **p07: encuestas (datos, tipos y RLS; la UI quedó a medias)** · `1bbf109` p08 notas de voz (último).
+- Después (Manu): `ecd83f9` arreglo del bundle Deno · `466be8b` canal realtime compartido · `4d8b40b`/`772a95f`/`85534fe`/`f54f321` sidebar · `a45cee6` Google Calendar bidireccional · `615ec76` apikey en Edge · `c8d4ba6` realtime auto-recuperable · `836699d`/`1b473ff`/`d1af2f4` invitar y unirse · `51a3ee5`/`0c17c0f`/`9615d6c` GCal · `8037776` chat · `54cd726` rediseño del calendario · `8e9d2fb`/`072d7e0` push · `eaf5c45`/`d12ef59` Android · `21d313e` listas · `702faf8` **p07: encuestas (datos, tipos y RLS; la UI quedó a medias)** · `1bbf109` p08 notas de voz.
+- **Prompts 7-15** (tanda Forja 01-10/02-10): `702faf8`/`86e800b` p07 · `1bbf109`/`f9b9aa2` p08 · `56a9868`/`fb41b23` p09 · `1265b3c` p10 · `1002d3e` p11 · `44f837a` p12 · `6b76812` p13 · `9e6a698` p14 · `ff8d7d6` p15 (HEAD de código). p16 sin commit (ver arriba).
 - Verificado el 01-10 ~05:35 en `d12ef59`: `npm run typecheck` en 0, árbol limpio. Build, lint y test:rls **no** se corrieron en este traspaso (opencode de Manu activo).
 
 ## Tarea en curso
-- Sin tarea de Forja en curso. Lo último de Manu: Android (barra de estado) y push nativo.
+- Sin tarea de Forja en curso. p16 quedó a medias (EXIT 1 por rate limit, 02-10 02:40) con arreglos sin commit en el árbol.
 - Hay 2 procesos opencode de Manu activos desde 01-10 04:12 (`opencode` y `opencode serve --service`). **No matarlos.**
-- Migraciones: `20260929000000_init` · `20260930000000_organizer` · `…01_ai_tools` · `…02_storage` · `…03_search` · `…04_negatives_fix` · `…05_gcal` · `20261001000000_push_direct` · `20261003000000_ai_infra` · `20261004000000_loki_actions` · `20261005000000_convert_digest` · `20261006000000_lists` · `20261007000000_polls` · `20261008000000_transcriptions`.
-- Edge Functions: `loki-chat`, `loki-worker`, `push-send`, `google-calendar` (secretos en `supabase/functions/.env`, gitignored; plantilla `.env.example`, ahora con `STT_*`).
+- Migraciones: `20260929000000_init` · `20260930000000_organizer` · `…01_ai_tools` · `…02_storage` · `…03_search` · `…04_negatives_fix` · `…05_gcal` · `20261001000000_push_direct` · `20261003000000_ai_infra` · `20261004000000_loki_actions` · `20261005000000_convert_digest` · `20261006000000_lists` · `20261007000000_polls` · `20261008000000_transcriptions` · `20261009000000_space_memories` · `20261010000000_search_all` · `20261011000000_daily_digest` · `20261012000000_agents` · `20261013000000_agents_chat` · `20261014000000_devices` · `20261015000000_reparacion_verificacion` (nueva de p16, sin commit).
+- Edge Functions: `loki-chat`, `loki-worker`, `push-send`, `google-calendar`, `agent-callback`, `agent-connections`, `agent-dispatch`, `agent-task`, `device-pair` (secretos en `supabase/functions/.env`, gitignored; plantilla `.env.example`, ahora con `STT_*`).
 
 ## Próximas 5 tareas (criterio de aceptación)
-1. **Regresión completa tras el commit grande `f4eb6c2`:** `npm run sb:reset` aplica las 8 migraciones; `typecheck`, `lint`, `test:unit`, `test:rls`, `build` y `build:capacitor` en 0. Corregir sin romper y hacer commit local.
+1. **Cerrar p16 (regresión completa):** limpiar `diag-*.sql`, `npm run sb:reset` aplica las 22 migraciones; arreglar los 9 tests RLS (agent_runs insert+returning, tick de encuestas, búsqueda en DM, transcripción en DM); `typecheck`, `lint`, `test:unit`, `test:rls`, `build` y `build:capacitor` en 0; commit local `p16: Verificacion y regresion completa`.
 2. **Loki IA real** (requiere la clave de Manu): con `LLM_PROVIDER/LLM_MODEL/LLM_API_KEY` en `supabase/functions/.env` y `npm run sb:functions`, `/health` da `configured:true`, Loki IA responde en streaming y queda un mensaje `type ai`; @Loki responde en grupo. Sin clave: "Loki IA sin configurar", sin errores.
 3. **Push real en Android:** con `FCM_SERVICE_ACCOUNT` (secreto) y la config web/VAPID en `.env.local` (fuera del repo), un mensaje nuevo llega como notificación al teléfono. Sin config: "Notificaciones no configuradas". `typecheck && build && build:capacitor` en 0.
 4. **Adjuntos y voz visibles** (README: "UI de adjuntos deshabilitada, buckets listos"): subir imagen, archivo y nota de voz a Storage con RLS por espacio y verlos en chat y publicaciones; `test:rls` verde y build en 0.

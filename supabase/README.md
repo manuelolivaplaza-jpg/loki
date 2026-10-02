@@ -171,6 +171,17 @@ desde las políticas:
 | `retry_ai_job(job_id)` | Reencola un trabajo fallido (quien lo pidió o un admin) |
 | `retry_transcription(transcription_id)` | Reencola la transcripción de un audio que falló |
 | `global_search(workspace_id, q)` | Búsqueda de Cmd/Ctrl+K: mensajes, transcripciones, tareas, proyectos, eventos y personas |
+| `poll_results(poll_id)` | Estado de una encuesta: opciones con votos, ganador o empate, quién falta y qué puede hacer cada uno. En las anónimas no expone los uids (la RLS tampoco los deja ver) |
+| `cast_poll_vote(poll_id, option_ids)` | Vota, cambia o retira el voto (lista vacía = retirar). Valida acceso, encuesta abierta y tipo |
+| `close_poll(poll_id)` | Cierre a mano (creador, admin o quien diga `closeBy`) |
+| `poll_option_busy(poll_id)` | Ocupados por opción en las encuestas de fecha: **solo el número**, nunca el detalle del evento (los importados de Google cuentan igual) |
+| `poll_flag(settings, key, default)` / `poll_can_manage` / `poll_can_vote` / `poll_can_suggest` / `poll_electors` | Permisos y ajustes de encuesta que usan las políticas (y que el worker puede reutilizar) |
+
+Además, en la migración de encuestas: `close_due_polls()` cierra lo vencido,
+`create_poll_reminders()` manda **un** aviso "falta tu voto" a quien no votó
+(dedupe por encuesta y usuario) y `poll_tick()` las dos cosas; es el job de
+`pg_cron` de 5 minutos (SQL barato, sin IA). El cierre por tiempo también
+ocurre al leer la encuesta, así que la tarjeta nunca sale "abierta" vencida.
 
 ---
 
@@ -209,13 +220,18 @@ que es lo que arregló el commit `ecd83f9` ("arreglo del bundle Deno").
 | Función | Quién la llama | Para qué |
 |---|---|---|
 | `loki-chat` | El cliente, con su JWT | Chat con streaming SSE, herramientas y confirmación de escrituras |
-| `loki-worker` | El trigger `wake_ai_worker` (pg_net) o `pg_cron` | Un trabajo de `ai_jobs` por llamada. `GET /health` dice si hay voz a texto configurado |
+| `loki-worker` | El trigger `wake_ai_worker` (pg_net) o `pg_cron` | Un trabajo de `ai_jobs` por llamada. `GET /health` dice si hay voz a texto y si hay modelo configurados |
 | `push-send` | El trigger `maybe_push_notification` (pg_net) | FCM, respetando preferencias y horario de silencio |
 | `google-calendar` | El cliente, con su JWT | OAuth y sincronización pull/push |
 
 `loki-worker` exige `Authorization: Bearer <WORKER_KEY>` (secreto del servidor,
 el mismo valor que `loki.worker_key` en la base): un cliente nunca puede
 invocarla para saltarse cuotas.
+
+Tipos de `ai_jobs`: `chat_summary`, `day_digest`, `redact_highlights`,
+`transcribe_audio`, `chat_digest` y `poll_summary` (el resumen del resultado de
+una encuesta, **bajo demanda**: el worker arma el resultado con SQL y solo llama
+al modelo barato si hay clave y cuota, reservando antes).
 
 ---
 

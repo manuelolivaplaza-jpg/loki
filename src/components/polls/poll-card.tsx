@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { BarChart3, Check, Plus, Sparkles } from "lucide-react";
+import { BarChart3, Check, Plus, Settings2, Sparkles } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
 import { Avatar } from "@/components/ui/avatar";
 import {
@@ -21,6 +21,7 @@ import {
   usePoll,
 } from "@/hooks/use-polls";
 import { PollResultActions } from "@/components/polls/poll-result-actions";
+import { PollSettingsDialog } from "@/components/polls/poll-settings";
 import { PollSummary } from "@/components/polls/poll-summary";
 import { useMembers } from "@/hooks/use-chat";
 import { useSessionStore } from "@/stores/session-store";
@@ -42,12 +43,7 @@ function initial(name: string): string {
   return letter === "" ? "?" : letter;
 }
 
-/** Fecha en el formato de `<input type="datetime-local">` (hora local). */
-function toLocalInput(date: Date): string {
-  const pad = (value: number): string => value.toString().padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
+/** Lee el valor de `<input type="datetime-local">` (hora local) como Date. */
 function fromLocalInput(value: string): Date | null {
   if (value === "") return null;
   const date = new Date(value);
@@ -117,7 +113,7 @@ function OptionRow({
               chosen ? "border-accent bg-accent text-background" : "border-divider",
             )}
           >
-            {chosen ? <Icon icon={Check} size={16} /> : null}
+            {chosen ? <Icon icon={Check} size={20} /> : null}
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-body-sm font-medium leading-5 text-foreground">
@@ -181,6 +177,7 @@ export function PollCard({ pollId }: { pollId: string }): React.JSX.Element {
   const [draft, setDraft] = React.useState("");
   const [draftStart, setDraftStart] = React.useState("");
   const [summaryOpen, setSummaryOpen] = React.useState(false);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
 
   const poll = state.poll;
@@ -418,20 +415,31 @@ export function PollCard({ pollId }: { pollId: string }): React.JSX.Element {
       {poll.isOpen ? (
         <div className="flex flex-wrap items-center gap-2">
           {poll.canManage ? (
-            <button
-              type="button"
-              disabled={close.isPending}
-              onClick={() => {
-                setNotice(null);
-                close.mutate(undefined, {
-                  onSuccess: () => setNotice("Encuesta cerrada. El resultado queda fijado."),
-                  onError: (error) => setNotice(error.message),
-                });
-              }}
-              className="flex min-h-11 items-center gap-1 rounded-full bg-surface-soft px-3 text-body-sm font-medium text-foreground outline-none interactive disabled:opacity-60"
-            >
-              {close.isPending ? "Cerrando…" : "Cerrar encuesta"}
-            </button>
+            <>
+              <button
+                type="button"
+                disabled={close.isPending}
+                onClick={() => {
+                  setNotice(null);
+                  close.mutate(undefined, {
+                    onSuccess: () => setNotice("Encuesta cerrada. El resultado queda fijado."),
+                    onError: (error) => setNotice(error.message),
+                  });
+                }}
+                className="flex min-h-11 items-center gap-1 rounded-full bg-surface-soft px-3 text-body-sm font-medium text-foreground outline-none interactive disabled:opacity-60"
+              >
+                {close.isPending ? "Cerrando…" : "Cerrar encuesta"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Ajustar la encuesta"
+                className="flex min-h-11 items-center gap-1 rounded-full px-3 text-body-sm font-medium text-muted-foreground outline-none interactive"
+              >
+                <Icon icon={Settings2} size={20} />
+                Ajustar
+              </button>
+            </>
           ) : null}
           {!summaryOpen ? (
             <button
@@ -461,7 +469,11 @@ export function PollCard({ pollId }: { pollId: string }): React.JSX.Element {
       )}
 
       {summaryOpen ? (
-        <PollSummary pollId={poll.id} onClose={() => setSummaryOpen(false)} />
+        <PollSummary poll={poll} onClose={() => setSummaryOpen(false)} />
+      ) : null}
+
+      {settingsOpen ? (
+        <PollSettingsDialog open poll={poll} onClose={() => setSettingsOpen(false)} />
       ) : null}
     </div>
   );

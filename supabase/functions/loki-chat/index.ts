@@ -142,6 +142,10 @@ const SYSTEM_PROMPT =
   "Para listas: 'agrega X a la lista del súper' usa add_list_items (los " +
   "ítems van en `items`, la lista en `list` o `listId`); '¿qué falta " +
   "comprar?' primero usa read_list y responde con lo no marcado. " +
+  "Para decidir en grupo usa create_poll ('¿pizza o sushi?', '¿qué día " +
+  "hacemos el asado?'): es una tarjeta de votación en el chat. kind es " +
+  "'single', 'multiple', 'yesno' (aprobaciones) o 'date' (opciones con " +
+  "fecha y hora ISO en `startsAt`); las opciones van en `options`. " +
   "Resuelve personas contra los miembros (pide user_id por nombre " +
   "solo si es único; si hay dos iguales, dilo y no adivines) y fechas con " +
   "la herramienta tal cual te las dicen en ISO (mañana, el viernes, etc.).";
@@ -674,7 +678,7 @@ const TOOLS: ToolDef[] = [
             properties: {
               action: {
                 type: "string",
-                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task", "add_list_items", "check_list_item", "remove_list_item"],
+                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task", "add_list_items", "check_list_item", "remove_list_item", "create_poll"],
               },
               title: { type: "string" },
               startsAt: { type: "string" },
@@ -689,6 +693,41 @@ const TOOLS: ToolDef[] = [
         },
       },
       required: ["actions"],
+    },
+  },
+  {
+    name: "create_poll",
+    description:
+      "Crea una encuesta en el chat para decidir rápido ('¿pizza o sushi?', '¿qué día hacemos el asado?'). kind: 'single', 'multiple', 'yesno' (aprobación) o 'date' (opciones con fecha y hora, en startsAt). Requiere confirmación.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        question: { type: "string", description: "La pregunta, máx 200" },
+        kind: {
+          type: "string",
+          enum: ["single", "multiple", "yesno", "date"],
+        },
+        options: {
+          type: "array",
+          description: "Máximo 20. En kind 'yesno' no hace falta (se pone Sí/No).",
+          items: {
+            type: "object",
+            properties: {
+              text: { type: "string" },
+              startsAt: { type: "string", description: "ISO 8601 (solo kind 'date')" },
+              endsAt: { type: "string", description: "ISO 8601 (opcional)" },
+            },
+            required: ["text"],
+          },
+        },
+        closesAt: { type: "string", description: "ISO 8601: cuándo se cierra (opcional)" },
+        anonymous: { type: "boolean", description: "true esconde quién votó" },
+        allowSuggestions: { type: "boolean", description: "Que el grupo agregue opciones" },
+        remindMissing: { type: "boolean", description: "Avisar a quien no votó antes del cierre" },
+        closeBy: { type: "string", enum: ["creator", "anyone"] },
+      },
+      required: ["workspaceId", "question", "kind"],
     },
   },
   {
@@ -766,6 +805,7 @@ const WRITE_ACTIONS: ReadonlySet<string> = new Set([
   "add_list_items",
   "check_list_item",
   "remove_list_item",
+  "create_poll",
   "propose_plan",
 ]);
 
@@ -781,6 +821,7 @@ const ACTION_LABELS: Record<string, string> = {
   add_list_items: "Agregar a la lista",
   check_list_item: "Marcar ítem",
   remove_list_item: "Quitar ítem",
+  create_poll: "Crear encuesta",
   propose_plan: "Plan de acciones",
 };
 
@@ -1130,6 +1171,26 @@ async function precheckAction(
     }
     return ok;
   }
+  if (action === "create_poll") {
+    const chatId = paramStr(params, "chatId") ?? paramStr(params, "chat_id");
+    if (workspaceId === null || chatId === null) {
+      return { ok: false, message: "Abre un chat del espacio y pídemelo ahí." };
+    }
+    // La encuesta vive en un mensaje de ese chat: si no existe (o ya no es
+    // visible), la RLS rechazaría el insert y mejor decirlo directo.
+    const res = await userRest(
+      `/chats?workspace_id=eq.${encodeURIComponent(workspaceId)}` +
+      `&id=eq.${encodeURIComponent(chatId)}&select=id&limit=1`,
+      ctx.jwt,
+    );
+    if (!res.ok || !Array.isArray(res.data) || res.data.length === 0) {
+      return { ok: false, message: "Ese chat ya no existe o no tengo acceso." };
+    }
+    if (paramStr(params, "question") === null) {
+      return { ok: false, message: "Dime la pregunta de la encuesta." };
+    }
+    return ok;
+  }
   return ok;
 }
 
@@ -1420,6 +1481,23 @@ function detectIntentFallback(text: string): LlmToolCall {
   }
   if (/(que falta|que hay en la lista|que tiene la lista|falta comprar)/.test(lower)) {
     return { name: "read_list", args: {} };
+  }
+  if (/(encuesta|sondeo|votacion)/.test(lower)) {
+    // El analizador ya sabe separar pregunta, tipo y opciones: la tarjeta
+    // sale llena. Si no alcanza (sin opciones ni aprobación), al menos deja
+    // la pregunta para que la complete en la tarjeta.
+    const poll = analyzeIntent(text);
+    if (poll !== null && poll.action === "create_poll" && poll.confident) {
+      return {
+        name: "create_poll",
+        args: {
+          question: poll.title,
+          kind: poll.pollKind ?? "single",
+          options: poll.pollOptions,
+        },
+      };
+    }
+    return { name: "create_poll", args: { question: text.trim().slice(0, 200) } };
   }
   if (/(mis proyectos|proyectos)/.test(lower)) {
     return { name: "list_projects", args: {} };
@@ -1841,6 +1919,131 @@ async function execConfirmedAction(
       `Listo: agendé “${title.slice(0, 100)}”.${who}`,
       [link],
       id === "" ? [] : [{ kind: "task", id, label: title.slice(0, 100), workspaceId, projectId }],
+    );
+  }
+
+  if (action === "create_poll") {
+    // Encuesta = mensaje 'card' + polls + poll_options. Todo con el JWT del
+    // usuario: la RLS (can_access_chat) es la puerta y el id de la encuesta se
+    // genera aquí para que el mensaje nazca con `meta.poll_id`.
+    const chatId = paramStr(params, "chatId") ?? paramStr(params, "chat_id");
+    const question = paramStr(params, "question") ?? paramStr(params, "title");
+    if (workspaceId === null || chatId === null) {
+      return fail("Abre un chat del espacio y pídemelo ahí.");
+    }
+    if (question === null || question.trim() === "") {
+      return fail("Dime la pregunta de la encuesta.");
+    }
+    const kindRaw = paramStr(params, "kind") ?? "single";
+    const kind =
+      kindRaw === "multiple" || kindRaw === "yesno" || kindRaw === "date"
+        ? kindRaw
+        : "single";
+    const rawOptions = Array.isArray(params["options"]) ? params["options"] : [];
+    const texts: string[] = rawOptions
+      .slice(0, 20)
+      .map((entry) => {
+        if (typeof entry === "string") return entry.trim().slice(0, 200);
+        if (isRecord(entry) && typeof entry["text"] === "string") {
+          return (entry["text"] ?? "").trim().slice(0, 200);
+        }
+        return "";
+      })
+      .filter((text) => text !== "");
+    if (kind !== "yesno" && texts.length < 2) {
+      return fail("Dime al menos dos opciones para la encuesta.");
+    }
+    if (kind === "date") {
+      // Una opción de fecha sin día no es una fecha: mejor decirlo que
+      // guardarla a medias (la tarjeta muestra el error y se edita).
+      const sinFecha = texts.some((text) => {
+        const raw = rawOptions.find(
+          (entry) => isRecord(entry) && entry["text"] === text,
+        );
+        return isRecord(raw) ? asString(raw["startsAt"]) === null : true;
+      });
+      if (sinFecha) {
+        return fail("A las opciones de fecha hay que ponerles día y hora.");
+      }
+    }
+    const pollId = crypto.randomUUID();
+    const messageId = crypto.randomUUID();
+    const message = await userRest("/messages", ctx.jwt, {
+      method: "POST",
+      body: {
+        id: messageId,
+        workspace_id: workspaceId,
+        chat_id: chatId,
+        author_id: ctx.uid,
+        author_name: "",
+        text: question.trim().slice(0, 200),
+        type: "card",
+        mentions: [],
+        meta: { kind: "poll", poll_id: pollId },
+      },
+    });
+    if (!message.ok || !isRecord(message.data)) {
+      return fail("No pude publicar la encuesta en ese chat. Inténtalo de nuevo.");
+    }
+    const settings = {
+      anonymous: params["anonymous"] === true,
+      allowSuggestions: params["allowSuggestions"] !== false,
+      remindMissing: params["remindMissing"] === true,
+      closeBy: paramStr(params, "closeBy") === "anyone" ? "anyone" : "creator",
+    };
+    const poll = await userRest("/polls", ctx.jwt, {
+      method: "POST",
+      body: {
+        id: pollId,
+        message_id: messageId,
+        workspace_id: workspaceId,
+        chat_id: chatId,
+        question: question.trim().slice(0, 200),
+        kind,
+        settings,
+        ...(paramStr(params, "closesAt") !== null
+          ? { closes_at: paramStr(params, "closesAt") }
+          : {}),
+        created_by: ctx.uid,
+      },
+    });
+    if (!poll.ok) {
+      // El mensaje sin encuesta es ruido: se retira en suave.
+      await userRest(`/messages?id=eq.${encodeURIComponent(messageId)}`, ctx.jwt, {
+        method: "PATCH",
+        body: { deleted: true, text: "" },
+      });
+      return fail("No pude crear la encuesta. Inténtalo de nuevo.");
+    }
+    // Opciones: Sí/No en las de aprobación; el resto, las que vinieron.
+    const options = kind === "yesno" ? ["Sí", "No"] : texts;
+    let position = 1024;
+    for (const option of options) {
+      const raw = rawOptions.find(
+        (entry) => isRecord(entry) && entry["text"] === option,
+      );
+      const startsAt = isRecord(raw) ? asString(raw["startsAt"]) : null;
+      const endsAt = isRecord(raw) ? asString(raw["endsAt"]) : null;
+      const row = await userRest("/poll_options", ctx.jwt, {
+        method: "POST",
+        body: {
+          poll_id: pollId,
+          workspace_id: workspaceId,
+          text: option,
+          ...(startsAt !== null ? { starts_at: startsAt } : {}),
+          ...(endsAt !== null ? { ends_at: endsAt } : {}),
+          position,
+          added_by: ctx.uid,
+        },
+      });
+      position += 1024;
+      if (!row.ok) {
+        return fail("Creé la encuesta, pero no pude agregar todas las opciones.");
+      }
+    }
+    return done(
+      `Listo: publiqué la encuesta “${question.trim().slice(0, 100)}” en el chat.`,
+      [`/chat/c?id=${encodeURIComponent(chatId)}&msg=${encodeURIComponent(messageId)}`],
     );
   }
 
@@ -2346,6 +2549,32 @@ Deno.serve(async (req: Request): Promise<Response> => {
         }
       }
       // Sin lista única que calce: sigue al modelo (o 503 si no hay clave).
+    }
+    // Encuesta: "haz una encuesta para elegir el día del asado entre viernes
+    // y sábado" se arma con el analizador (pregunta + opciones + fechas), sin
+    // modelo: es código, no IA. Sin chat no hay dónde publicarla (el mensaje
+    // tarjeta vive en un chat), así que en el chat privado sigue al modelo.
+    if (quick !== null && quick.confident && quick.action === "create_poll" && input.mode === "mention") {
+      const member = await isMember(input.workspaceId, uid);
+      if (!member) return json(403, { code: "forbidden" });
+      const pending = {
+        id: crypto.randomUUID(),
+        action: "create_poll",
+        label: actionLabel("create_poll"),
+        // Sin plazo ni ajustes: la tarjeta deja ponerlos antes de confirmar
+        // (no se inventa un "ciérrate el viernes" que nadie pidió).
+        params: pendingParams(
+          {
+            question: quick.title,
+            kind: quick.pollKind ?? "single",
+            options: quick.pollOptions,
+          },
+          { workspaceId: input.workspaceId, chatId: input.chatId },
+        ),
+      };
+      return sseReplyStream(null, async (_send, sendPending) => {
+        sendPending(pending);
+      });
     }
     if (
       quick !== null && quick.confident && quick.dateISO !== null &&

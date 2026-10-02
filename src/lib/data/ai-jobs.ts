@@ -17,7 +17,8 @@ export type AiJobType =
   | "ocr_image"
   | "dispatch_agent"
   | "redact_highlights"
-  | "chat_digest";
+  | "chat_digest"
+  | "poll_summary";
 
 export type AiJobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
@@ -130,7 +131,29 @@ export async function getCachedChatDigest(
 
 export type Unsubscribe = () => void;
 
-/** Estado en vivo de un trabajo por Realtime (filtro por id). */
+/**
+ * Último trabajo de este tipo pedido por esta persona para una encuesta.
+ * Evita volver a encolar el mismo resumen (y volver a pagar): si el anterior
+ * terminó, se reutiliza su resultado; si está en vuelo, se espera a ese.
+ */
+export async function findLatestPollSummaryJob(
+  wsId: string,
+  pollId: string,
+  uid: string,
+): Promise<AiJob | null> {
+  const { data, error } = await getSupabaseClient()
+    .from("ai_jobs")
+    .select("id, workspace_id, requested_by, type, status, attempts, error, created_at")
+    .eq("workspace_id", wsId)
+    .eq("type", "poll_summary")
+    .eq("requested_by", uid)
+    .eq("payload->>poll_id", pollId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error !== null || data === null) return null;
+  return toJob(data as JobRow);
+}
 export function listenAiJob(jobId: string, cb: (job: AiJob | null) => void): Unsubscribe {
   const supabase = getSupabaseClient();
   const channel = supabase.channel(`loki:ai-job:${jobId}`);

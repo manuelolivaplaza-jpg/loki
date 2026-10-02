@@ -10,7 +10,8 @@
 //
 // Tipos soportados: chat_summary (modelo barato), day_digest y
 // redact_highlights (plantilla determinista + pulido opcional con modelo
-// barato), chat_digest y transcribe_audio (notas de voz bajo demanda).
+// barato), chat_digest, transcribe_audio (notas de voz bajo demanda) y
+// poll_summary (resumen del resultado de una encuesta, bajo demanda).
 // ocr_image y dispatch_agent terminan en error claro "no soportado todavía"
 // (sin reintentos infinitos).
 // Sin LLM_API_KEY: lo que necesita modelo termina en error
@@ -407,6 +408,8 @@ async function processJob(job: Job): Promise<Record<string, unknown>> {
       return processChatDigest(job);
     case "transcribe_audio":
       return processTranscribe(job);
+    case "poll_summary":
+      return processPollSummary(job);
     case "ocr_image":
     case "dispatch_agent":
       throw Object.assign(
@@ -697,6 +700,215 @@ async function processTranscribe(job: Job): Promise<Record<string, unknown>> {
     await saveTranscription(row.id, { status: "error", error: message });
     throw Object.assign(new Error(message), { terminal: !retryable, sttRetryable: retryable });
   }
+}
+
+// -----------------------------------------------------------------------------
+// Resumen del resultado de una encuesta (bajo demanda, modelo barato).
+//
+// El resultado se arma con SQL (determinista): opciones, votos, ganador o
+// empate. Solo si hay modelo se le pide un lectura en prosa de ESE resultado
+// más las opiniones del hilo (los comentarios del mensaje tarjeta), con la
+// cuota del espacio reservada antes de llamar. En las anónimas el resumen no
+// nombra a nadie: los votos se cuentan, no se atribuyen.
+// -----------------------------------------------------------------------------
+
+type PollSummaryRow = {
+  id: string;
+  workspace_id: string;
+  chat_id: string;
+  message_id: string;
+  question: string;
+  kind: string;
+  closed_at: string | null;
+  settings: Record<string, unknown>;
+};
+
+function pollFlag(settings: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  const value = settings[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
+async function loadPoll(pollId: string): Promise<PollSummaryRow | null> {
+  const res = await svcGet(
+    `/polls?id=eq.${encodeURIComponent(pollId)}` +
+    `&select=id,workspace_id,chat_id,message_id,question,kind,closed_at,settings&limit=1`,
+  );
+  if (!res.ok || !Array.isArray(res.data)) return null;
+  const row = res.data[0];
+  if (!isRecord(row)) return null;
+  return {
+    id: String(row["id"] ?? pollId),
+    workspace_id: String(row["workspace_id"] ?? ""),
+    chat_id: String(row["chat_id"] ?? ""),
+    message_id: String(row["message_id"] ?? ""),
+    question: String(row["question"] ?? "").slice(0, 200),
+    kind: String(row["kind"] ?? "single"),
+    closed_at: typeof row["closed_at"] === "string" ? row["closed_at"] : null,
+    settings: isRecord(row["settings"]) ? (row["settings"] as Record<string, unknown>) : {},
+  };
+}
+
+async function processPollSummary(job: Job): Promise<Record<string, unknown>> {
+  const pollId = asString(job.payload["poll_id"]);
+  if (pollId === null) {
+    throw Object.assign(new Error("Sin encuesta que resumir."), { terminal: true });
+  }
+  const poll = await loadPoll(pollId);
+  if (poll === null) {
+    throw Object.assign(new Error("La encuesta ya no existe."), { terminal: true });
+  }
+  // El espacio de la encuesta manda: el trabajo y la encuesta son del mismo.
+  const ws = poll.workspace_id !== "" ? poll.workspace_id : job.workspace_id;
+  const uid = job.requested_by;
+  if (uid === null) {
+    throw Object.assign(new Error("Sin usuario que lo pidió."), { terminal: true });
+  }
+
+  // Membresía del espacio y del chat (en un DM, solo sus miembros).
+  const member = await svcGet(
+    `/workspace_members?workspace_id=eq.${encodeURIComponent(ws)}` +
+    `&user_id=eq.${encodeURIComponent(uid)}&select=user_id&limit=1`,
+  );
+  if (!member.ok || !Array.isArray(member.data) || member.data.length === 0) {
+    throw Object.assign(new Error("Sin acceso al espacio."), { terminal: true });
+  }
+  const chat = await svcGet(
+    `/chats?workspace_id=eq.${encodeURIComponent(ws)}` +
+    `&id=eq.${encodeURIComponent(poll.chat_id)}&select=id,type,member_ids&limit=1`,
+  );
+  const chatRow = chat.ok && Array.isArray(chat.data) && isRecord(chat.data[0])
+    ? chat.data[0]
+    : null;
+  if (chatRow === null) {
+    throw Object.assign(new Error("El chat ya no existe."), { terminal: true });
+  }
+  if (chatRow["type"] === "dm") {
+    const ids = Array.isArray(chatRow["member_ids"]) ? chatRow["member_ids"] : [];
+    if (!ids.includes(uid)) {
+      throw Object.assign(new Error("Sin acceso a ese chat."), { terminal: true });
+    }
+  }
+
+  // --- Resultado con SQL (sin IA) ---
+  const optionsRes = await svcGet(
+    `/poll_options?poll_id=eq.${encodeURIComponent(poll.id)}` +
+    `&select=id,text,starts_at,ends_at,position&order=position.asc&limit=20`,
+  );
+  const optionRows = optionsRes.ok && Array.isArray(optionsRes.data)
+    ? (optionsRes.data as Record<string, unknown>[]).filter(isRecord)
+    : [];
+  const votesRes = await svcGet(
+    `/poll_votes?poll_id=eq.${encodeURIComponent(poll.id)}&select=option_id,user_id&limit=500`,
+  );
+  const voteRows = votesRes.ok && Array.isArray(votesRes.data)
+    ? (votesRes.data as Record<string, unknown>[]).filter(isRecord)
+    : [];
+  const voters = new Set(voteRows.map((v) => String(v["user_id"] ?? "")).filter((id) => id !== ""));
+
+  const lines: string[] = [];
+  let max = 0;
+  for (const option of optionRows) {
+    const text = String(option["text"] ?? "").slice(0, 80);
+    const id = String(option["id"] ?? "");
+    const count = voteRows.filter((v) => String(v["option_id"] ?? "") === id).length;
+    if (count > max) max = count;
+    const when = typeof option["starts_at"] === "string"
+      ? ` (${option["starts_at"]})`
+      : "";
+    lines.push(`- ${text}${when}: ${count} ${count === 1 ? "voto" : "votos"}`);
+  }
+  const tied = max > 0 && optionRows.filter((o) => {
+    const id = String(o["id"] ?? "");
+    return voteRows.filter((v) => String(v["option_id"] ?? "") === id).length === max;
+  }).length > 1;
+  const winner = tied
+    ? null
+    : (optionRows.find((o) => {
+      const id = String(o["id"] ?? "");
+      return voteRows.filter((v) => String(v["option_id"] ?? "") === id).length === max;
+    }) ?? null);
+
+  // Opiniones del hilo: los comentarios del mensaje tarjeta.
+  const threadRes = await svcGet(
+    `/messages?workspace_id=eq.${encodeURIComponent(ws)}` +
+    `&thread_parent_id=eq.${encodeURIComponent(poll.message_id)}` +
+    `&deleted=is.false&select=author_name,text&order=created_at.asc&limit=20`,
+  );
+  const comments = threadRes.ok && Array.isArray(threadRes.data)
+    ? (threadRes.data as Record<string, unknown>[])
+      .filter(isRecord)
+      .map((m) => `${String(m["author_name"] ?? "").slice(0, 40)}: ${String(m["text"] ?? "").slice(0, 300)}`)
+      .filter((line) => !line.endsWith(": "))
+    : [];
+
+  const resultLines = [
+    `Pregunta: ${poll.question}`,
+    `Tipo: ${poll.kind}`,
+    pollFlag(poll.settings, "anonymous", false) ? "Anónima: no se sabe quién votó" : "",
+    `Estado: ${poll.closed_at === null ? "abierta" : "cerrada"}`,
+    `Votos: ${voters.size}`,
+    ...lines,
+    winner === null
+      ? (max === 0 ? "Sin votos todavía." : "Empate: decide quien creó la encuesta.")
+      : `Ganó: ${String(winner["text"] ?? "").slice(0, 80)} con ${max} ${max === 1 ? "voto" : "votos"}.`,
+  ];
+  if (comments.length > 0) {
+    resultLines.push("Opiniones del hilo:", ...comments.map((line) => `- ${line}`));
+  }
+  const corpus = resultLines.filter((line) => line !== "").join("\n");
+
+  // Sin modelo: el resultado determinista ES la respuesta (la UI lo muestra
+  // igual y no se gasta nada). Con modelo: una lectura corta encima.
+  if (!llmConfigured()) {
+    return {
+      poll_id: poll.id,
+      kind: poll.kind,
+      votes: voters.size,
+      winner: winner === null ? null : String(winner["text"] ?? "").slice(0, 80),
+      tied,
+      summary: "",
+      detail: corpus.slice(0, 1500),
+      comments: comments.length,
+      deterministic: true,
+    };
+  }
+
+  const quota = await reserve(ws, uid, "poll_summary", Math.max(2, Math.ceil(corpus.length / 250)));
+  if (!quota.allowed) {
+    throw Object.assign(new Error(quotaMessage(quota.reason)), { terminal: true });
+  }
+  const summary = (await completeFast(
+    "Resume en español, máximo 4 líneas y sin adornos, el resultado de esta " +
+      "encuesta y las opiniones que dejó el hilo. No inventes datos: usa solo " +
+      "las cifras dadas. Si hay empate, dilo. Si el hilo está vacío, resume " +
+      "solo el resultado.",
+    corpus.slice(0, 6000),
+  )).trim();
+  if (summary === "") {
+    // El proveedor no devolvió nada: el resultado determinista sigue siendo válido.
+    return {
+      poll_id: poll.id,
+      kind: poll.kind,
+      votes: voters.size,
+      winner: winner === null ? null : String(winner["text"] ?? "").slice(0, 80),
+      tied,
+      summary: "",
+      detail: corpus.slice(0, 1500),
+      comments: comments.length,
+      deterministic: true,
+    };
+  }
+  return {
+    poll_id: poll.id,
+    kind: poll.kind,
+    votes: voters.size,
+    winner: winner === null ? null : String(winner["text"] ?? "").slice(0, 80),
+    tied,
+    summary: summary.slice(0, 1200),
+    detail: corpus.slice(0, 1500),
+    comments: comments.length,
+    deterministic: false,
+  };
 }
 
 /**

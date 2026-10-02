@@ -16,7 +16,19 @@ export type IntentAction =
   | "remind"
   | "create_task"
   | "create_event"
-  | "add_list";
+  | "add_list"
+  | "create_poll";
+
+/** Tipos de encuesta que el analizador puede proponer sin modelo. */
+export type PollIntentKind = "single" | "multiple" | "yesno" | "date";
+
+/** Opción de la encuesta con su franja ya resuelta (solo kind 'date'). */
+export interface PollIntentOption {
+  text: string;
+  /** ISO 8601 del inicio (null si el día no se pudo resolver). */
+  startsAt: string | null;
+  endsAt: string | null;
+}
 
 export interface IntentRecurrence {
   kind: "daily" | "weekly" | "monthly";
@@ -37,6 +49,10 @@ export interface AnalyzedIntent {
   mentions: string[];
   /** Nombre de la lista ("súper") en add_list, o null. */
   listName: string | null;
+  /** Tipo de encuesta en create_poll, o null en el resto. */
+  pollKind: PollIntentKind | null;
+  /** Opciones en create_poll (vacío = sí/no o falta información). */
+  pollOptions: PollIntentOption[];
   /** True = no hace falta llamar al modelo. */
   confident: boolean;
 }
@@ -269,6 +285,215 @@ function matchList(normalized: string): { item: string; list: string | null } | 
   return { item, list: list === "" ? null : list };
 }
 
+// --- Encuestas (create_poll) -------------------------------------------------
+//
+// "haz una encuesta para elegir el día del asado entre viernes y sábado" se
+// resuelve SIN modelo: la palabra "encuesta" da la acción, "entre X y Y" (o
+// "X o Y", o "opciones: …") da las opciones, y si todas son días dichas se
+// convierten en fechas de Santiago con la hora hablada (19:00 por defecto).
+// La tarjeta de confirmación muestra y deja editar cada fecha.
+
+const POLL_RE = /(encuesta|sondeo|votacion)/;
+const POLL_YESNO_RE = /(aprob|aprueb|aprobacion|de acuerdo|estan de acuerdo|si o no)/;
+const POLL_MULTI_RE = /(varias|multiple|mas de una opcion|pueden elegir mas de una)/;
+const POLL_DATE_RE = /(elegir (el |la |los |las )?(dia|fecha)|que dia|fecha y hora|encuesta de fecha|agendar|reunirnos)/;
+const POLL_BETWEEN_RE = /\bentre\s+(.+)$/;
+const POLL_OPTIONS_RE = /\bopciones?\s*:?\s*(.+)$/;
+const POLL_COLON_RE = /:\s*([^:]+)$/;
+/** Última conjunción: "pizza o sushi", "viernes, sabado o domingo". */
+const POLL_OR_TAIL_RE = /^(.+?)\s+o\s+(.+)$/;
+const POLL_CONNECTOR_RE = /^(?:para|sobre|de|del|la|el|los|las|con|que|cual|cual es|que es)\s+/;
+const POLL_LEAD_VERB_RE =
+  /^(?:crea|crear|haz|hacer|armar|arma|manda|monta|montar|lanza|lanzar|sondea|sondear|propon|proponer|agrega|agregar|anade|anadir)\s+(?:una\s+|un\s+|unas\s+|unos\s+)?/;
+
+function sentenceCase(text: string): string {
+  const clean = cleanTitle(text);
+  if (clean === "") return clean;
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+/**
+ * Recupera el texto ORIGINAL (con tildes) de un fragmento ya normalizado: se
+ * busca la ventana del mismo largo que, sin tildes ni mayúsculas, coincide.
+ * "Elegir el dia del asado" vuelve a ser "Elegir el día del asado".
+ */
+function restoreAccents(original: string, normalizedText: string): string {
+  const target = normalizedText.trim();
+  if (target === "") return "";
+  for (let i = 0; i + target.length <= original.length; i += 1) {
+    const window = original.slice(i, i + target.length);
+    if (normalizeIntent(window) === target) return window;
+  }
+  return "";
+}
+
+/** "viernes y sabado", "rojo, verde o azul" -> opciones sueltas (máx 20). */
+function splitPollOptions(raw: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of raw.split(/\s*(?:,|;|\/|\||\bo\b|\by\b)\s*/)) {
+    const text = cleanTitle(part).replace(/^(?:la|el|los|las)\s+/, "");
+    if (text === "" || text.length > 120) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+/** Día de Santiago (año/mes/día) que corresponde a una opción dicha. */
+type PollDay = { year: number; month: number; day: number };
+
+/** "este viernes" / "mañana" / "12 de marzo" -> día en Santiago, o null. */
+function pollDayOf(text: string, wall: PollDay & { weekday: number }): PollDay | null {
+  // La hora dicha no cambia el día: "14 de marzo a las 20" es el 14 de marzo.
+  const normalized = normalizeIntent(text)
+    .replace(/\s*(?:a las|de las)\s*\d{1,2}(?::\d{2})?.*$/, "")
+    .replace(/\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|h|hrs).*$/, "")
+    .trim();
+  if (normalized === "") return null;
+  const relative = normalized.match(/^(?:este|el|proximo|próximo|la|este proximo)\s+(.+)$/);
+  const qualifier = (relative?.[1] ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const target = (relative?.[2] ?? normalized).trim();
+  if (target === "hoy") return { year: wall.year, month: wall.month, day: wall.day };
+  if (target === "manana") {
+    const base = new Date(Date.UTC(wall.year, wall.month, wall.day + 1));
+    return { year: base.getUTCFullYear(), month: base.getUTCMonth(), day: base.getUTCDate() };
+  }
+  if (target === "pasado manana") {
+    const base = new Date(Date.UTC(wall.year, wall.month, wall.day + 2));
+    return { year: base.getUTCFullYear(), month: base.getUTCMonth(), day: base.getUTCDate() };
+  }
+  const weekday = weekdayIndex(target);
+  if (weekday >= 0) {
+    let delta = (weekday - wall.weekday + 7) % 7;
+    // "el viernes" siendo viernes = hoy; "próximo" siempre salta 7 días.
+    if (delta === 0 && qualifier !== "este") delta = qualifier.includes("proximo") ? 7 : 0;
+    if (qualifier.includes("proximo") && delta < 7) delta += 7;
+    const base = new Date(Date.UTC(wall.year, wall.month, wall.day + delta));
+    return { year: base.getUTCFullYear(), month: base.getUTCMonth(), day: base.getUTCDate() };
+  }
+  const dayMonth = target.match(/^(\d{1,2})\s+de\s+([a-z]+)$/);
+  if (dayMonth !== null) {
+    const day = parseInt(dayMonth[1] ?? "0", 10);
+    const months = [
+      "enero", "febrero", "marzo", "abril", "mayo", "junio",
+      "julio", "agosto", "septiembre", "setiembre", "octubre", "noviembre", "diciembre",
+    ];
+    const month = months.indexOf((dayMonth[2] ?? "").trim());
+    if (month >= 0 && day >= 1 && day <= 31) {
+      // Un día ya pasado este año es del año que viene.
+      const passed = (month < wall.month) || (month === wall.month && day < wall.day);
+      return { year: wall.year + (passed ? 1 : 0), month, day };
+    }
+  }
+  return null;
+}
+
+type PollParse = {
+  kind: PollIntentKind;
+  question: string;
+  options: PollIntentOption[];
+};
+
+/**
+ * Parsea el pedido de encuesta sin modelo. Devuelve null si no se puede armar
+ * algo decente (el llamador sigue al modelo).
+ */
+function parsePoll(
+  original: string,
+  normalized: string,
+  wall: { year: number; month: number; day: number; weekday: number },
+  minutes: number | null,
+): PollParse | null {
+  const found = normalized.match(POLL_RE);
+  if (found === null || found.index === undefined) return null;
+  // Todo lo que viene después de la palabra clave, sin el verbo inicial.
+  let rest = normalized.slice(found.index + found[0].length).replace(/^[\s:,-]+/, "");
+  rest = rest.replace(POLL_CONNECTOR_RE, "");
+  rest = rest.replace(POLL_LEAD_VERB_RE, "").replace(POLL_CONNECTOR_RE, "");
+
+  // 1. Opciones: "opciones: a, b", "entre a y b", "…: a o b" o la cola "a o b".
+  let questionPart = rest;
+  let rawOptions = "";
+  let fromTail = false;
+  const between = rest.match(POLL_BETWEEN_RE);
+  const explicit = rest.match(POLL_OPTIONS_RE);
+  const colon = rest.match(POLL_COLON_RE);
+  if (explicit !== null) {
+    rawOptions = explicit[1] ?? "";
+    questionPart = rest.slice(0, explicit.index);
+  } else if (between !== null) {
+    rawOptions = between[1] ?? "";
+    questionPart = rest.slice(0, between.index);
+  } else if (colon !== null) {
+    rawOptions = colon[1] ?? "";
+    questionPart = rest.slice(0, colon.index);
+  } else {
+    const orTail = rest.match(POLL_OR_TAIL_RE);
+    if (orTail !== null) {
+      rawOptions = rest;
+      questionPart = (orTail[1] ?? "").trim();
+      fromTail = true;
+    }
+  }
+
+  const texts = splitPollOptions(rawOptions);
+  const wantsYesNo = POLL_YESNO_RE.test(normalized);
+  const wantsDate = POLL_DATE_RE.test(normalized);
+
+  // Sin opciones y sin aire de aprobación: no hay nada que proponer.
+  if (texts.length < 2 && !wantsYesNo) return null;
+  // Sin pregunta propia se usa el resto del pedido como pregunta. El texto se
+  // recupera del original para que las tildes se pierdan lo menos posible.
+  // "encuesta: pizza o sushi" no deja media opción como título.
+  let questionRaw = questionPart.trim() === "" ? rest : questionPart;
+  if (fromTail && texts.some((text) => text.toLowerCase() === questionPart.trim().toLowerCase())) {
+    questionRaw = rest;
+  }
+  const question = sentenceCase(restoreAccents(original, questionRaw) || questionRaw);
+  if (question === "") return null;
+
+  if (wantsYesNo) {
+    return { kind: "yesno", question, options: [] };
+  }
+
+  const asText = (raw: string): string => sentenceCase(restoreAccents(original, raw) || raw);
+
+  // Fechas: solo si el pedido habla de día/fecha Y todas las opciones son un
+  // día dicho. Si alguna no se puede resolver, es una encuesta de texto.
+  if (wantsDate && texts.length >= 2) {
+    const minutesOfDay = minutes ?? 19 * 60;
+    const dated: PollIntentOption[] = [];
+    for (const text of texts) {
+      const day = pollDayOf(text, wall);
+      if (day === null) {
+        return {
+          kind: "single",
+          question,
+          options: texts.map((t) => ({ text: asText(t), startsAt: null, endsAt: null })),
+        };
+      }
+      const startsAt = santiagoToISO(day.year, day.month, day.day, minutesOfDay);
+      dated.push({
+        text: asText(text),
+        startsAt,
+        endsAt: new Date(new Date(startsAt).getTime() + 2 * 3_600_000).toISOString(),
+      });
+    }
+    return { kind: "date", question, options: dated };
+  }
+
+  const kind: PollIntentKind = POLL_MULTI_RE.test(normalized) ? "multiple" : "single";
+  return {
+    kind,
+    question,
+    options: texts.map((text) => ({ text: asText(text), startsAt: null, endsAt: null })),
+  };
+}
+
 /**
  * Analiza un pedido en español. Si `confident` es true, el llamador puede
  * actuar sin modelo (crear con confirmación o responder con plantilla).
@@ -278,6 +503,23 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
   const normalized = normalizeIntent(text);
   const mentions = extractIntentMentions(text);
   const wall = santiagoWall(nowMs);
+
+  // Encuesta: tiene su propio camino (pregunta + opciones, a veces con
+  // fecha) y no necesita el análisis de recordatorio/evento de más abajo.
+  const poll = parsePoll(text, normalized, wall, extractTime(normalized)?.minutes ?? null);
+  if (poll !== null) {
+    return {
+      action: "create_poll",
+      title: poll.question,
+      dateISO: null,
+      recurrence: null,
+      mentions,
+      listName: null,
+      pollKind: poll.kind,
+      pollOptions: poll.options,
+      confident: poll.kind === "yesno" || poll.options.length >= 2,
+    };
+  }
 
   const isRemind = REMIND_RE.test(normalized);
   const listMatch = matchList(normalized);
@@ -431,5 +673,15 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
     confident = false; // Sin cuándo, hay que preguntar.
   }
 
-  return { action, title, dateISO, recurrence, mentions, listName, confident };
+  return {
+    action,
+    title,
+    dateISO,
+    recurrence,
+    mentions,
+    listName,
+    pollKind: null,
+    pollOptions: [],
+    confident,
+  };
 }

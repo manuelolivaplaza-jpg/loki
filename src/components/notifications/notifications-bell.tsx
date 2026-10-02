@@ -3,10 +3,12 @@
 import Link from "next/link";
 import {
   AtSign,
+  BarChart3,
   Bell,
   CalendarClock,
   ClipboardCheck,
   Heart,
+  ListChecks,
   Reply,
   Sparkles,
   UserPlus,
@@ -27,6 +29,8 @@ export const NOTIFICATION_ICONS: Record<NotificationType, LucideIcon> = {
   event_reminder: CalendarClock,
   invite: UserPlus,
   ai_alert: Sparkles,
+  list: ListChecks,
+  poll: BarChart3,
 };
 
 /** Campana del header con punto si hay no leídas. */

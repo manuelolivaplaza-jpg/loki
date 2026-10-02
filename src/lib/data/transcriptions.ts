@@ -137,7 +137,7 @@ export async function findTranscription(
     .eq("object_path", objectPath)
     .maybeSingle();
   if (error !== null || data === null) return null;
-  return toTranscription(data as Row);
+  return toTranscription(data as unknown as Row);
 }
 
 /**
@@ -174,7 +174,7 @@ export async function requestTranscription(
     if (existing !== null) return existing;
     throw new Error("No se pudo pedir la transcripción.");
   }
-  return toTranscription(data as Row);
+  return toTranscription(data as unknown as Row);
 }
 
 /** Reintenta una transcripción que falló (RPC: el ciclo no lo mueve el cliente). */

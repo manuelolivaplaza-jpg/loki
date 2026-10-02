@@ -25,6 +25,20 @@ const ListCard = dynamic(
   },
 );
 
+/** Tarjeta de encuesta (code splitting: solo se descarga al verla). */
+const PollCard = dynamic(
+  () => import("@/components/polls/poll-card").then((mod) => mod.PollCard),
+  {
+    ssr: false,
+    loading: () => (
+      <span
+        aria-label="Cargando encuesta"
+        className="block h-32 w-[280px] max-w-full animate-pulse rounded-xl bg-surface-soft"
+      />
+    ),
+  },
+);
+
 /**
  * Burbuja de tarjeta compartida (lista viva): título + progreso + marcar
  * desde el chat. El texto siempre por SafeText (nunca HTML).
@@ -52,6 +66,53 @@ function ListShareBubble({
         </p>
         {listId !== "" && !message.deleted ? <ListCard listId={listId} /> : null}
       </div>
+      {showTime ? <MessageMeta message={message} /> : null}
+    </div>
+  );
+}
+
+/** Id de encuesta del mensaje ('card' con meta {kind:"poll"}). "" si no es. */
+function pollIdOf(message: MessageDoc): string {
+  const meta = message.meta;
+  if (meta === null || meta === undefined) return "";
+  if (meta.kind !== "poll") return "";
+  const id = meta.poll_id;
+  return typeof id === "string" && id !== "" ? id : "";
+}
+
+/**
+ * Burbuja de encuesta: la tarjeta ES el mensaje (la pregunta ya viene en la
+ * tarjeta, así que no se repite arriba). Las opiniones van en el hilo del
+ * mensaje, como en el resto.
+ */
+function PollBubble({
+  message,
+  showAuthor,
+  showTime,
+}: {
+  message: MessageDoc;
+  showAuthor: boolean;
+  showTime: boolean;
+}): React.JSX.Element {
+  const pollId = pollIdOf(message);
+  return (
+    <div className="w-full">
+      {showAuthor ? (
+        <p className="mb-1 ml-9 text-meta font-semibold leading-4 text-muted-foreground">
+          {message.authorName}
+        </p>
+      ) : null}
+      {message.deleted || pollId === "" ? (
+        <div className="w-fit max-w-full rounded-[22px] border border-divider bg-card px-[14px] py-[10px]">
+          <p className="break-words text-[15px] leading-[1.45] text-muted-foreground">
+            <span className="italic">Encuesta eliminada</span>
+          </p>
+        </div>
+      ) : (
+        <div className="w-full max-w-[320px] rounded-[22px] border border-divider bg-card p-3">
+          <PollCard pollId={pollId} />
+        </div>
+      )}
       {showTime ? <MessageMeta message={message} /> : null}
     </div>
   );
@@ -300,7 +361,11 @@ export function MessageBubble({
   }
 
   if (message.type === "card") {
-    return <ListShareBubble message={message} showAuthor={showAuthor} showTime={showTime} />;
+    return pollIdOf(message) !== "" ? (
+      <PollBubble message={message} showAuthor={showAuthor} showTime={showTime} />
+    ) : (
+      <ListShareBubble message={message} showAuthor={showAuthor} showTime={showTime} />
+    );
   }
 
   const deleted = message.deleted;

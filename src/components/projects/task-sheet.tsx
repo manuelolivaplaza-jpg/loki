@@ -56,6 +56,8 @@ export type TaskSheetInitial = {
   assigneeIds?: string[];
   dueAt?: Date | null;
   reminderAt?: Date | null;
+  /** Prefill de estado (una aprobación ya resuelta nace hecha). */
+  status?: TaskStatus;
 };
 
 export function TaskSheet({
@@ -151,6 +153,7 @@ export function TaskSheet({
             assigneeIds: assignees,
             dueAt: parseInputValue(due),
             reminderAt: parseInputValue(reminder),
+            ...(initial?.status !== undefined ? { status: initial.status } : {}),
           },
         });
         onCreated?.(id);

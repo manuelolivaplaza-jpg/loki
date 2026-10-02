@@ -66,6 +66,17 @@ export function DictateSheet({
   const [health, setHealth] = React.useState<boolean | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
   const requestRef = React.useRef(0);
+  /** Sube en curso: cancelar la corta de verdad (no solo la hides). */
+  const uploadAbortRef = React.useRef<AbortController | null>(null);
+
+  // Al cerrar o al desmontar se corta la subida que quedara viva.
+  React.useEffect(
+    () => () => {
+      uploadAbortRef.current?.abort();
+      uploadAbortRef.current = null;
+    },
+    [],
+  );
 
   // Estado del proveedor: sin él no se manda ningún audio (y se dice claro).
   React.useEffect(() => {
@@ -138,9 +149,12 @@ export function DictateSheet({
       setProgress(0);
       setError(null);
       setDurationSec(durationSeconds);
+      const controller = new AbortController();
+      uploadAbortRef.current = controller;
       try {
         const uploaded = await uploadAttachment(wsId, file, {
           bucket: "chat-media",
+          signal: controller.signal,
           onProgress: setProgress,
         });
         if (requestRef.current !== token) return;
@@ -156,8 +170,16 @@ export function DictateSheet({
         );
       } catch (err: unknown) {
         if (requestRef.current !== token) return;
+        // Cancelar no es un error: se vuelve a grabar.
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setProgress(0);
+          setPhase("grabando");
+          return;
+        }
         setError(err instanceof Error ? err.message : "No se pudo subir el audio.");
         setPhase("error");
+      } finally {
+        if (uploadAbortRef.current === controller) uploadAbortRef.current = null;
       }
     },
     [wsId, health, transcribeAndFill],
@@ -273,7 +295,15 @@ export function DictateSheet({
       ) : null}
 
       {phase === "subiendo" ? (
-        <UploadProgress fileName="Tu dictado" progress={progress} />
+        <UploadProgress
+          fileName="Tu dictado"
+          progress={progress}
+          onCancel={() => {
+            uploadAbortRef.current?.abort();
+            setProgress(0);
+            setPhase("grabando");
+          }}
+        />
       ) : null}
 
       {phase === "transcribiendo" ? (

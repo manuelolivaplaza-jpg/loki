@@ -2,8 +2,8 @@
 
 App familiar (Next.js 15 con export estático + Capacitor, TypeScript estricto,
 Tailwind, shadcn/ui): espacios, chats en vivo, publicaciones, hilos,
-reacciones, menciones, notas de voz con transcripción y Loki IA. Diseño claro
-estilo Grok Bot.
+reacciones, menciones, notas de voz con transcripción, encuestas en el chat y
+Loki IA. Diseño claro estilo Grok Bot.
 
 ## Arquitectura
 
@@ -56,9 +56,22 @@ flowchart LR
   transcripción como texto.
 - **Búsqueda universal**: Cmd/Ctrl+K busca en mensajes, **notas de voz
   transcritas**, tareas, proyectos, eventos y personas.
+- **Encuestas en el chat** (decidir sin 40 mensajes): desde el `+` del
+  composer, desde Acciones rápidas o pidiéndoselo a Loki ("haz una encuesta
+  para elegir el día del asado entre viernes y sábado", que además funciona
+  sin modelo). La encuesta es un mensaje tarjeta con barras en vivo, avatares
+  de quién votó, quién falta y cambio de voto mientras esté abierta; los
+  comentarios son el hilo del mensaje. Tipos: una opción, varias, sí/no y
+  **elegir fecha** (cada opción muestra cuántos están ocupados, sin el
+  detalle del evento). Al cerrar: el resultado queda fijado, un empate lo
+  decide quien la creó, y sale "Crear evento" (con la franja ganadora y los
+  votantes como invitados) o "Crear tarea" en las aprobaciones. Ajustes:
+  anónima, sugerencias, fecha de cierre y quién puede cerrar; con recordatorio
+  opcional a quien no votó. "Resumir con Loki" solo bajo demanda (trabajo
+  `poll_summary`, modelo barato, cuota del espacio).
 - **Loki IA**: chat privado y @Loki en los chats de grupo, con streaming real,
-  planes multi-acción con confirmación, recordatorios, ítems de lista, avisos
-  y barra de deshacer. Cuota por espacio visible en Configuración.
+  planes multi-acción con confirmación, recordatorios, ítems de lista, avisos,
+  encuestas y barra de deshacer. Cuota por espacio visible en Configuración.
 - **Push**: insertar en `public.notifications` dispara el push (trigger
   `maybe_push_notification` → `pg_net` → `push-send`, que respeta
   `notification_prefs` y el horario de silencio). Web (Service Worker) y

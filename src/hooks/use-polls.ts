@@ -15,7 +15,6 @@ import {
   useQuery,
   useQueryClient,
   type UseMutationResult,
-  type UseQueryResult,
 } from "@tanstack/react-query";
 import {
   addPollOption,
@@ -184,7 +183,7 @@ function myUid(): string {
 
 export function useClosePoll(
   pollId: string | null,
-): UseMutationResult<boolean, Error, void> {
+): UseMutationResult<void, Error, void> {
   const invalidate = useInvalidatePoll(pollId);
   return useMutation({
     mutationFn: () => {
@@ -223,14 +222,21 @@ export function useUpdatePoll(
   });
 }
 
-/** Crear la encuesta: escribe el mensaje tarjeta, la encuesta y sus opciones. */
+/**
+ * Crear la encuesta: escribe el mensaje tarjeta, la encuesta y sus opciones.
+ * El chat va en las variables (no en el hook) porque la hoja de creación a
+ * veces lo elige el usuario (acción rápida) y a veces ya viene del composer.
+ */
 export function useCreatePoll(
   wsId: string | null,
-  chatId: string | null,
-): UseMutationResult<CreatedPoll, Error, { input: NewPollInput; authorName: string }> {
+): UseMutationResult<
+  CreatedPoll,
+  Error,
+  { input: NewPollInput; authorName: string; chatId: string }
+> {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ input, authorName }) => {
+    mutationFn: ({ input, authorName, chatId }) => {
       const uid = myUid();
       if (wsId === null || wsId === "" || chatId === null || chatId === "") {
         throw new Error("Falta el espacio o el chat.");

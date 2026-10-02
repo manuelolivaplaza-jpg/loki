@@ -2,22 +2,29 @@
 
 import * as React from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Camera, Folder, ImagePlus, Mic } from "lucide-react";
+import { BarChart3, Camera, Folder, ImagePlus, Mic } from "lucide-react";
 import { MenuCard, MenuItem } from "@/components/ui/menu-card";
 import { spring } from "@/lib/motion";
 
-export type AttachOption = "photo" | "camera" | "file" | "voice";
+export type AttachOption = "photo" | "camera" | "file" | "voice" | "poll";
 
 /**
- * Menú flotante de adjuntos: foto/video, cámara, archivo y nota de voz.
+ * Menú flotante del `+`: foto/video, cámara, archivo, nota de voz y encuesta
+ * (que no es un adjunto, pero se crea desde el mismo sitio).
  * Cierra con click afuera o Escape (lo gestiona el padre vía onClose).
  */
 export function AttachMenu({
   onClose,
   onSelect,
+  showPoll = false,
 }: {
   onClose: () => void;
   onSelect: (option: AttachOption) => void;
+  /**
+   * Muestra "Encuesta" (llega como `AttachOption` a `onSelect` y la hoja la
+   * abre el padre). Solo en los chats de espacio.
+   */
+  showPoll?: boolean;
 }): React.JSX.Element {
   const ref = React.useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotion();
@@ -68,6 +75,11 @@ export function AttachMenu({
         <MenuItem icon={Mic} onClick={() => pick("voice")}>
           Nota de voz
         </MenuItem>
+        {showPoll ? (
+          <MenuItem icon={BarChart3} onClick={() => pick("poll")}>
+            Encuesta
+          </MenuItem>
+        ) : null}
       </MenuCard>
     </motion.div>
   );

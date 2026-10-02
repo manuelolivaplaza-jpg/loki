@@ -24,7 +24,10 @@
 --    LLM) cierra lo vencido y manda UN recordatorio "falta tu voto" a quien no
 --    Voteó (dedupe por encuesta y usuario). Al leer la encuesta también se
 --    cierra si ya venció, para que no dependa del job.
--- 7. Notificaciones tipo 'poll' (+ preferencia por tipo).
+-- 7. Resumen del resultado con Loki SOLO bajo pedido: un trabajo en `ai_jobs`
+--    de tipo 'poll_summary' (el worker arma el resultado con SQL y lo resume con
+--    el modelo barato reserving cuota del espacio).
+-- 8. Notificaciones tipo 'poll' (+ preferencia por tipo).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -959,7 +962,24 @@ end
 $pollcron$;
 
 -- -----------------------------------------------------------------------------
--- 6. Notificaciones tipo encuesta
+-- 6. ai_jobs: tipo 'poll_summary' (resumen del resultado, bajo demanda)
+--
+-- "Resumir con Loki" NO es automático: el cliente inserta UN trabajo
+-- (miembro del espacio, `requested_by` propio) y el trigger `wake_ai_worker`
+-- ya existente lo despierta por pg_net. El worker arma el resultado con SQL
+-- (determinista) y, si hay modelo, lo resume con el barato reservando cuota
+-- del espacio ANTES de llamar. El resultado queda en `ai_jobs.result`, que el
+-- cliente lee (RLS: solo miembros del espacio). Sin trabajo en vuelo, nada
+-- queda escuchando.
+-- -----------------------------------------------------------------------------
+alter table public.ai_jobs drop constraint if exists ai_jobs_type_check;
+alter table public.ai_jobs add check (type in (
+  'chat_summary', 'day_digest', 'transcribe_audio', 'ocr_image',
+  'dispatch_agent', 'redact_highlights', 'chat_digest', 'poll_summary'
+));
+
+-- -----------------------------------------------------------------------------
+-- 7. Notificaciones tipo encuesta
 -- -----------------------------------------------------------------------------
 
 alter table public.notifications drop constraint if exists notifications_type_check;
@@ -982,7 +1002,7 @@ comment on column public.notification_prefs.poll is
   'Avisos de encuestas ("falta tu voto").';
 
 -- -----------------------------------------------------------------------------
--- 7. Realtime (las barras se actualizan solas)
+-- 8. Realtime (las barras se actualizan solas)
 -- -----------------------------------------------------------------------------
 
 do $pollpub$
@@ -1006,7 +1026,7 @@ end
 $pollpub$;
 
 -- -----------------------------------------------------------------------------
--- 8. Privilegios (la puerta es la RLS; esto solo evita 404/403 por GRANT)
+-- 9. Privilegios (la puerta es la RLS; esto solo evita 404/403 por GRANT)
 -- -----------------------------------------------------------------------------
 
 grant select, insert, update, delete on public.polls to authenticated;

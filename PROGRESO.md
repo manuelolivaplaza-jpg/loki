@@ -1,6 +1,6 @@
 # PROGRESO de Loki (traspaso a Forja nuevo)
 
-Actualizado: 01-10-2026 ~05:40 (hora de Chile, UTC-3).
+Actualizado: 01-10-2026 (hora de Chile, UTC-3).
 
 ## Datos básicos
 - **Proyecto:** `C:\Users\manue\OneDrive\Desktop\loki` (PC de Manu, Windows + PowerShell).
@@ -13,6 +13,32 @@ Actualizado: 01-10-2026 ~05:40 (hora de Chile, UTC-3).
 Roadmap T1–T36 **completo y commiteado**. Fase actual: integración real y pulido después del roadmap (Google Calendar, push nativo en Android, ajustes de UI). Manu avanza por su cuenta con opencode.
 
 ### Lote actual (implementado, SIN commit y SIN verificar)
+
+**Encuestas en el chat** (decidir sin 40 mensajes) — segunda pasada, completa
+lo que había quedado a medias:
+
+- **Ya estaba** (commit `702faf8`, p07): migración
+  `20261007000000_polls.sql` (polls/poll_options/poll_votes con RLS, RPCs
+  `poll_results`, `cast_poll_vote`, `close_poll`, `poll_option_busy`, tick de
+  pg_cron con recordatorio "falta tu voto", notificación tipo `poll`), tipos en
+  `src/types/organizer.ts` y `src/types/supabase.ts`, capa de datos
+  (`src/lib/data/polls.ts`), helpers puros (`src/lib/polls/poll.ts`), hooks
+  (`src/hooks/use-polls.ts`), `poll-card.tsx`, `poll-result-actions.tsx` y
+  `tests/rls/polls.test.mjs`.
+- **Faltaba y se agregó**: `poll-summary.tsx` (estaba importada y no existía),
+  `poll-sheet.tsx` (crear), `poll-settings.tsx` (ajustar), la tarjeta en el
+  chat (`MessageBubble` con `meta.kind === "poll"`), los puntos de entrada
+  (`+` del composer → "Encuesta", acción rápida "Nueva encuesta"), la
+  herramienta `create_poll` de `loki-chat` (con tarjeta de confirmación y
+  editor de opciones con fecha), el analizador determinista `create_poll`
+  (intento nuevo, copia sincronizada en la Edge + tests), el trabajo
+  `poll_summary` en `loki-worker` (resultado con SQL + modelo barato bajo
+  demanda, cuota del espacio) con su tipo nuevo en el CHECK de `ai_jobs`, la
+  push "falta tu voto" abriendo el chat en la encuesta (`?msg=`), los iconos
+  de notificación que faltaban (`list`, `poll`) y sus interruptores en
+  Configuración. También se arreglaron errores de typecheck que dejaron las
+  sesiones p07/p08 (`UploadProgress` sin `onCancel`, `voice` de `MessageList`,
+  `useClosePoll`, casts de `transcriptions.ts`).
 
 **Notas de voz que se convierten en cosas** (transcripción + voz a acción):
 
@@ -54,7 +80,7 @@ Roadmap T1–T36 **completo y commiteado**. Fase actual: integración real y pul
 - T16 `263eccf` · T17 `10a8d0b` · T18 `08ea3be` (verificados con E2E y capturas por Loki).
 - T19 `8711c5c`: Supabase local, esquema, RLS, triggers y Storage (verificado: sb:reset, RLS 55/55, typecheck, lint, build y cap en 0).
 - **T20–T36 en un solo commit `f4eb6c2`** ("T34-T36: Pulido, calidad y lanzamiento", 209 archivos), con Auth (T20, que ya no queda sin commit), chats, IA, FCM, calendario, proyectos, notificaciones, invitaciones, búsqueda, PWA, pulido, CI y docs.
-- Después (Manu): `ecd83f9` arreglo del bundle Deno · `466be8b` canal realtime compartido · `4d8b40b`/`772a95f`/`85534fe`/`f54f321` sidebar · `a45cee6` Google Calendar bidireccional · `615ec76` apikey en Edge · `c8d4ba6` realtime auto-recuperable · `836699d`/`1b473ff`/`d1af2f4` invitar y unirse · `51a3ee5`/`0c17c0f`/`9615d6c` GCal · `8037776` chat · `54cd726` rediseño del calendario · `8e9d2fb`/`072d7e0` push · `eaf5c45`/`d12ef59` Android (último, 01-10 05:22).
+- Después (Manu): `ecd83f9` arreglo del bundle Deno · `466be8b` canal realtime compartido · `4d8b40b`/`772a95f`/`85534fe`/`f54f321` sidebar · `a45cee6` Google Calendar bidireccional · `615ec76` apikey en Edge · `c8d4ba6` realtime auto-recuperable · `836699d`/`1b473ff`/`d1af2f4` invitar y unirse · `51a3ee5`/`0c17c0f`/`9615d6c` GCal · `8037776` chat · `54cd726` rediseño del calendario · `8e9d2fb`/`072d7e0` push · `eaf5c45`/`d12ef59` Android · `21d313e` listas · `702faf8` **p07: encuestas (datos, tipos y RLS; la UI quedó a medias)** · `1bbf109` p08 notas de voz (último).
 - Verificado el 01-10 ~05:35 en `d12ef59`: `npm run typecheck` en 0, árbol limpio. Build, lint y test:rls **no** se corrieron en este traspaso (opencode de Manu activo).
 
 ## Tarea en curso

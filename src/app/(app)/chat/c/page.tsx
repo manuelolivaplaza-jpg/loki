@@ -10,6 +10,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 function ConversationByQuery(): React.JSX.Element {
   const searchParams = useSearchParams();
   const id = searchParams.get("id") ?? "";
+  // `?msg=` es el mensaje a destacar: lo pone el push "falta tu voto" (y los
+  // enlaces "Ver:" que devuelve Loki) para abrir el chat justo en la encuesta.
+  const msg = searchParams.get("msg") ?? "";
   if (id === "") {
     return (
       <div className="flex h-[calc(100dvh-68px)] items-center justify-center md:h-dvh">
@@ -21,7 +24,7 @@ function ConversationByQuery(): React.JSX.Element {
       </div>
     );
   }
-  return <ConversationView chatId={id} />;
+  return <ConversationView chatId={id} focusMessageId={msg === "" ? null : msg} />;
 }
 
 export default function ChatConversationPage(): React.JSX.Element {

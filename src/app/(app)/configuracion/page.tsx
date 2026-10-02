@@ -36,6 +36,8 @@ const PREF_ROWS: readonly { key: keyof Omit<NotificationPrefs, "quietStart" | "q
   { key: "event_reminder", label: "Eventos", detail: "Recordatorios del calendario" },
   { key: "invite", label: "Invitaciones", detail: "Cuando alguien se une por tu link" },
   { key: "ai_alert", label: "Avisos de Loki", detail: "Alertas del asistente" },
+  { key: "list", label: "Listas", detail: "Novedades de las listas compartidas" },
+  { key: "poll", label: "Encuestas", detail: "Cuando falta tu voto antes del cierre" },
 ];
 
 export default function ConfiguracionPage(): React.JSX.Element {

@@ -17,6 +17,7 @@ import {
   type ChatDigest,
 } from "@/components/chat/digest-panel";
 import { Composer } from "@/components/chat/composer";
+import { PollSheet } from "@/components/polls/poll-sheet";
 import { MessageBubble } from "@/components/chat/message-bubble";
 import { MessageList } from "@/components/chat/message-list";
 import { NewMessagesPill } from "@/components/chat/new-messages-pill";
@@ -107,6 +108,7 @@ function scrollToBottom(el: HTMLElement, smooth: boolean): void {
 export function ConversationView({
   chatId,
   openDictate = false,
+  focusMessageId = null,
 }: {
   chatId: string;
   /**
@@ -114,6 +116,13 @@ export function ConversationView({
    * Solo tiene efecto en el chat privado con Loki.
    */
   openDictate?: boolean;
+  /**
+   * Mensaje a destacar al abrir (viene de `?msg=`): el push "falta tu voto"
+   * y los enlaces "Ver:" de Loki. Se busca en lo cargado; si no está, se
+   * piden páginas más antiguas hasta encontrarlo (con tope) y, si tampoco,
+   * se avisa en vez de dejarlo en silencio.
+   */
+  focusMessageId?: string | null;
 }): React.JSX.Element {
   // El chat de Loki no tiene typing de otras personas: la lista y los hilos
   // son de los chats de espacio (T14).
@@ -180,6 +189,9 @@ export function ConversationView({
   // tarjeta de plan para poder corregir el dictado antes de confirmar.
   const [dictating, setDictating] = React.useState(false);
   const [dictation, setDictation] = React.useState<{ text: string } | null>(null);
+  // Hoja de encuesta (`+` → Encuesta). La encuesta es un mensaje 'card' del
+  // chat, así que vive aquí y no en Publicaciones.
+  const [creatingPoll, setCreatingPoll] = React.useState(false);
   type ToolCtx =
     | { mode: "personal" }
     | { mode: "mention"; workspaceId: string; chatId: string; threadParentId?: string };
@@ -354,6 +366,7 @@ export function ConversationView({
     setDigest(null);
     setDictating(false);
     setDictation(null);
+    setCreatingPoll(false);
     toolCtxRef.current = null;
   }, [chatId]);
 
@@ -395,6 +408,43 @@ export function ConversationView({
   React.useEffect(() => {
     initialIdsRef.current = null;
   }, [chatId]);
+
+  // --- Abrir el chat en un mensaje concreto (`?msg=`) -------------------------
+  // El push "falta tu voto" y los enlaces "Ver:" de Loki apuntan a la
+  // encuesta con `&msg=<id>`. Si el mensaje no está en lo ya cargado se
+  // piden páginas más antiguas (con tope: 4) y, si tampoco aparece, se
+  // avisa en vez de dejar el chat en silencio.
+  const [highlightId, setHighlightId] = React.useState<string | null>(null);
+  const focusTriesRef = React.useRef(0);
+  const focusWarnedRef = React.useRef(false);
+  React.useEffect(() => {
+    focusTriesRef.current = 0;
+    focusWarnedRef.current = false;
+    setHighlightId(null);
+  }, [chatId, focusMessageId]);
+  React.useEffect(() => {
+    if (isLoki || focusMessageId === null || focusMessageId === "") return;
+    const target = focusMessageId;
+    if (messages.some((message) => message.id === target)) {
+      focusTriesRef.current = 0;
+      setHighlightId(target);
+      requestAnimationFrame(() => {
+        scrollRef.current
+          ?.querySelector(`[data-message-id="${target}"]`)
+          ?.scrollIntoView({ block: "center", behavior: "auto" });
+      });
+      return;
+    }
+    if (hasMore && focusTriesRef.current < 4) {
+      focusTriesRef.current += 1;
+      void loadOlder();
+      return;
+    }
+    if (!focusWarnedRef.current) {
+      focusWarnedRef.current = true;
+      showNotice("No encontré ese mensaje en este chat.");
+    }
+  }, [focusMessageId, hasMore, isLoki, loadOlder, messages, showNotice]);
 
   const onScroll = React.useCallback(() => {
     const el = scrollRef.current;
@@ -829,7 +879,7 @@ export function ConversationView({
         },
       );
     },
-    [isLoki, currentUid, authorName, sendToLoki, sendMutation, wsForLive, chatForLive, replyTo, ensureLokiConfigured, threadParent],
+    [isLoki, currentUid, authorName, sendToLoki, sendMutation, wsForLive, chatForLive, replyTo, threadParent],
   );
 
   // --- Voz a acción: "Dictar a Loki" ----------------------------------------
@@ -1110,6 +1160,7 @@ export function ConversationView({
               messages={visibleMessages}
               currentUid={currentUid}
               animatedIds={animatedIds}
+              highlightId={highlightId}
               disableOwnReactions={isLoki}
               topSentinelRef={listWindow.topSentinelRef}
               isLoadingOlder={isLoadingOlder || listWindow.loadingOlder}
@@ -1289,6 +1340,9 @@ export function ConversationView({
             )}
           </div>
         ) : null}
+        {creatingPoll && wsForLive !== null ? (
+          <PollSheet open wsId={wsForLive} chatId={chatId} onClose={() => setCreatingPoll(false)} />
+        ) : null}
         <Composer
           chatName={chatName}
           isLoki={isLoki}
@@ -1301,6 +1355,9 @@ export function ConversationView({
           onSend={handleSend}
           wsId={wsForLive}
           mediaBucket="chat-media"
+          // Encuestas: solo en los chats de espacio (el chat con Loki no
+          // tiene mensajes de tarjeta y Publicaciones no las lleva).
+          onCreatePoll={!isLoki && wsForLive !== null ? () => setCreatingPoll(true) : null}
           // En el chat privado con Loki el micrófono dicta (el texto
           // transcrito entra al mismo flujo); en los chats de espacio manda
           // una nota de voz normal.

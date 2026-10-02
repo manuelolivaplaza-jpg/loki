@@ -32,12 +32,18 @@ type MessageListProps = {
   /** Convertir el mensaje en tarea/evento/recordatorio (opcional). */
   onConvert?: (message: MessageDoc, kind: "task" | "event" | "reminder") => void;
   /**
-   * Habilita "Ver transcripción" en las notas de voz de este chat (con su id,
-   * para heredar la visibilidad). `null` en el chat privado con Loki.
+   * Habilita "Ver transcripción" en las notas de voz de este chat (el id del
+   * mensaje lo pone cada fila, para heredar su visibilidad). `null` en el
+   * chat privado con Loki.
    */
-  voice?: VoiceContext | null;
+  voice?: Omit<VoiceContext, "messageId"> | null;
   /** Chat de IA: oculta reacciones en los mensajes propios. */
   disableOwnReactions?: boolean;
+  /**
+   * Mensaje a destacar (llega por `?msg=`, p. ej. el push "falta tu voto"):
+   * la fila se marca y el contenedor la centra al abrir el chat.
+   */
+  highlightId?: string | null;
 };
 
 /**
@@ -62,6 +68,7 @@ export function MessageList({
   onConvert,
   voice = null,
   disableOwnReactions = false,
+  highlightId = null,
 }: MessageListProps): React.JSX.Element {
   const reduceMotion = useReducedMotion();
   const groups = React.useMemo(
@@ -126,11 +133,28 @@ export function MessageList({
             // encoge al contenido y el max-w-[78%] de la burbuja se
             // resuelve contra ese ancho intrínseco (mensajes cortos
             // partidos a la mitad en 1440px).
-            if (!animate) return <div key={message.id} className="w-full">{bubble}</div>;
+            if (!animate) {
+              return (
+                <div
+                  key={message.id}
+                  data-message-id={message.id}
+                  className={cn(
+                    "w-full scroll-mt-16",
+                    highlightId === message.id && "rounded-xl bg-accent/10",
+                  )}
+                >
+                  {bubble}
+                </div>
+              );
+            }
             return (
               <motion.div
                 key={message.id}
-                className="w-full"
+                data-message-id={message.id}
+                className={cn(
+                  "w-full scroll-mt-16",
+                  highlightId === message.id && "rounded-xl bg-accent/10",
+                )}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={spring}

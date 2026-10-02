@@ -119,7 +119,9 @@ export function PollResultActions({
     setInboxId("");
     setTaskDraft({
       title: poll.question.slice(0, 200),
-      notes: `${label}. ${poll.totalVotes} votos en total.`,
+      notes: approved
+        ? `Aprobado en la encuesta: ${label}. ${poll.totalVotes} votos en total.`
+        : `${label}. ${poll.totalVotes} votos en total.`,
     });
   }
 
@@ -187,7 +189,8 @@ export function PollResultActions({
           initial={{
             title: taskDraft.title,
             notes: taskDraft.notes,
-            ...(approved ? {} : {}),
+            // Aprobación ganada: la tarea nace hecha.
+            ...(approved ? { status: "done" as const } : {}),
           }}
           onClose={() => {
             setTaskDraft(null);

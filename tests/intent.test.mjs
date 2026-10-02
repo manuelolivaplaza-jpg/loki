@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -136,6 +136,52 @@ equal(l2.listName, "super", "lista normalizada");
 const l3 = analyzeIntent("agrega leche a la lista", { now: NOW });
 ok(l3 !== null, "detecta lista sin nombre");
 equal(l3.listName, null, "sin nombre de lista");
+
+// --- Encuestas (create_poll) --------------------------------------------------------
+// Jueves 2026-10-01: el viernes siguiente es el 2 y el sábado el 3.
+const p10 = analyzeIntent("haz una encuesta para elegir el día del asado entre viernes y sábado", { now: NOW });
+ok(p10 !== null, "detecta encuesta");
+equal(p10.action, "create_poll", "acción create_poll");
+equal(p10.title, "Elegir el día del asado", "pregunta con tildes");
+equal(p10.pollKind, "date", "día dicho = encuesta de fecha");
+equal(p10.confident, true, "seguro sin modelo");
+deep(
+  p10.pollOptions.map((o) => [o.text, o.startsAt]),
+  [
+    ["Viernes", "2026-10-02T22:00:00.000Z"],
+    ["Sábado", "2026-10-03T22:00:00.000Z"],
+  ],
+  "viernes y sábado a las 19:00 Santiago (22:00Z)",
+);
+
+const p11 = analyzeIntent("crea una encuesta: pizza o sushi", { now: NOW });
+equal(p11.action, "create_poll", "encuesta de dos opciones");
+equal(p11.title, "Pizza o sushi", "la pregunta es el todo, no media opción");
+equal(p11.pollKind, "single", "opción única");
+deep(p11.pollOptions.map((o) => o.text), ["Pizza", "Sushi"], "opciones sueltas");
+
+const p12 = analyzeIntent("armemos una encuesta para aprobar el diseño", { now: NOW });
+equal(p12.action, "create_poll", "detecta aprobación");
+equal(p12.pollKind, "yesno", "sí/no rápido");
+equal(p12.pollOptions.length, 0, "el sí/no no trae opciones");
+equal(p12.confident, true, "aprobación sin opciones es segura");
+
+const p13 = analyzeIntent("encuesta de varias opciones: rojo, verde o azul", { now: NOW });
+equal(p13.pollKind, "multiple", "varias opciones");
+deep(p13.pollOptions.map((o) => o.text), ["Rojo", "Verde", "Azul"], "lista con comas y 'o'");
+
+// Sin 'entre', con dos puntos: la pregunta es lo que va antes.
+const p14 = analyzeIntent("pon una encuesta para saber qué hacemos el finde: asado o pizza", { now: NOW });
+equal(p14.title, "Saber qué hacemos el finde", "pregunta antes de los dos puntos");
+deep(p14.pollOptions.map((o) => o.text), ["Asado", "Pizza"], "opciones tras los dos puntos");
+
+// Una opción que no es un día: mejor encuesta de texto que fecha inventada.
+const p15 = analyzeIntent("haz una encuesta para elegir el día entre pizza y sushi", { now: NOW });
+equal(p15.pollKind, "single", "sin día resoluble no se fuerza la fecha");
+equal(p15.pollOptions.every((o) => o.startsAt === null), true, "opciones sin fecha");
+
+// "encuesta" suelta no es intención de encuesta (ni de nada): sigue null.
+equal(analyzeIntent("la encuesta de la semana pasada", { now: NOW }), null, "no fuerza encuesta");
 
 // --- Sincronía con la Edge -------------------------------------------------------
 const here = dirname(fileURLToPath(import.meta.url));

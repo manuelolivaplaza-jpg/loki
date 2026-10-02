@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  BarChart3,
   CalendarPlus,
   FolderPlus,
   Lightbulb,
@@ -23,6 +24,7 @@ import {
   DialogOverlay,
 } from "@/components/ui/dialog";
 import { InviteDialog } from "@/components/members/invite-dialog";
+import { PollSheet } from "@/components/polls/poll-sheet";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { MenuItem } from "@/components/ui/menu-card";
 import { fade, slideUp, stagger, fadeScale } from "@/lib/motion";
@@ -41,6 +43,7 @@ export const QUICK_ACTIONS: readonly QuickAction[] = [
   { key: "evento", title: "Nuevo evento o fecha", description: "Agenda en el calendario", icon: CalendarPlus, href: "/calendario" },
   { key: "proyecto", title: "Nuevo proyecto", description: "Organiza tareas en un espacio", icon: FolderPlus, href: "/proyectos" },
   { key: "lista", title: "Nueva lista", description: "Compras, quehaceres o checklist", icon: ListPlus, href: "/proyectos?tab=listas" },
+  { key: "encuesta", title: "Nueva encuesta", description: "Decide rápido en el chat", icon: BarChart3, href: null },
   { key: "post", title: "Compartir algo", description: "Publica un post en el espacio", icon: Send, href: "/chat/publicaciones" },
   { key: "dictar", title: "Dictar a Loki", description: "Habla y Loki lo convierte en tareas", icon: Mic, href: "/chat/loki-ia?dictar=1" },
   { key: "invitar", title: "Invitar miembro", description: "Suma a alguien a tu espacio", icon: UserPlus, href: null },
@@ -112,7 +115,7 @@ export function QuickActionDialog({
 }: {
   action: QuickAction | null;
   onClose: () => void;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const { currentWorkspaceId } = useWorkspaces();
   // Invitar ya es real: abre el diálogo con link, código y QR.
   if (action?.key === "invitar") {
@@ -122,6 +125,13 @@ export function QuickActionDialog({
         wsId={currentWorkspaceId}
         onClose={onClose}
       />
+    );
+  }
+  // Encuesta: hoja propia con selector de chat (es un mensaje del chat).
+  if (action?.key === "encuesta") {
+    if (currentWorkspaceId === null) return null;
+    return (
+      <PollSheet open wsId={currentWorkspaceId} chatId={null} onClose={onClose} />
     );
   }
   return (

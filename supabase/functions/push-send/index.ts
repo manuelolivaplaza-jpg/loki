@@ -223,6 +223,9 @@ function prefKeyFor(type: string): string | null {
     case "event_reminder": return "event_reminder";
     case "invite": return "invite";
     case "ai_alert": return "ai_alert";
+    // Listas y encuestas: mismo interruptor que en Configuración.
+    case "list": return "list";
+    case "poll": return "poll";
     default: return null;
   }
 }

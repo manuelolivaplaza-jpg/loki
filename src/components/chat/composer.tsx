@@ -85,6 +85,12 @@ type ComposerProps = {
   onDictate?: (() => void) | null;
   /** El dictado está abierto: el botón queda marcado. */
   dictating?: boolean;
+  /**
+   * Abre la hoja de encuesta (`+` → Encuesta). Sin esto, el `+` no ofrece
+   * encuestas: es una función de los chats de espacio, no del chat con Loki
+   * ni del feed de Publicaciones.
+   */
+  onCreatePoll?: (() => void) | null;
 };
 
 type MentionState = {
@@ -205,6 +211,7 @@ export function Composer({
   disabled = false,
   onDictate = null,
   dictating = false,
+  onCreatePoll = null,
 }: ComposerProps): React.JSX.Element {
   const [value, setValue] = React.useState("");
   const [attachOpen, setAttachOpen] = React.useState(false);
@@ -366,11 +373,13 @@ export function Composer({
       if (option === "photo") photoRef.current?.click();
       else if (option === "camera") cameraRef.current?.click();
       else if (option === "file") fileRef.current?.click();
+      // La encuesta vive en un mensaje del chat: la abre el padre (hoja).
+      else if (option === "poll") onCreatePoll?.();
       // En el chat con Loki el micrófono dicta en vez de mandar un adjunto.
       else if (onDictate !== null) onDictate();
       else setRecording(true);
     },
-    [onDictate],
+    [onCreatePoll, onDictate],
   );
 
   const handleVoiceSend = React.useCallback(
@@ -784,6 +793,7 @@ export function Composer({
                   <AttachMenu
                     onClose={() => setAttachOpen(false)}
                     onSelect={handleAttachOption}
+                    showPoll={onCreatePoll !== null}
                   />
                 ) : null}
               </AnimatePresence>

@@ -9,7 +9,7 @@ con Loki IA (Edge Function `loki-chat` con streaming real).
 | Componente | Archivo | Uso |
 |---|---|---|
 | `ChatList` | `chat-list.tsx` | Loki IA fijado + tarjeta Publicaciones + conversaciones reales de `useChats` (preview `Autor: texto`, hora corta). `EmptyState` si no hay chats. El color del avatar del chat sale de `avatarColorFor(chat.id)`. Desde T17 la tarjeta Publicaciones muestra el preview real del `lastMessage` del chat `posts` (y su hora) cuando existe. |
-| `ConversationView` | `conversation-view.tsx` | `useMessages` + `useSendMessage` (en `loki-ia`, `useAiMessages` + `useSendAiMessage` y el stream de la Edge Function, ver Loki IA). Scroll al final sin animación, auto-scroll <120px, pastilla de nuevos, paginación con `IntersectionObserver` conservando posición. Dueño del estado de interacción: cita (`replyTo`), edición en curso, hilo abierto y avisos de "Mensaje copiado". |
+| `ConversationView` | `conversation-view.tsx` | `useMessages` + `useSendMessage` (en `loki-ia`, `useAiMessages` + `useSendAiMessage` y el stream de la Edge Function, ver Loki IA). Scroll al final sin animación, auto-scroll <120px, pastilla de nuevos, paginación con `IntersectionObserver` conservando posición. Dueño del estado de interacción: cita (`replyTo`), edición en curso, hilo abierto, hoja de encuesta (`+` → Encuesta) y avisos de "Mensaje copiado". Con `focusMessageId` (de `?msg=`) busca ese mensaje, lo centra y lo resalta. |
 | `MessageList` | `message-list.tsx` | `role=log` + `aria-live=polite`. Agrupa por autor (<5 min), separa por día, anima solo ids nuevos con el spring único. Pasa a cada `MessageItem` los seis callbacks de T16 (reacción, respuesta, hilo, copiar, editar, eliminar). |
 | `MessageItem` | `message-item.tsx` | Burbuja interactiva: long-press 500ms (táctil) o hover (ratón) → `ReactionBar`; botón `...` en hover y click derecho → `MessageContextMenu`. Debajo: cita `replyTo`, chips de reacciones y botón `N respuestas`. Exporta desde aquí las clases de ancho (`MESSAGE_ROW_CLASS`, `MESSAGE_BUBBLE_FIT_CLASS`). |
 | `MessageBubble` | `message-bubble.tsx` | Propios `#0F0F0F`/`#2A2A2A`, otros `#F0F0F0`/`#16181C`, radio 22px, 15px/1.45, `break-words`. IA sin burbuja (`Loki` + Sparkles, en `AiReply` con cursor mientras llega el stream), system centrado, eliminado en itálica. Avatar 28px en el último del grupo, hora `HH:mm` bajo el grupo y `· (editado)` si `editedAt`. Color de avatar por `useAuthorAvatarColor`. `variant="post"`: fila plana del feed (avatar 40 + nombre + tiempo relativo), sin burbuja. |
@@ -21,7 +21,7 @@ con Loki IA (Edge Function `loki-chat` con streaming real).
 | `PostRow` | `post-row.tsx` | Fila plana estilo X separada por `border-divider`: `MessageBubble variant="post"` + acciones Me gusta (Heart relleno/`text-danger`/`aria-pressed` con contador) y Comentar (MessageCircle + `threadCount`). Exporta `usePostClock`, un único reloj para todos los tiempos relativos. |
 | `DaySeparator` | `day-separator.tsx` | `Hoy` / `Ayer` / `lunes 21 de septiembre`, 13px muted. |
 | `Composer` | `composer.tsx` | Botón `+` 44px + pastilla con textarea 1–6 líneas, micrófono y enviar 36px (spring). Enter envía solo con puntero fino; `visualViewport` + `safe-area` para el teclado. Acepta `replyTo` (barra de cita con X), `edit` (precarga el texto y Enter guarda), `placeholder`, `disabled`, `wsId`/`mediaBucket` (subida de adjuntos) y `onDictate` (en el chat con Loki el micrófono dicta en vez de mandar un adjunto). `mode="post"` lo convierte en el composer superior del feed. |
-| `AttachMenu` | `attach-menu.tsx` | `MenuCard` con 4 opciones reales: Foto o video, Cámara, Archivo y Nota de voz. Cierra con click afuera o Escape. `+` rota a ×. |
+| `AttachMenu` | `attach-menu.tsx` | `MenuCard` con 4 opciones reales: Foto o video, Cámara, Archivo y Nota de voz, más **Encuesta** en los chats de espacio. Cierra con click afuera o Escape. `+` rota a ×. |
 | `NewMessagesPill` | `new-messages-pill.tsx` | Pastilla flotante `Nuevos mensajes` + flecha, baja con scroll suave. |
 | `TypingIndicator` | `typing-indicator.tsx` | `X está escribiendo…` / `X e Y están…` / `Varias personas…` debajo de los mensajes (`aria-live=polite`). Nada si nadie escribe. |
 
@@ -75,12 +75,51 @@ El orden importa: si el contenedor de la burbuja encoge al contenido (`items-end
 - **Typing**: Broadcast en el canal `chat:{espacio}:{chat}` (`displayName`, `at`) con throttle 800ms (`useNotifyTyping`); se borra al vaciar, enviar o desmontar. `useTyping` filtra `at < 4s` (sin mí) y revalida cada segundo. El composer del hilo publica su typing con el mismo hook.
 - **Leídos**: `chat_reads` (upsert de `last_read_at`); se marca al abrir y al llegar al fondo (`useMarkChatRead`). La lista muestra punto azul + contador (`useUnread`: `lastMessage.createdAt > lastReadAt` y autor ajeno).
 
+## Encuestas en el chat (`src/components/polls/`)
+
+La encuesta es un mensaje `type: "card"` con `meta = {kind:"poll", poll_id}`:
+el `id` de la encuesta se genera en el cliente y nace en el mensaje, así que la
+tarjeta se resuelve sola y un reintento no duplica nada.
+
+| Componente | Archivo | Uso |
+|---|---|---|
+| `PollCard` | `poll-card.tsx` | La tarjeta viva: toda la fila es el botón de voto (móvil, con háptico), barras que escalan al máximo, avatares de quién votó (si no es anónima), quién falta, cambio de voto mientras esté abierta, "Agregar opción" en línea, "Cerrar encuesta" y "Ajustar" para quien administra. En escritorio el hover de cada opción enseña los nombres y las flechas/Home/End navegan entre opciones. |
+| `PollSheet` | `poll-sheet.tsx` | Crear: hoja inferior en móvil y diálogo en escritorio (el mismo `Dialog`). Tipo, opciones (Enter en la última agrega otra; hay un atajo para pegar una lista), día y hora con el selector nativo en las de fecha, y los ajustes (anónima, sugerencias, recordatorio, quién cierra y cuándo). Sin `chatId` (acción rápida) muestra el selector de chat. |
+| `PollSettingsDialog` | `poll-settings.tsx` | Ajustes de una encuesta viva (pregunta, cierre y los tres interruptores + quién cierra). El tipo y las opciones **no** se editan: el resultado ya está fijándose. |
+| `PollSummary` | `poll-summary.tsx` | "Resumir con Loki" **bajo demanda**: encola un trabajo `poll_summary` y espera por Realtime. Reutiliza el resumen anterior de esa persona (no se vuelve a pagar) y sin modelo no encola nada: avisa "Loki IA sin configurar" y las barras ya muestran el resultado. |
+| `PollResultActions` | `poll-result-actions.tsx` | Encuesta cerrada: "Crear evento" por opción ganadora (franja y votantes como invitados, cargados bajo demanda) y "Crear tarea con el resultado" en las de sí/no. Con empate muestra el empate y deja elegir cuál agenda. |
+
+- **Datos**: `src/lib/data/polls.ts` (RPC `poll_results` para toda la tarjeta,
+  `cast_poll_vote`, `close_poll`, `poll_option_busy` para la disponibilidad y
+  Realtime sobre las tres tablas) y `src/hooks/use-polls.ts` (React Query + un
+  solo canal por encuesta, con voto optimista). Helpers puros en
+  `src/lib/polls/poll.ts` (validación, etiquetas, franja de fecha, resultado y
+  empate).
+- **Sin lista escuchando**: la tarjeta solo se suscribe mientras está montada y
+  la disponibilidad se pide una vez por estado (`staleTime` 60 s), solo en las
+  de fecha.
+- **Cierre por tiempo**: SQL barato (`poll_tick` en pg_cron cada 5 min) y
+  también al leer la encuesta, así que nunca sale "abierta" con el plazo
+  vencido. El recordatorio "falta tu voto" es UN aviso por persona y encuesta
+  (dedupe) y sale por el camino normal de `notifications` → push.
+- **Abrir en la encuesta**: el aviso y los enlaces "Ver:" de Loki llevan
+  `/chat/c?id=<chat>&msg=<mensaje>`; `ConversationView` busca ese mensaje (pide
+  páginas más antiguas si hace falta), lo centra y lo resalta, y si no lo
+  encuentra avisa en vez de dejar el chat en silencio.
+- **Loki**: la herramienta `create_poll` de `loki-chat` pide confirmación con
+  la tarjeta del chat (pregunta, tipo, opciones y día y hora editables) y
+  escribe con el JWT del usuario (la RLS es la puerta). Sin modelo, el
+  analizador determinista arma la encuesta igual ("haz una encuesta para
+  elegir el día del asado entre viernes y sábado" → viernes y sábado con
+  fecha); con modelo, la misma tarjeta llega desde la primera pasada de tools.
+
 ## Utilidades (`src/lib/chat/`)
 
 - `format.ts`: `formatHour`, `formatDayLabel`, `formatChatTime`, `dayKey`, `groupMessages` (ventana 5 min).
 - `posts.ts` (T17): id/nombre/emoji del chat `posts`, `POST_LIKE_EMOJI`, textos de la pantalla, `formatPostTime` y los helpers de like/comentarios.
 - `reactions.ts`: `QUICK_REACTIONS` (6) y `EXTENDED_REACTIONS` (24) como {emoji, nombre accesible, codepoints} construidos con `String.fromCodePoint` (sin emojis pegados a mano en el código).
 - `mentions.ts`: `getMentionQuery`, `filterMentionCandidates`, `resolveMentionIds`, `parseMentionSegments`, `mentionsLoki`, `buildLokiDisabledMessage` (puras, testeables con Node sin runner).
+- `intent.ts`: analizador determinista en español (recordatorio, evento, tarea, ítem de lista y **encuesta**), con la copia idéntica en `supabase/functions/_shared/intent.ts` (el test `intent-sync` la compara). La encuesta resuelve "entre viernes y sábado" a fechas de Santiago sin gastar modelo.
 - `preview.ts`: `updatesChatPreview(type)` — qué mensajes pueden tocar `lastMessage`/`updated_at` del chat (los del preview de la lista). `type "system"` NO (misma regla que el trigger de Postgres).
 - `src/lib/ai/constants.ts`: `AI_CHAT_ID`/`AI_CHAT_NAME`/`AI_AUTHOR_ID`, `AI_SUGGESTIONS` (los tres chips), `AI_PLACEHOLDER`, `AI_EMPTY_TITLE`/`AI_EMPTY_DESCRIPTION`, `AI_CONNECTING_TEXT`. Solo literales de UI.
 - `src/lib/ai/loki.ts`: cliente de la Edge Function (`getLokiStatus`, `streamLokiReply` por SSE, textos "Loki IA sin configurar").

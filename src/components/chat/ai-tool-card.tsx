@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  BarChart3,
   BellRing,
   CalendarPlus,
   CheckCircle2,
@@ -10,7 +11,6 @@ import {
   Pencil,
   Undo2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import type {
   AiPendingAction,
   AiPendingItem,
@@ -46,6 +46,7 @@ function ActionIcon({ action }: { action: string }): React.JSX.Element {
   if (action === "check_list_item") return <CheckCircle2 className={className} aria-hidden="true" />;
   if (action === "remove_list_item") return <Undo2 className={className} aria-hidden="true" />;
   if (action === "read_list") return <ListPlus className={className} aria-hidden="true" />;
+  if (action === "create_poll") return <BarChart3 className={className} aria-hidden="true" />;
   return <BellRing className={className} aria-hidden="true" />;
 }
 
@@ -78,7 +79,98 @@ type ItemDraft = {
   listItems: string;
   /** Solo check_list_item. */
   checked: boolean;
+  /** Solo create_poll: tipo de encuesta (single/multiple/yesno/date). */
+  pollKind: string;
+  /** Solo create_poll: fecha y hora de cada opción (kind 'date'). */
+  pollDates: string[];
+  /** Solo create_poll: encuesta anónima. */
+  anonymous: boolean;
 };
+
+const POLL_KIND_LABELS: readonly { value: string; label: string }[] = [
+  { value: "single", label: "Una opción" },
+  { value: "multiple", label: "Varias" },
+  { value: "yesno", label: "Sí o no" },
+  { value: "date", label: "Elegir fecha" },
+];
+
+/** Fecha en el formato de `<input type="datetime-local">` (hora local). */
+function toLocalInput(date: Date): string {
+  const pad = (value: number): string => value.toString().padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function fromLocalInput(value: string): string | null {
+  if (value.trim() === "") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/** Opciones de la encuesta que propone Loki: texto + franja (kind 'date'). */
+function draftPollOptions(params: Record<string, unknown>): {
+  items: string;
+  dates: string[];
+  anonymous: boolean;
+  kind: string;
+} {
+  const raw = params["options"];
+  const items: string[] = [];
+  const dates: string[] = [];
+  if (Array.isArray(raw)) {
+    for (const entry of raw.slice(0, 20)) {
+      if (typeof entry === "string") {
+        items.push(entry.slice(0, 200));
+        dates.push("");
+        continue;
+      }
+      if (typeof entry !== "object" || entry === null) continue;
+      const rec = entry as Record<string, unknown>;
+      const text = typeof rec["text"] === "string" ? rec["text"].slice(0, 200) : "";
+      if (text === "") continue;
+      items.push(text);
+      const startsAt = typeof rec["startsAt"] === "string" ? rec["startsAt"] : "";
+      const parsed = startsAt === "" ? null : new Date(startsAt);
+      dates.push(parsed === null || Number.isNaN(parsed.getTime()) ? "" : toLocalInput(parsed));
+    }
+  }
+  const kind = typeof params["kind"] === "string" ? params["kind"] : "single";
+  return {
+    items: items.join("\n"),
+    dates,
+    anonymous: params["anonymous"] === true,
+    kind,
+  };
+}
+
+/** Rearma `options` desde el borrador (texto + día y hora si es 'date'). */
+function buildPollOptions(draft: ItemDraft): { text: string; startsAt?: string; endsAt?: string }[] {
+  const lines = draft.listItems
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .slice(0, 20);
+  if (draft.pollKind !== "date") {
+    return lines.map((text) => ({ text }));
+  }
+  return lines.map((text, index) => {
+    const raw = draft.pollDates[index] ?? "";
+    const iso = fromLocalInput(raw);
+    // Sin día puesto se propone mañana a la misma hora que la primera opción
+    // (o 19:00): la tarjeta muestra la fecha exacta y se puede corregir.
+    let startsAt = iso;
+    if (startsAt === null) {
+      const base = new Date();
+      base.setDate(base.getDate() + index + 1);
+      base.setHours(19, 0, 0, 0);
+      startsAt = base.toISOString();
+    }
+    return {
+      text,
+      startsAt,
+      endsAt: new Date(new Date(startsAt).getTime() + 2 * 3_600_000).toISOString(),
+    };
+  });
+}
 
 function draftListLines(params: Record<string, unknown>): string {
   const raw = params["items"];
@@ -105,9 +197,15 @@ function draftListLines(params: Record<string, unknown>): string {
 }
 
 function draftFromParams(params: Record<string, unknown>): ItemDraft {
-  const title = typeof params["title"] === "string" || typeof params["text"] === "string" || typeof params["item"] === "string"
-    ? String(params["title"] ?? params["item"] ?? params["text"] ?? "")
-    : draftListLines(params).split("\n")[0] ?? "";
+  const poll = "question" in params ? draftPollOptions(params) : null;
+  const title =
+    poll !== null
+      ? typeof params["question"] === "string"
+        ? params["question"].slice(0, 200)
+        : ""
+      : typeof params["title"] === "string" || typeof params["text"] === "string" || typeof params["item"] === "string"
+        ? String(params["title"] ?? params["item"] ?? params["text"] ?? "")
+        : draftListLines(params).split("\n")[0] ?? "";
   let date = "";
   let time = "";
   for (const key of DATE_KEYS) {
@@ -129,9 +227,22 @@ function draftFromParams(params: Record<string, unknown>): ItemDraft {
     ? String(params["projectId"] ?? params["project_id"] ?? "")
     : "";
   const listName = typeof params["list"] === "string" ? params["list"] : "";
-  const listItems = draftListLines(params);
+  const listItems = poll !== null ? poll.items : draftListLines(params);
   const checked = typeof params["checked"] === "boolean" ? params["checked"] : true;
-  return { include: true, title, date, time, assignee, projectId, listName, listItems, checked };
+  return {
+    include: true,
+    title,
+    date,
+    time,
+    assignee,
+    projectId,
+    listName,
+    listItems,
+    checked,
+    pollKind: poll?.kind ?? "single",
+    pollDates: poll?.dates ?? [],
+    anonymous: poll?.anonymous ?? false,
+  };
 }
 
 function applyDraft(
@@ -153,6 +264,18 @@ function applyDraft(
   }
   if ("list" in next && draft.listName !== "") next["list"] = draft.listName;
   if ("checked" in next) next["checked"] = draft.checked;
+  // Encuesta: la pregunta viaja en `question` y las opciones en `options`.
+  if ("question" in next) {
+    next["question"] = draft.title;
+    next["kind"] = draft.pollKind;
+    next["options"] = buildPollOptions(draft);
+    next["anonymous"] = draft.anonymous;
+    // La fecha elegida es el cierre de la encuesta (no va a `dueAt`).
+    if (draft.date !== "") {
+      const iso = joinDateTime(draft.date, draft.time);
+      if (iso !== null) next["closesAt"] = iso;
+    }
+  }
   if (draft.date !== "") {
     const iso = joinDateTime(draft.date, draft.time);
     if (iso !== null) {
@@ -160,8 +283,9 @@ function applyDraft(
         if (key in next) next[key] = iso;
       }
       // Si no había fecha (p. ej. tarea) y el usuario puso una, va a dueAt
-      // en tareas y a startsAt en eventos/recordatorios.
-      if (!DATE_KEYS.some((key) => key in params)) {
+      // en tareas y a startsAt en eventos/recordatorios (en la encuesta la
+      // fecha es el cierre y lo pone su propio bloque de más abajo).
+      if (!DATE_KEYS.some((key) => key in params) && !("question" in next)) {
         next["dueAt"] = iso;
       }
     }
@@ -342,6 +466,117 @@ export function AiToolCard({
                 <p role="alert" className="text-body-sm leading-5 text-danger">
                   {item.warning}
                 </p>
+              ) : item.action === "create_poll" ? (
+                <div className="flex flex-col gap-2">
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClass}>Pregunta</span>
+                    <input
+                      type="text"
+                      aria-label="Pregunta de la encuesta"
+                      value={draft.title}
+                      onChange={(event) => setDraft(index, { title: event.target.value })}
+                      maxLength={200}
+                      className={cn(inputClass, "min-h-11")}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClass}>Tipo</span>
+                    <select
+                      aria-label="Tipo de encuesta"
+                      value={draft.pollKind}
+                      onChange={(event) => setDraft(index, { pollKind: event.target.value })}
+                      className={cn(inputClass, "min-h-11")}
+                    >
+                      {POLL_KIND_LABELS.map((entry) => (
+                        <option key={entry.value} value={entry.value}>
+                          {entry.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex flex-col gap-1">
+                      <span className={labelClass}>Cierra (opcional)</span>
+                      <input
+                        type="date"
+                        aria-label="Fecha de cierre de la encuesta"
+                        value={draft.date}
+                        onChange={(event) => setDraft(index, { date: event.target.value })}
+                        className={cn(inputClass, "min-h-11")}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className={labelClass}>Hora</span>
+                      <input
+                        type="time"
+                        aria-label="Hora de cierre de la encuesta"
+                        value={draft.time}
+                        onChange={(event) => setDraft(index, { time: event.target.value })}
+                        className={cn(inputClass, "min-h-11")}
+                      />
+                    </label>
+                  </div>
+                  {draft.pollKind === "yesno" ? (
+                    <p className="text-meta leading-4 text-muted-foreground">
+                      Salvo Sí y No, para aprobar algo rápido.
+                    </p>
+                  ) : (
+                    <>
+                      <label className="flex flex-col gap-1">
+                        <span className={labelClass}>Opciones (una por línea)</span>
+                        <textarea
+                          aria-label="Opciones de la encuesta"
+                          value={draft.listItems}
+                          onChange={(event) => setDraft(index, { listItems: event.target.value })}
+                          rows={3}
+                          maxLength={2000}
+                          className="min-h-22 w-full rounded-sm bg-surface-soft px-3 py-2 text-body-sm text-foreground outline-none"
+                        />
+                      </label>
+                      {draft.pollKind === "date" ? (
+                        <div className="flex flex-col gap-1">
+                          <span className={labelClass}>Día y hora de cada opción</span>
+                          {draft.listItems
+                            .split("\n")
+                            .map((line) => line.trim())
+                            .filter((line) => line !== "")
+                            .slice(0, 20)
+                            .map((line, optionIndex) => (
+                              <label
+                                key={optionIndex}
+                                className="flex min-h-11 flex-col justify-center gap-0.5"
+                              >
+                                <span className="truncate text-meta text-muted-foreground">
+                                  {line}
+                                </span>
+                                <input
+                                  type="datetime-local"
+                                  aria-label={`Fecha y hora de ${line}`}
+                                  value={draft.pollDates[optionIndex] ?? ""}
+                                  onChange={(event) => {
+                                    const dates = [...draft.pollDates];
+                                    dates[optionIndex] = event.target.value;
+                                    setDraft(index, { pollDates: dates });
+                                  }}
+                                  className={cn(inputClass, "min-h-11")}
+                                />
+                              </label>
+                            ))}
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                  <label className="flex min-h-11 items-center gap-2 text-body-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      aria-label="Encuesta anónima"
+                      checked={draft.anonymous}
+                      onChange={(event) => setDraft(index, { anonymous: event.target.checked })}
+                      className="h-6 w-6 accent-[var(--accent)]"
+                    />
+                    Anónima (nadie ve quién votó)
+                  </label>
+                </div>
               ) : item.action === "add_list_items" || item.action === "create_list_item" ? (
                 <div className="flex flex-col gap-2">
                   <label className="flex flex-col gap-1">

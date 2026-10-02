@@ -13,6 +13,8 @@
  * - Cierre: solo creador o admin (o cualquiera si closeBy = 'anyone').
  * - Tick: cierra las vencidas y avisa UNA vez a quien no votó.
  * - Disponibilidad de las opciones con fecha: solo el número de ocupados.
+ * - Resumen con Loki: el trabajo `poll_summary` se encola a nombre propio y su
+ *   resultado lo ve el espacio (nada más).
  */
 
 import { after, before, describe, it } from "node:test";
@@ -613,5 +615,58 @@ describe("RLS: encuestas", () => {
       .select("id")
       .eq("poll_id", created.pollId);
     assertNoRows(votes, "los votos caen en cascada");
+  });
+
+  it("resumen con Loki: trabajo poll_summary propio y visible en el espacio", async () => {
+    const created = await createPoll(member.client, {
+      wsId: ws,
+      chatId,
+      uid: member.id,
+      name: "Member",
+      question: "¿Resumen de la cena?",
+      kind: "single",
+      settings: { anonymous: false, allowSuggestions: true, remindMissing: false, closeBy: "creator" },
+      options: [{ text: "A" }, { text: "B" }],
+    });
+
+    // Un miembro pide el resumen a nombre propio (lo mueve la service role).
+    const job = await member.client
+      .from("ai_jobs")
+      .insert({
+        workspace_id: ws,
+        requested_by: member.id,
+        type: "poll_summary",
+        payload: { poll_id: created.pollId },
+      })
+      .select("id, status")
+      .single();
+    assertAllowed(job, "el tipo poll_summary está permitido en ai_jobs");
+    assert.equal(job.data.status, "queued", "el trabajo nace en cola (lo despierta el trigger)");
+
+    // El resultado lo escribe el worker y lo lee el espacio, no un ajeno.
+    await admin
+      .from("ai_jobs")
+      .update({ status: "done", result: { summary: "Ganó A." } })
+      .eq("id", job.data.id);
+
+    const read = await owner.client
+      .from("ai_jobs")
+      .select("result")
+      .eq("id", job.data.id)
+      .maybeSingle();
+    assertAllowed(read, "otro miembro del espacio lee el resultado");
+    assert.equal(read.data.result.summary, "Ganó A.", "el resumen llega al espacio");
+
+    // A nombre ajeno no: la política exige requested_by = auth.uid().
+    const denied = await member.client
+      .from("ai_jobs")
+      .insert({
+        workspace_id: ws,
+        requested_by: owner.id,
+        type: "poll_summary",
+        payload: { poll_id: created.pollId },
+      })
+      .select("id");
+    assertDenied(denied, "no se puede encolar un trabajo a nombre de otro");
   });
 });

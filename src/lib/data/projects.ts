@@ -229,6 +229,8 @@ export type CreateTaskInput = {
   title: string;
   notes?: string;
   priority?: TaskPriority;
+  /** Por defecto "todo"; una aprobación ya resuelta nace hecha. */
+  status?: TaskStatus;
   assigneeIds?: string[];
   dueAt?: Date | null;
   reminderAt?: Date | null;
@@ -264,6 +266,8 @@ export async function createTask(
       title,
       notes: input.notes ?? "",
       priority: input.priority ?? "normal",
+      status: input.status ?? "todo",
+      completed_at: (input.status ?? "todo") === "done" ? new Date().toISOString() : null,
       assignee_ids: input.assigneeIds ?? [],
       due_at: input.dueAt?.toISOString() ?? null,
       reminder_at: input.reminderAt?.toISOString() ?? null,

@@ -497,7 +497,7 @@ type ToolDef = {
 const TOOLS: ToolDef[] = [
   {
     name: "get_today_summary",
-    description: "Resume las tareas que vencen hoy y los eventos de hoy del espacio.",
+    description: "Resume el día del espacio: tareas que vencen hoy y atrasadas, eventos de hoy, listas fijadas con pendientes y encuestas abiertas sin tu voto (lo mismo que la vista 'Tu día').",
     parameters: {
       type: "object",
       properties: { workspaceId: { type: "string", description: "Id del espacio" } },
@@ -908,6 +908,7 @@ async function execReadTool(
   name: string,
   args: Record<string, unknown>,
   jwt: string,
+  uid?: string,
 ): Promise<string> {
   const workspaceId = asString(args["workspaceId"]);
   if ((name !== "complete_task" && workspaceId === null) || workspaceId === null) {
@@ -935,18 +936,77 @@ async function execReadTool(
     return JSON.stringify({ no_leidos: rows });
   }
   if (name === "get_today_summary") {
+    // "¿cómo viene mi día?": lo mismo que la vista "Tu día" pero en texto.
+    // Tareas que vencen hoy + atrasadas, eventos de hoy, listas fijadas con
+    // pendientes y encuestas abiertas sin mi voto. Los turnos aún no tienen
+    // tablas (quedan en [] hasta el prompt de recurrentes).
     const { start, end } = dayRangeISO(new Date());
-    const [tasks, events] = await Promise.all([
+    const [tasks, overdue, events, lists, polls] = await Promise.all([
       userRest(
         `/tasks?workspace_id=eq.${ws}&status=neq.done&due_at=gte.${encodeURIComponent(start)}&due_at=lt.${encodeURIComponent(end)}&select=id,title,due_at,project_id&order=due_at.asc&limit=20`,
+        jwt,
+      ),
+      userRest(
+        `/tasks?workspace_id=eq.${ws}&status=neq.done&due_at=lt.${encodeURIComponent(start)}&select=id,title,due_at,project_id&order=due_at.asc&limit=10`,
         jwt,
       ),
       userRest(
         `/events?workspace_id=eq.${ws}&starts_at=gte.${encodeURIComponent(start)}&starts_at=lt.${encodeURIComponent(end)}&select=id,title,starts_at,location&order=starts_at.asc&limit=20`,
         jwt,
       ),
+      userRest(
+        `/lists?workspace_id=eq.${ws}&archived=is.false&pinned=is.true&select=id,title&order=updated_at.desc&limit=10`,
+        jwt,
+      ),
+      userRest(
+        `/polls?workspace_id=eq.${ws}&closed_at=is.null&select=id,question,kind,closes_at&order=created_at.desc&limit=10`,
+        jwt,
+      ),
     ]);
-    return JSON.stringify({ tareas_hoy: tasks.data, eventos_hoy: events.data });
+    // Encuestas sin mi voto (si se conoce el uid; si no, van todas).
+    let pollsOpen: unknown = polls.data;
+    if (uid !== undefined && polls.ok && Array.isArray(polls.data)) {
+      const rows = polls.data as Record<string, unknown>[];
+      const mine = await userRest(
+        `/poll_votes?user_id=eq.${encodeURIComponent(uid)}&select=poll_id`,
+        jwt,
+      );
+      const voted = new Set(
+        mine.ok && Array.isArray(mine.data)
+          ? (mine.data as Record<string, unknown>[]).map((v) => String(v["poll_id"] ?? ""))
+          : [],
+      );
+      pollsOpen = rows
+        .filter((p) => !voted.has(String(p["id"] ?? "")))
+        .map((p) => ({
+          id: p["id"],
+          question: p["question"],
+          closes_at: p["closes_at"],
+        }));
+    }
+    // Pendientes por lista fijada (cuenta rápida por lista, tope 10).
+    let pendingLists: unknown = lists.data;
+    if (lists.ok && Array.isArray(lists.data)) {
+      const rows = lists.data as Record<string, unknown>[];
+      const counts = await Promise.all(rows.slice(0, 10).map(async (row) => {
+        const id = String(row["id"] ?? "");
+        const count = await userRest(
+          `/list_items?list_id=eq.${encodeURIComponent(id)}&checked=is.false&select=id&limit=1`,
+          jwt,
+        );
+        const open = Array.isArray(count.data) && count.data.length > 0;
+        return { id, title: row["title"], pendiente: open };
+      }));
+      pendingLists = counts.filter((c) => c.pendiente);
+    }
+    return JSON.stringify({
+      tareas_hoy: tasks.data,
+      tareas_atrasadas: overdue.data,
+      eventos_hoy: events.data,
+      listas_pendientes: pendingLists,
+      encuestas_por_votar: pollsOpen,
+      turnos_hoy: [],
+    });
   }
   if (name === "list_events") {
     const res = await userRest(
@@ -3059,7 +3119,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // --- Lectura: ejecuta con el JWT y responde con los datos -----------------------
   // Razonar sobre datos reales pide el modelo potente.
-  const toolResult = await execReadTool(tool.name, toolArgs, token);
+  const toolResult = await execReadTool(tool.name, toolArgs, token, uid);
   const enriched = `${prompt}\n\n[Datos de ${tool.name}: ${toolResult}]`;
   return sseReplyStream(save, async (send) => {
     await streamFromProvider(context, enriched, send, "smart");

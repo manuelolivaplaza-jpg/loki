@@ -14,6 +14,7 @@ import { getLokiStatus } from "@/lib/ai/loki";
 import { isPushConfigured, registerPushToken } from "@/lib/push/fcm";
 import { isNativePlatform, registerNativePush } from "@/lib/push/native";
 import { DEFAULT_PREFS } from "@/lib/data/notifications";
+import { DigestSettingsSection } from "@/components/daily/digest-settings-section";
 import { GcalSection } from "@/components/calendar/gcal-section";
 import { AiUsageSection } from "@/components/ai/ai-usage-section";
 import { OcrSettingsSection } from "@/components/search/ocr-settings-section";
@@ -40,6 +41,7 @@ const PREF_ROWS: readonly { key: keyof Omit<NotificationPrefs, "quietStart" | "q
   { key: "list", label: "Listas", detail: "Novedades de las listas compartidas" },
   { key: "poll", label: "Encuestas", detail: "Cuando falta tu voto antes del cierre" },
   { key: "memory", label: "Memoria", detail: "Recuerdos nuevos o por caducar del espacio" },
+  { key: "daily", label: "Resumen diario", detail: "Push de la mañana con tu día" },
 ];
 
 export default function ConfiguracionPage(): React.JSX.Element {
@@ -275,6 +277,8 @@ export default function ConfiguracionPage(): React.JSX.Element {
           ) : null}
         </Card>
       </section>
+
+      {user !== null ? <DigestSettingsSection uid={user.uid} /> : null}
 
       <section aria-label="Loki IA">
         <SectionLabel>Loki IA</SectionLabel>

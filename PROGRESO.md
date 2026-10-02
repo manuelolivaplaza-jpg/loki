@@ -14,6 +14,28 @@ Roadmap T1–T36 **completo y commiteado**. Fase actual: integración real y pul
 
 ### Lote actual (implementado, SIN commit y SIN verificar)
 
+**Resumen diario "Tu día"** (push de la mañana + vista):
+- **Migración NUEVA** `supabase/migrations/20261011000000_daily_digest.sql`:
+  desprograma `loki-ai-daily-8am`, notificación tipo `daily` (+ columna en
+  `notification_prefs`), tabla `daily_digest_prefs` (hora local 08:00, zona
+  America/Santiago, días, espacios, aviso en vacío) con RLS propia,
+  `create_daily_digests()` cada 15 min (SQL sin LLM, hora local por
+  `AT TIME ZONE`, dedupe por día local, respeta interruptor/silencio/hábiles,
+  sin duplicar `create_due_reminders`) y `day_highlights` en `ai_jobs`.
+- **Edges**: `push-send` mapea `daily`; `loki-chat` amplía `get_today_summary`
+  (atrasadas, listas fijadas, encuestas sin mi voto); `loki-worker` procesa
+  `day_highlights` (menciones + recientes, modelo barato con cuota, cacheado
+  por día en `ai_summaries` con `chat_key = 'day:…'`, determinista sin clave).
+- **App**: `src/lib/data/daily-digest.ts`, `src/hooks/use-daily-digest.ts`,
+  `src/components/daily/today-view.tsx` (acciones directas, 1 col móvil / 2
+  col escritorio) + `digest-settings-section.tsx`, tarjeta "Tu día" en Inicio
+  y vista `/inicio?vista=dia`, compacto en el right-panel, sección en
+  Configuración, icono `daily`, clic de la push web abre el link
+  (`firebase-messaging-sw.js`).
+- **Tests**: `tests/rls/daily_digest.test.mjs` (prefs, tipo daily, agrupado +
+  idempotente, hábiles/vacío, `day_highlights`). Se ejecutan en el prompt
+  final, no ahora.
+
 **Encuestas en el chat** (decidir sin 40 mensajes) — segunda pasada, completa
 lo que había quedado a medias:
 

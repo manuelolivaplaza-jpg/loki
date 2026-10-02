@@ -2,11 +2,13 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   CalendarPlus,
   ChevronRight,
   FolderPlus,
   Lightbulb,
+  Sunrise,
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
@@ -17,6 +19,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { ProgressRing } from "@/components/ui/progress-ring";
 import { SectionLabel } from "@/components/ui/section-label";
 import { WeekStrip } from "@/components/ui/week-strip";
+import { TodayView } from "@/components/daily/today-view";
 import { PlaceholderDialog } from "@/components/shell/quick-actions";
 import { InviteDialog } from "@/components/members/invite-dialog";
 import {
@@ -79,6 +82,47 @@ function taskMeta(task: TaskItem, projectName: string | null): string {
 }
 
 export default function InicioPage(): React.JSX.Element {
+  return (
+    <React.Suspense fallback={null}>
+      <InicioContent />
+    </React.Suspense>
+  );
+}
+
+/**
+ * La push del resumen diario abre `/inicio?vista=dia` (query param por el
+ * export estático): ahí se pinta "Tu día" en vez del Inicio normal.
+ */
+function InicioContent(): React.JSX.Element {
+  const searchParams = useSearchParams();
+  const vistaDia = searchParams.get("vista") === "dia";
+  if (vistaDia) {
+    return (
+      <div className="mx-auto w-full max-w-6xl px-4 py-4">
+        <header className="flex items-center gap-3">
+          <span aria-hidden="true" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent/15 text-foreground">
+            <Icon icon={Sunrise} size={22} />
+          </span>
+          <h1 className="min-w-0 flex-1 text-display font-semibold text-foreground">
+            Tu día
+          </h1>
+          <Link
+            href="/inicio"
+            className="shrink-0 text-body-sm font-semibold text-mention outline-none interactive"
+          >
+            Inicio
+          </Link>
+        </header>
+        <div className="mt-4">
+          <TodayView />
+        </div>
+      </div>
+    );
+  }
+  return <InicioHome />;
+}
+
+function InicioHome(): React.JSX.Element {
   const profile = useProfileStore((state) => state.profile);
   const user = useSessionStore((state) => state.user);
   const { currentWorkspaceId } = useWorkspaces();
@@ -221,6 +265,28 @@ export default function InicioPage(): React.JSX.Element {
           {dateLabel}
         </p>
       </header>
+
+      {/* Tarjeta "Tu día": la push del resumen también abre /inicio?vista=dia. */}
+      <Link
+        href="/inicio?vista=dia"
+        aria-label={`Tu día, ${dayTasks.length + dayEvents.length} cosas hoy`}
+        className="mt-4 flex min-h-14 items-center gap-3 rounded-lg border border-divider bg-background px-4 py-3 outline-none interactive"
+      >
+        <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-foreground">
+          <Icon icon={Sunrise} size={20} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-body font-semibold text-foreground">
+            Tu día
+          </span>
+          <span className="block truncate text-body-sm text-muted-foreground">
+            {dayTasks.length + dayEvents.length === 0
+              ? "Nada pendiente hoy"
+              : `${dayTasks.length + dayEvents.length} ${dayTasks.length + dayEvents.length === 1 ? "cosa" : "cosas"} hoy`}
+          </span>
+        </span>
+        <Icon icon={ChevronRight} size={20} className="shrink-0 text-muted-foreground" />
+      </Link>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 min-[1440px]:grid-cols-3">
         <section aria-label="Progreso">

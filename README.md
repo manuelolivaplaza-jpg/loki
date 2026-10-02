@@ -102,6 +102,14 @@ flowchart LR
   `maybe_push_notification` → `pg_net` → `push-send`, que respeta
   `notification_prefs` y el horario de silencio). Web (Service Worker) y
   Android (FCM nativo) con alternativa clara cuando no hay config.
+- **Resumen diario "Tu día"**: cada mañana llega una push tipo `daily` con tu
+  día (la arma `create_daily_digests()` en la base, pg_cron cada 15 min, SQL
+  barato sin LLM, a tu hora local con la zona de `daily_digest_prefs` que no
+  se corre con el horario de verano) y al tocarla abre `/inicio?vista=dia`:
+  eventos de hoy, tareas que vencen/atrasadas, listas fijadas con pendientes,
+  encuestas por votar y destacados con IA bajo demanda (`day_highlights`,
+  modelo barato, cuota del espacio, cacheado por día). Preferencias en
+  Configuración → Notificaciones → Resumen diario.
 
 ## Requisitos
 

@@ -10,7 +10,9 @@
 //
 // Tipos soportados: chat_summary (modelo barato), day_digest y
 // redact_highlights (plantilla determinista + pulido opcional con modelo
-// barato), chat_digest, transcribe_audio (notas de voz bajo demanda),
+// barato), day_highlights ("lo importante de tus espacios" para la vista
+// "Tu día": bajo demanda al abrir, modelo barato, cacheado por día en
+// ai_summaries con chat_key `day:YYYY-MM-DD`), chat_digest, transcribe_audio (notas de voz bajo demanda),
 // ocr_image (texto en imágenes bajo demanda, solo si el espacio lo activó) y
 // poll_summary (resumen del resultado de una encuesta, bajo demanda).
 // dispatch_agent termina en error claro "no soportado todavía"
@@ -400,13 +402,143 @@ async function processDigest(job: Job, highlights: boolean): Promise<Record<stri
   return { date: today, tasks: taskList.length, events: eventList.length };
 }
 
-async function processJob(job: Job): Promise<Record<string, unknown>> {
-  switch (job.type) {
+// -----------------------------------------------------------------------------
+// Destacados del día para la vista "Tu día" (bajo demanda, modelo barato).
+//
+// NO se genera para todos a las 8:00: el cliente encola UN trabajo cuando el
+// usuario abre "Tu día" (idempotency_key `day:<uid>:<YYYY-MM-DD>` para no
+// pagar dos veces lo mismo). El corpus es determinista y barato: menciones
+// al usuario en las últimas 48 h + mensajes recientes de sus espacios
+// (chats grupales; los DMs ajenos quedan fuera porque solo se leen espacios
+// donde el usuario es miembro y chats grupales). Los recuerdos sensibles
+// nunca entran (no se consultan aquí).
+//
+// Sin LLM: el detalle determinista ES la respuesta (la UI muestra todo lo
+// demás igual y la nota "Destacados con IA no disponibles"). Con modelo: se
+// reserva cuota del espacio ANTES de llamar y se guarda un resumen corto.
+// El resultado queda cacheado por día en `ai_summaries`
+// (`chat_key = 'day:YYYY-MM-DD'`), que el cliente lee sin encolar de nuevo.
+// -----------------------------------------------------------------------------
+async function processDayHighlights(job: Job): Promise<Record<string, unknown>> {
+  const target = asString(job.payload["user_id"]) ?? job.requested_by;
+  if (target === null) throw Object.assign(new Error("Sin usuario."), { terminal: true });
+  const day = asString(job.payload["date"]) ?? new Date().toISOString().slice(0, 10);
+  const chatKey = `day:${day}`;
+
+  // Cache por día: si ya se generó hoy, se reutiliza sin gastar nada.
+  const cached = await svcGet(
+    `/ai_summaries?user_id=eq.${encodeURIComponent(target)}&chat_key=eq.${encodeURIComponent(chatKey)}&select=summary&limit=1`,
+  );
+  if (cached.ok && Array.isArray(cached.data) && cached.data.length > 0) {
+    return { date: day, cached: true };
+  }
+
+  // Espacios del usuario (service role, pero verificados: solo sus espacios).
+  const members = await svcGet(
+    `/workspace_members?user_id=eq.${encodeURIComponent(target)}&select=workspace_id&limit=30`,
+  );
+  const wsIds: string[] = members.ok && Array.isArray(members.data)
+    ? (members.data as Record<string, unknown>[])
+      .map((m) => String(m["workspace_id"] ?? ""))
+      .filter((id) => id !== "")
+    : [];
+  if (wsIds.length === 0) {
+    return { date: day, empty: true, deterministic: true, detail: "" };
+  }
+  const wsFilter = wsIds.map((id) => encodeURIComponent(id)).join(",");
+  const since = new Date(Date.now() - 48 * 3600_000).toISOString();
+
+  // Menciones a ti (48 h) + mensajes recientes de grupos (24 h, tope 30).
+  const [mentions, recent] = await Promise.all([
+    svcGet(
+      `/messages?workspace_id=in.(${wsFilter})&created_at=gte.${encodeURIComponent(since)}` +
+      `&deleted=is.false&mentions=cs.{${encodeURIComponent(target)}}` +
+      `&select=workspace_id,chat_id,author_name,text,created_at&order=created_at.desc&limit=10`,
+    ),
+    svcGet(
+      `/messages?workspace_id=in.(${wsFilter})&created_at=gte.${encodeURIComponent(new Date(Date.now() - 24 * 3600_000).toISOString())}` +
+      `&deleted=is.false&thread_parent_id=is.null&type=in.(user,post,card)` +
+      `&select=workspace_id,author_name,text,created_at&order=created_at.desc&limit=30`,
+    ),
+  ]);
+  const mentionRows = mentions.ok && Array.isArray(mentions.data)
+    ? (mentions.data as Record<string, unknown>[]).filter(isRecord)
+    : [];
+  const recentRows = recent.ok && Array.isArray(recent.data)
+    ? (recent.data as Record<string, unknown>[]).filter(isRecord)
+    : [];
+
+  const lines: string[] = [];
+  for (const m of mentionRows.slice(0, 10)) {
+    lines.push(
+      `Te mencionó ${String(m["author_name"] ?? "Alguien").slice(0, 40)}: ${String(m["text"] ?? "").slice(0, 200)}`,
+    );
+  }
+  if (recentRows.length > 0) {
+    lines.push(
+      `${recentRows.length} mensajes en tus espacios en las últimas 24 h.`,
+    );
+  }
+  const detail = lines.join("\n").slice(0, 1500);
+  if (lines.length === 0) {
+    await fetch(`${SUPABASE_URL}/rest/v1/ai_summaries`, {
+      method: "POST",
+      headers: { ...svcHeaders(), prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({ user_id: target, chat_key: chatKey, summary: JSON.stringify({ empty: true }) }),
+    }).catch(() => undefined);
+    return { date: day, empty: true, deterministic: true, detail: "" };
+  }
+
+  // Sin modelo: el detalle determinista es la respuesta (sin gastar cuota).
+  if (!llmConfigured()) {
+    await fetch(`${SUPABASE_URL}/rest/v1/ai_summaries`, {
+      method: "POST",
+      headers: { ...svcHeaders(), prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({
+        user_id: target,
+        chat_key: chatKey,
+        summary: JSON.stringify({ deterministic: true, detail }),
+      }),
+    }).catch(() => undefined);
+    return { date: day, deterministic: true, detail, mentions: mentionRows.length };
+  }
+
+  const quota = await reserve(
+    job.workspace_id,
+    target,
+    "day_highlights",
+    Math.max(2, Math.ceil(detail.length / 250)),
+  );
+  if (!quota.allowed) {
+    throw Object.assign(new Error(quotaMessage(quota.reason)), { terminal: true });
+  }
+  const summary = (await completeFast(
+    "Resume en español, máximo 5 líneas y sin adornos, lo importante de estas " +
+    "novedades de los espacios del usuario (menciones a él primero, después " +
+    "lo demás). No inventes datos: usa solo lo dado.",
+    detail.slice(0, 6000),
+  )).trim();
+  const body = summary !== "" ? summary.slice(0, 1200) : detail;
+  await fetch(`${SUPABASE_URL}/rest/v1/ai_summaries`, {
+    method: "POST",
+    headers: { ...svcHeaders(), prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({
+      user_id: target,
+      chat_key: chatKey,
+      summary: JSON.stringify({ deterministic: summary === "", detail, summary: body }),
+    }),
+  }).catch(() => undefined);
+  return { date: day, deterministic: summary === "", mentions: mentionRows.length, summary: body.slice(0, 300) };
+}
+
+async function processJob(job: Job): Promise<Record<string, unknown>> {  switch (job.type) {
     case "chat_summary":
       return processChatSummary(job);
     case "day_digest":
     case "redact_highlights":
       return processDigest(job, job.type === "redact_highlights");
+    case "day_highlights":
+      return processDayHighlights(job);
     case "chat_digest":
       return processChatDigest(job);
     case "transcribe_audio":

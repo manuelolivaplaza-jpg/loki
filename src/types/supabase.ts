@@ -141,8 +141,26 @@ type NotificationPrefsRow = {
   poll: boolean;
   /** Memoria del espacio (20261009000000_space_memories.sql). */
   memory: boolean;
+  /** Resumen diario "Tu día" (20261011000000_daily_digest.sql). */
+  daily: boolean;
   quiet_start: string | null;
   quiet_end: string | null;
+  updated_at: string;
+};
+
+/**
+ * Preferencias del resumen diario (`daily_digest_prefs`, migración
+ * `20261011000000_daily_digest.sql`). Sin fila = defaults (08:00,
+ * America/Santiago, todos los días y espacios, sin aviso en vacío).
+ */
+type DailyDigestPrefsRow = {
+  user_id: string;
+  enabled: boolean;
+  digest_time: string;
+  timezone: string;
+  days: string;
+  workspace_ids: string[];
+  send_when_empty: boolean;
   updated_at: string;
 };
 
@@ -1249,6 +1267,7 @@ export type Database = {
           list?: boolean;
           poll?: boolean;
           memory?: boolean;
+          daily?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
@@ -1266,8 +1285,33 @@ export type Database = {
           list?: boolean;
           poll?: boolean;
           memory?: boolean;
+          daily?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      daily_digest_prefs: {
+        Row: DailyDigestPrefsRow;
+        Insert: {
+          user_id: string;
+          enabled?: boolean;
+          digest_time?: string;
+          timezone?: string;
+          days?: string;
+          workspace_ids?: string[];
+          send_when_empty?: boolean;
+          updated_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          enabled?: boolean;
+          digest_time?: string;
+          timezone?: string;
+          days?: string;
+          workspace_ids?: string[];
+          send_when_empty?: boolean;
           updated_at?: string;
         };
         Relationships: [];
@@ -1726,6 +1770,10 @@ export type Database = {
           p_poll_id: string;
         };
         Returns: boolean;
+      };
+      create_daily_digests: {
+        Args: Record<string, never>;
+        Returns: number;
       };
     };
     Enums: {

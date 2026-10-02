@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
@@ -163,8 +164,25 @@ export function RightPanel({ section }: RightPanelProps): React.JSX.Element {
     const nextEvent = upcomingQuery.occurrences.find(
       (occurrence) => occurrence.endsAt.toMillis() >= now.getTime(),
     );
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const todayCount = (tasksQuery.data ?? []).filter(
+      (task) =>
+        task.parentTaskId === null &&
+        task.status !== "done" &&
+        task.dueAt !== null &&
+        task.dueAt.toMillis() < todayStart + 86_400_000,
+    ).length + upcomingQuery.occurrences.filter((occurrence) => {
+      const start = occurrence.startsAt.toMillis();
+      return start >= todayStart && start < todayStart + 86_400_000;
+    }).length;
     return [
-      { title: "Resumen", meta: "Tu día de un vistazo" },
+      {
+        title: "Tu día",
+        meta:
+          todayCount === 0
+            ? "Nada pendiente hoy"
+            : `${todayCount} ${todayCount === 1 ? "cosa" : "cosas"} hoy`,
+      },
       {
         title: "Pendientes",
         meta: `${openTasks} ${openTasks === 1 ? "tarea abierta" : "tareas abiertas"}`,
@@ -178,6 +196,7 @@ export function RightPanel({ section }: RightPanelProps): React.JSX.Element {
       },
     ];
   }, [section, tasksQuery.data, upcomingQuery.occurrences, now]);
+  const isInicio = section.key === "inicio";
 
   return (
     <div
@@ -206,16 +225,35 @@ export function RightPanel({ section }: RightPanelProps): React.JSX.Element {
                 {contextItems.map((item, index) => (
                   <React.Fragment key={item.title}>
                     {index > 0 ? <CardDivider /> : null}
-                    <CardRow>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-body-sm font-medium text-foreground">
-                          {item.title}
+                    {isInicio && index === 0 ? (
+                      <Link
+                        href="/inicio?vista=dia"
+                        aria-label="Abrir Tu día"
+                        className="block rounded-lg outline-none interactive"
+                      >
+                        <CardRow>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-body-sm font-medium text-foreground">
+                              {item.title}
+                            </span>
+                            <span className="block truncate text-meta text-muted-foreground">
+                              {item.meta}
+                            </span>
+                          </span>
+                        </CardRow>
+                      </Link>
+                    ) : (
+                      <CardRow>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-body-sm font-medium text-foreground">
+                            {item.title}
+                          </span>
+                          <span className="block truncate text-meta text-muted-foreground">
+                            {item.meta}
+                          </span>
                         </span>
-                        <span className="block truncate text-meta text-muted-foreground">
-                          {item.meta}
-                        </span>
-                      </span>
-                    </CardRow>
+                      </CardRow>
+                    )}
                   </React.Fragment>
                 ))}
               </Card>

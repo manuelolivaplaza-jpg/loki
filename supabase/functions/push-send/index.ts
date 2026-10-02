@@ -227,6 +227,8 @@ function prefKeyFor(type: string): string | null {
     case "list": return "list";
     case "poll": return "poll";
     case "memory": return "memory";
+    // Resumen diario "Tu día": interruptor propio en Configuración.
+    case "daily": return "daily";
     default: return null;
   }
 }

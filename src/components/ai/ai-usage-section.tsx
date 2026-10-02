@@ -28,6 +28,8 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   chat_digest: "Resumen de no leídos",
   day_digest: "Resumen del día",
   redact_highlights: "Destacados",
+  day_highlights: "Destacados de Tu día",
+  poll_summary: "Resumen de encuestas",
   transcribe_audio: "Transcripciones",
   ocr_image: "OCR",
   dispatch_agent: "Agentes",

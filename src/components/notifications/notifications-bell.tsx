@@ -12,6 +12,7 @@ import {
   ListChecks,
   Reply,
   Sparkles,
+  Sunrise,
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
@@ -33,6 +34,7 @@ export const NOTIFICATION_ICONS: Record<NotificationType, LucideIcon> = {
   list: ListChecks,
   poll: BarChart3,
   memory: Brain,
+  daily: Sunrise,
 };
 
 /** Campana del header con punto si hay no leídas. */

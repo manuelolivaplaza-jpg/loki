@@ -18,7 +18,8 @@ export type AiJobType =
   | "dispatch_agent"
   | "redact_highlights"
   | "chat_digest"
-  | "poll_summary";
+  | "poll_summary"
+  | "day_highlights";
 
 export type AiJobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 

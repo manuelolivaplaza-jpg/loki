@@ -287,9 +287,22 @@ el mismo valor que `loki.worker_key` en la base): un cliente nunca puede
 invocarla para saltarse cuotas.
 
 Tipos de `ai_jobs`: `chat_summary`, `day_digest`, `redact_highlights`,
-`transcribe_audio`, `chat_digest` y `poll_summary` (el resumen del resultado de
+`transcribe_audio`, `chat_digest`, `poll_summary` (el resumen del resultado de
 una encuesta, **bajo demanda**: el worker arma el resultado con SQL y solo llama
-al modelo barato si hay clave y cuota, reservando antes).
+al modelo barato si hay clave y cuota, reservando antes) y `day_highlights`
+("lo importante de tus espacios" para la vista "Tu día": se pide al abrir,
+modelo barato, cuota del espacio, cacheado por día en `ai_summaries` con
+`chat_key = 'day:YYYY-MM-DD'`).
+
+El resumen diario (`20261011000000_daily_digest.sql`) reemplaza el fijo
+`create_ai_daily_digest()` con el pg_cron `loki-ai-daily-8am` (desprogramado
+aquí, sin editar su migración): `daily_digest_prefs` por usuario (hora local,
+zona, días, espacios, aviso en vacío), notificación tipo `daily` con link
+`/inicio?vista=dia`, y `create_daily_digests()` cada 15 min (SQL barato, sin
+LLM, idempotente por usuario y día local, hora intacta en verano por
+`AT TIME ZONE`). Respeta el interruptor `daily`, el horario de silencio y los
+días hábiles, y no se duplica con `create_due_reminders` (dedupes y tipos
+distintos).
 
 ---
 

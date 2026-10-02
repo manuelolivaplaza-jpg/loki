@@ -37,6 +37,29 @@ importScripts(
           : undefined,
       });
     });
+    // Tocar la push abre su link (p. ej. /inicio?vista=dia de "Tu día").
+    self.addEventListener("notificationclick", function (event) {
+      event.notification.close();
+      var raw = event.notification.data || {};
+      var link =
+        typeof raw.link === "string" && raw.link.charAt(0) === "/"
+          ? raw.link
+          : "/notificaciones";
+      event.waitUntil(
+        self.clients
+          .matchAll({ type: "window", includeUncontrolled: true })
+          .then(function (clients) {
+            for (var i = 0; i < clients.length; i += 1) {
+              var client = clients[i];
+              if ("navigate" in client) {
+                client.navigate(link);
+                return client.focus();
+              }
+            }
+            return self.clients.openWindow(link);
+          }),
+      );
+    });
   } catch {
     // Sin config válida no hay push: el worker queda inerte.
   }

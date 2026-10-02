@@ -98,7 +98,8 @@ export type NotificationType =
   | "ai_alert"
   | "list"
   | "poll"
-  | "memory";
+  | "memory"
+  | "daily";
 
 export interface NotificationItem {
   id: string;
@@ -123,7 +124,8 @@ export type NotificationTypeKey =
   | "ai_alert"
   | "list"
   | "poll"
-  | "memory";
+  | "memory"
+  | "daily";
 
 export interface NotificationPrefs {
   mention: boolean;
@@ -138,6 +140,8 @@ export interface NotificationPrefs {
   poll: boolean;
   /** Memoria del espacio (recuerdo nuevo o por caducar). */
   memory: boolean;
+  /** Resumen diario "Tu día" (push de la mañana). */
+  daily: boolean;
   quietStart: string | null;
   quietEnd: string | null;
 }
@@ -290,6 +294,35 @@ export interface NewPollInput {
   closesAt: Date | null;
   options: PollDraftOption[];
 }
+
+// --- Resumen diario "Tu día" (daily_digest_prefs) --------------------------------
+
+/** Días en que sale el resumen: todos o solo hábiles (lunes a viernes). */
+export type DailyDigestDays = "all" | "weekdays";
+
+export interface DailyDigestPrefs {
+  userId: string;
+  /** Interruptor principal (además del de `NotificationPrefs.daily`). */
+  enabled: boolean;
+  /** Hora local en formato "HH:MM" (default "08:00"). */
+  digestTime: string;
+  /** Zona IANA (default "America/Santiago", detectada del dispositivo). */
+  timezone: string;
+  days: DailyDigestDays;
+  /** Espacios incluidos; vacío = todos los del usuario. */
+  workspaceIds: string[];
+  /** Si no hay nada pendiente: true manda un texto breve, false no manda push. */
+  sendWhenEmpty: boolean;
+}
+
+export const DEFAULT_DAILY_DIGEST_PREFS: Omit<DailyDigestPrefs, "userId"> = {
+  enabled: true,
+  digestTime: "08:00",
+  timezone: "America/Santiago",
+  days: "all",
+  workspaceIds: [],
+  sendWhenEmpty: false,
+};
 
 // --- Memoria del espacio (space_memories) ---------------------------------------
 

@@ -4,6 +4,7 @@ import * as React from "react";
 import { Heart, MessageCircle } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
 import { MessageBubble } from "@/components/chat/message-bubble";
+import type { VoiceContext } from "@/components/media/message-attachments";
 import {
   hasPostLike,
   postCommentCount,
@@ -23,6 +24,11 @@ type PostRowProps = {
   /** Alterna SOLO mi uid en el corazón rojo. */
   onToggleLike: (post: MessageDoc, hasReacted: boolean) => void;
   onOpenComments: (post: MessageDoc) => void;
+  /**
+   * Contexto de transcripción de las notas de voz del post (el chat `posts`).
+   * Sin esto el audio se reproduce igual, pero no se transcribe.
+   */
+  voice: Omit<VoiceContext, "messageId">;
 };
 
 /**
@@ -43,6 +49,7 @@ export function PostRow({
   onRetry,
   onToggleLike,
   onOpenComments,
+  voice,
 }: PostRowProps): React.JSX.Element {
   const liked = hasPostLike(post, currentUid);
   const likeCount = postLikeCount(post);
@@ -57,6 +64,7 @@ export function PostRow({
         showTime
         variant="post"
         now={now}
+        voice={voice}
       />
       {sendStatus === "error" ? (
         <p className="mt-1 pl-[52px] text-meta leading-4 text-danger">

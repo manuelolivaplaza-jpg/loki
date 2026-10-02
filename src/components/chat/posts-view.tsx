@@ -53,6 +53,14 @@ export function PostsView(): React.JSX.Element {
   const [threadParent, setThreadParent] = React.useState<MessageDoc | null>(null);
   const now = usePostClock();
 
+  // Las publicaciones son mensajes del chat `posts` (bucket `post-media`), así
+  // que sus notas de voz también se transcriben bajo demanda, con la
+  // visibilidad del espacio (el feed es visible para todo el espacio).
+  const postVoice = React.useMemo(
+    () => ({ chatId: POSTS_CHAT_ID, authorId: currentUid }),
+    [currentUid],
+  );
+
   // El panel de comentarios conserva el menú @ de los miembros del espacio.
   const mentionMembers = React.useMemo(
     () => membersToCandidates(membersQuery.data ?? []),
@@ -210,6 +218,7 @@ export function PostsView(): React.JSX.Element {
                   onRetry={handleRetry}
                   onToggleLike={handleToggleLike}
                   onOpenComments={setThreadParent}
+                  voice={postVoice}
                 />
               ))}
             </ul>

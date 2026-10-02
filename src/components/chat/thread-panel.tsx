@@ -10,6 +10,7 @@ import {
   MESSAGE_ROW_CLASS,
   MessageBubble,
 } from "@/components/chat/message-bubble";
+import type { VoiceContext } from "@/components/media/message-attachments";
 import { Icon } from "@/components/ui/icon";
 import { QueryRetry } from "@/components/ui/query-retry";
 import { useNotifyTyping, useThread } from "@/hooks/use-chat";
@@ -76,6 +77,13 @@ export function ThreadPanel({
   const replies = React.useMemo(() => thread.data ?? [], [thread.data]);
   const { notify: notifyTyping } = useNotifyTyping(wsId, chatId, currentUid, authorName);
   const parentIsMine = currentUid !== null && parent.authorId === currentUid;
+  // Contexto de transcripción del hilo: habilita "Ver transcripción" en las
+  // notas de voz del padre y de las respuestas (heredan la del mensaje). El
+  // autor real lo pone cada burbuja.
+  const voice = React.useMemo(
+    () => ({ chatId, authorId: currentUid }),
+    [chatId, currentUid],
+  );
   // T17: abierto desde Publicaciones el panel es de comentarios: el padre
   // se muestra con la fila plana del feed (no con burbuja) y el contador y
   // el estado vacío hablan de comentarios en vez de respuestas.
@@ -182,6 +190,7 @@ export function ThreadPanel({
                 showAuthor
                 showTime
                 variant="post"
+                voice={voice}
               />
             </div>
           ) : (
@@ -198,6 +207,7 @@ export function ThreadPanel({
                     isMine={parentIsMine}
                     showAuthor
                     showTime
+                    voice={voice}
                   />
                 </div>
               </div>
@@ -227,7 +237,7 @@ export function ThreadPanel({
           <ul aria-label={`Respuestas: ${title}`} className="flex flex-col gap-3">
             {replies.map((reply) => (
               <li key={reply.id}>
-                <MessageReply reply={reply} currentUid={currentUid} />
+                <MessageReply reply={reply} currentUid={currentUid} voice={voice} />
               </li>
             ))}
           </ul>
@@ -255,19 +265,33 @@ export function ThreadPanel({
   );
 }
 
-/** Una respuesta del hilo: burbuja con tope del 78% de la columna del panel. */
+/**
+ * Una respuesta del hilo: burbuja con tope del 78% de la columna del panel.
+ *
+ * `voice` habilita "Ver transcripción" en las notas de voz: la transcripción
+ * lleva el id del mensaje, así que hereda su visibilidad (en un DM, solo sus
+ * miembros).
+ */
 function MessageReply({
   reply,
   currentUid,
+  voice,
 }: {
   reply: MessageDoc;
   currentUid: string | null;
+  voice: Omit<VoiceContext, "messageId">;
 }): React.JSX.Element {
   const isMine = currentUid !== null && reply.authorId === currentUid;
   return (
     <div className={cn(MESSAGE_ROW_CLASS, isMine ? "justify-end" : "justify-start")}>
       <div className={MESSAGE_BUBBLE_FIT_CLASS}>
-        <MessageBubble message={reply} isMine={isMine} showAuthor showTime />
+        <MessageBubble
+          message={reply}
+          isMine={isMine}
+          showAuthor
+          showTime
+          voice={voice}
+        />
       </div>
     </div>
   );

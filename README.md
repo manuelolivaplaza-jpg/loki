@@ -40,12 +40,14 @@ flowchart LR
   (webm/opus en Chrome, mp4 en Safari); en el chat, mantener para grabar y
   deslizar para cancelar; en escritorio, click para empezar y parar.
 - **Transcripción de notas de voz (bajo demanda)**: cada nota de voz tiene
-  "Ver transcripción". Nada se transcribe hasta que alguien la abre: ahí se
+  "Ver transcripción", en el chat, en los hilos y también en las publicaciones
+  (bucket `post-media`). Nada se transcribe hasta que alguien la abre: ahí se
   encola **un** trabajo en `ai_jobs`, el trigger `wake_ai_worker` despierta a
   `loki-worker` por `pg_net` y el texto llega por Realtime. La tabla
   `audio_transcriptions` guarda texto, idioma, duración, proveedor y estado; un
   archivo, una transcripción (no se vuelve a pagar). La visibilidad es la del
-  mensaje (en un DM, solo sus miembros).
+  mensaje (en un DM, solo sus miembros). Si el espacio llegó a su límite de IA,
+  el audio no sale del servidor y la UI avisa del límite.
 - **Voz a acción**: el micrófono del chat con Loki y la acción rápida "Dictar a
   Loki" graban, transcriben y mandan el texto al mismo flujo que escribirlo a
   mano (analizador determinista primero, modelo después). La transcripción se

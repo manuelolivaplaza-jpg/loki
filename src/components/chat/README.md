@@ -181,6 +181,13 @@ typing, paging, reacciones ni hilos (todo eso es de los chats de espacio).
   RLS la filtra con `can_access_chat` (en un DM, solo sus miembros). El CHECK
   `storage_workspace_id(object_path) = workspace_id` ata cada transcripción al
   espacio real del archivo.
+- **Dónde aparece**: el contexto `voice` (un `{chatId, authorId}` por pantalla)
+  viaja por `MessageList` → `MessageItem` → `MessageBubble` →
+  `MessageAttachments`, y cada burbuja añade su `messageId` y su autor real. Lo
+  pasan el chat (`ConversationView`), los hilos y comentarios
+  (`ThreadPanel`, con el chat del padre) y el feed de Publicaciones
+  (`PostsView`, con el chat `posts` y el bucket `post-media`). El chat privado
+  con Loki no lo pasa: ahí no hay adjuntos.
 - **Dictar a Loki**: `src/components/ai/dictate-sheet.tsx` (botón del
   composer en `/chat/loki-ia`, acción rápida "Dictar a Loki" con
   `?dictar=1`, o `Ctrl/Cmd+Shift+D`). El texto transcrito entra por

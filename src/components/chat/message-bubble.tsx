@@ -296,12 +296,18 @@ export function MessageBubble({
 }: MessageBubbleProps): React.JSX.Element {
   // Color determinista por autor (el mío sale del perfil).
   const avatarColor = useAuthorAvatarColor(message.authorId);
-  // La transcripción de una nota de voz existe solo en mensajes de chat (no en
-  // posts ni en el chat privado con Loki, que no guarda adjuntos).
-  const voiceCtx = React.useMemo(
-    () => (voice === null ? null : { ...voice, messageId: message.id }),
-    [voice, message.id],
-  );
+  // La transcripción de una nota de voz existe solo en mensajes de espacio (no
+  // en el chat privado con Loki, que no guarda adjuntos): la pide quien la abre
+  // y hereda la visibilidad del mensaje. El autor es el del mensaje (quien
+  // habló), no quien está leyendo.
+  const voiceCtx = React.useMemo(() => {
+    if (voice === null) return null;
+    return {
+      ...voice,
+      messageId: message.id,
+      authorId: message.authorId !== "" ? message.authorId : voice.authorId,
+    };
+  }, [voice, message.id, message.authorId]);
 
   // T17: fila plana de publicación (no hay burbuja ni lado a lado).
   if (variant === "post") {

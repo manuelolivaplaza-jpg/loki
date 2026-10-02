@@ -264,9 +264,16 @@ export function VoiceTranscription(props: VoiceProps): React.JSX.Element | null 
       ) : null}
 
       {phase === "listo" ? (
-        <p className={cn("mt-1 whitespace-pre-wrap break-words text-body-sm leading-5", textCls)}>
-          <SafeText text={row?.text ?? ""} />
-        </p>
+        <>
+          <p className={cn("mt-1 whitespace-pre-wrap break-words text-body-sm leading-5", textCls)}>
+            <SafeText text={row?.text ?? ""} />
+          </p>
+          {/* De dónde salió: proveedor e idioma. Sin clave nunca se llega
+              aquí, así que no hace falta avisar de nada más. */}
+          <p className={cn("mt-1 text-meta leading-4", labelCls)}>
+            {[row?.provider ?? "", row?.language ?? ""].filter((part) => part !== "").join(" · ")}
+          </p>
+        </>
       ) : null}
 
       {phase === "error" ? (

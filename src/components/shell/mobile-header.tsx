@@ -21,7 +21,6 @@ import { useChats } from "@/hooks/use-chat";
 import { useAppPathname } from "@/lib/navigation";
 import { MobileWorkspaceSwitcher } from "@/components/workspaces/mobile-workspace-switcher";
 import { NotificationsBell } from "@/components/notifications/notifications-bell";
-import { useSearchStore } from "@/stores/search-store";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { AVATAR_FALLBACK_COLOR } from "@/types/models";
 
@@ -114,7 +113,6 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [actionsOpen, setActionsOpen] = React.useState(false);
-  const setSearchOpen = useSearchStore((state) => state.setOpen);
 
   const chatId = getConversationId(pathname, searchParams.get("id"));
   const isChatList = pathname === "/chat";
@@ -133,6 +131,14 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
   // T17: el feed de Publicaciones es una conversación más en móvil.
   if (isPosts) {
     return <PostsHeader />;
+  }
+
+  // La búsqueda completa trae su propia cabecera (con atrás): aquí no se
+  // pinta nada para no duplicarla.
+  if (pathname === "/buscar") {
+    return (
+      <span aria-hidden="true" className="block md:hidden" />
+    );
   }
 
   // Perfil y configuración en móvil: pantalla completa con X para cerrar.
@@ -164,7 +170,7 @@ function MobileHeaderInner({ title }: MobileHeaderProps): React.JSX.Element {
         {isChatList ? (
           <div className="flex shrink-0 items-center gap-2">
             <NotificationsBell />
-            <IconButton variant="floating" aria-label="Buscar" onClick={() => setSearchOpen(true)}>
+            <IconButton variant="floating" aria-label="Buscar en el espacio" onClick={() => router.push("/buscar")}>
               <Icon icon={Search} size={20} />
             </IconButton>
             <IconButton

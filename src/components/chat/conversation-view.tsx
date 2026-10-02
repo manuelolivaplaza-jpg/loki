@@ -84,6 +84,7 @@ import {
 import { useMessageStatusStore } from "@/lib/chat/message-status";
 import { Timestamp } from "@/lib/timestamp";
 import { useProfileStore } from "@/stores/profile-store";
+import { useSearchStore } from "@/stores/search-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
 import type { MessageAttachment, MessageDoc, MessageReplyRef } from "@/types/chat";
@@ -935,6 +936,21 @@ export function ConversationView({
     dictateOpenedRef.current = true;
     setDictating(true);
   }, [openDictate, isLoki]);
+
+  // "Preguntar a Loki" desde la búsqueda: la paleta/pantalla deja la pregunta
+  // con los resultados como contexto y este chat la envía UNA vez al abrirse
+  // (mismo camino que escribirla a mano: cuota y streaming de siempre).
+  const lokiQuestion = useSearchStore((state) => state.lokiQuestion);
+  const setLokiQuestion = useSearchStore((state) => state.setLokiQuestion);
+  const askedRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!isLoki || lokiQuestion === null || askedRef.current === lokiQuestion.id) return;
+    askedRef.current = lokiQuestion.id;
+    const text = lokiQuestion.text;
+    setLokiQuestion(null);
+    if (text.trim() === "") return;
+    sendToLoki(text);
+  }, [isLoki, lokiQuestion, setLokiQuestion, sendToLoki]);
 
   // Atajo de teclado en escritorio: Ctrl/Cmd + Shift + D abre el micrófono.
   // (En móvil no hay atajo: el botón del composer es el camino.)

@@ -125,5 +125,8 @@ export function isFullscreenRoute(pathname: string | null): boolean {
     return true;
   }
   if (normalized.startsWith("/chat/") && normalized !== "/chat/") return true;
+  // La búsqueda completa es una pantalla con su propia cabecera (con atrás):
+  // sin barra inferior.
+  if (normalized === "/buscar") return true;
   return false;
 }

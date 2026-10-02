@@ -10,14 +10,16 @@
 //
 // Tipos soportados: chat_summary (modelo barato), day_digest y
 // redact_highlights (plantilla determinista + pulido opcional con modelo
-// barato), chat_digest, transcribe_audio (notas de voz bajo demanda) y
+// barato), chat_digest, transcribe_audio (notas de voz bajo demanda),
+// ocr_image (texto en imágenes bajo demanda, solo si el espacio lo activó) y
 // poll_summary (resumen del resultado de una encuesta, bajo demanda).
-// ocr_image y dispatch_agent terminan en error claro "no soportado todavía"
+// dispatch_agent termina en error claro "no soportado todavía"
 // (sin reintentos infinitos).
 // Sin LLM_API_KEY: lo que necesita modelo termina en error
 // "Loki IA sin configurar", sin reintentar. Para transcribe_audio la clave es
-// la de voz a texto (STT_API_KEY): sin ella el trabajo termina en error
-// "Transcripción sin configurar" y la UI lo muestra tal cual.
+// la de voz a texto (STT_API_KEY) y para ocr_image la de visión (OCR_API_KEY
+// o la del LLM): sin ella el trabajo termina como omitido y la UI lo muestra
+// tal cual.
 //
 // Antes de cada llamada al LLM reserva cuota con reserve_ai_quota() (espacio +
 // usuario); sin cuota el trabajo termina en error amable. Lo determinista
@@ -30,6 +32,7 @@
 // =============================================================================
 
 import { SttError, sttHealth, transcribeAudio } from "../_shared/transcribe.ts";
+import { OcrError, extractImageText, isOcrConfigured, ocrHealth } from "../_shared/vision.ts";
 
 const SUPABASE_URL = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -408,9 +411,10 @@ async function processJob(job: Job): Promise<Record<string, unknown>> {
       return processChatDigest(job);
     case "transcribe_audio":
       return processTranscribe(job);
+    case "ocr_image":
+      return processOcr(job);
     case "poll_summary":
       return processPollSummary(job);
-    case "ocr_image":
     case "dispatch_agent":
       throw Object.assign(
         new Error(`El trabajo ${job.type} aún no está soportado.`),
@@ -699,6 +703,213 @@ async function processTranscribe(job: Job): Promise<Record<string, unknown>> {
       : /HTTP 5|fetch failed|network/i.test(message);
     await saveTranscription(row.id, { status: "error", error: message });
     throw Object.assign(new Error(message), { terminal: !retryable, sttRetryable: retryable });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Texto en imágenes (OCR bajo demanda, solo si el espacio lo activó).
+//
+// El cliente NO manda la imagen: el trigger `enqueue_image_ocr` ya dejó el
+// trabajo `ocr_image` con el id de la fila de `message_attachments`. Aquí se
+// descarga con la service role, se lee el texto con el modelo de visión y se
+// guarda indexado para la búsqueda.
+//
+// Seguridad, en este orden y sin saltarse nada (igual que la transcripción):
+//   1. La fila tiene que existir.
+//   2. Quien la pidió (el autor del mensaje) sigue siendo miembro y, si el
+//      chat es DM, sigue estando en member_ids.
+//   3. Cuota del espacio ANTES de bajar la imagen.
+// Sin visión configurada la imagen queda `skipped` (se encuentra por nombre).
+// -----------------------------------------------------------------------------
+
+type AttachmentRow = {
+  id: string;
+  workspace_id: string;
+  bucket: string;
+  object_path: string;
+  chat_id: string;
+  message_id: string;
+  mime: string;
+  author_id: string | null;
+  ocr_status: string;
+};
+
+/** Descarga un objeto con la service role (permisos de servidor). */
+async function downloadObject(
+  bucket: string,
+  objectPath: string,
+): Promise<{ bytes: ArrayBuffer; mime: string } | null> {
+  const encoded = objectPath.split("/").map(encodeURIComponent).join("/");
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${bucket}/${encoded}`, {
+    headers: { apikey: SERVICE_KEY, authorization: `Bearer ${SERVICE_KEY}` },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new OcrError(
+      "download",
+      `No se pudo descargar la imagen (HTTP ${res.status}).`,
+      res.status >= 500,
+    );
+  }
+  return {
+    bytes: await res.arrayBuffer(),
+    mime: res.headers.get("content-type") ?? "",
+  };
+}
+
+async function loadAttachment(id: string): Promise<AttachmentRow | null> {
+  const res = await svcGet(
+    `/message_attachments?id=eq.${encodeURIComponent(id)}&select=id,workspace_id,bucket,object_path,chat_id,message_id,mime,author_id,ocr_status&limit=1`,
+  );
+  if (!res.ok || !Array.isArray(res.data)) return null;
+  const row = res.data[0];
+  if (!isRecord(row)) return null;
+  const objectPath = asString(row["object_path"]);
+  const bucket = asString(row["bucket"]);
+  if (objectPath === null || bucket === null) return null;
+  return {
+    id: String(row["id"] ?? id),
+    workspace_id: String(row["workspace_id"] ?? ""),
+    bucket,
+    object_path: objectPath,
+    chat_id: String(row["chat_id"] ?? ""),
+    message_id: String(row["message_id"] ?? ""),
+    mime: String(row["mime"] ?? ""),
+    author_id: asString(row["author_id"]),
+    ocr_status: String(row["ocr_status"] ?? ""),
+  };
+}
+
+/** Marca la fila del índice (service role). Sin trigger de UPDATE: no recursa. */
+async function saveAttachment(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await fetch(`${SUPABASE_URL}/rest/v1/message_attachments?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: svcHeaders(),
+    body: JSON.stringify(patch),
+  }).catch(() => undefined);
+}
+
+async function processOcr(job: Job): Promise<Record<string, unknown>> {
+  const attachmentId = asString(job.payload["attachment_id"]);
+  if (attachmentId === null) {
+    throw Object.assign(new Error("Sin imagen que leer."), { terminal: true });
+  }
+  const row = await loadAttachment(attachmentId);
+  if (row === null) {
+    throw Object.assign(new Error("El adjunto ya no existe."), { terminal: true });
+  }
+  if (row.ocr_status === "ready") {
+    return { attachment_id: row.id, cached: true };
+  }
+  const ws = row.workspace_id !== "" ? row.workspace_id : job.workspace_id;
+  const uid = row.author_id ?? job.requested_by;
+  if (uid === null) {
+    await saveAttachment(row.id, { ocr_status: "skipped" });
+    throw Object.assign(new Error("Sin usuario al que cargarle el OCR."), { terminal: true });
+  }
+
+  // --- 1. Membresía del espacio ---
+  const member = await svcGet(
+    `/workspace_members?workspace_id=eq.${encodeURIComponent(ws)}&user_id=eq.${encodeURIComponent(uid)}&select=user_id&limit=1`,
+  );
+  if (!member.ok || !Array.isArray(member.data) || member.data.length === 0) {
+    await saveAttachment(row.id, { ocr_status: "skipped" });
+    throw Object.assign(new Error("Sin acceso al espacio."), { terminal: true });
+  }
+
+  // --- 2. Visibilidad heredada del mensaje (DMs incluidos) ---
+  const chat = await svcGet(
+    `/chats?workspace_id=eq.${encodeURIComponent(ws)}&id=eq.${encodeURIComponent(row.chat_id)}&select=type,member_ids&limit=1`,
+  );
+  const chatRow =
+    chat.ok && Array.isArray(chat.data) && isRecord(chat.data[0]) ? chat.data[0] : null;
+  if (chatRow === null) {
+    await saveAttachment(row.id, { ocr_status: "skipped" });
+    throw Object.assign(new Error("Chat no encontrado."), { terminal: true });
+  }
+  if (chatRow["type"] === "dm") {
+    const ids = Array.isArray(chatRow["member_ids"]) ? chatRow["member_ids"] : [];
+    if (!ids.includes(uid)) {
+      await saveAttachment(row.id, { ocr_status: "skipped" });
+      throw Object.assign(new Error("Sin acceso a ese chat."), { terminal: true });
+    }
+  }
+  if (!row.object_path.startsWith(`${ws}/`)) {
+    await saveAttachment(row.id, { ocr_status: "skipped" });
+    throw Object.assign(
+      new Error("La imagen no pertenece a este espacio."),
+      { terminal: true },
+    );
+  }
+
+  // --- 3. Cuota ANTES de bajar la imagen (texto fijo: 2 unidades) ---
+  const q = await reserve(ws, uid, "ocr_image", 2);
+  if (!q.allowed) {
+    const message = quotaMessage(q.reason);
+    await saveAttachment(row.id, { ocr_status: "error" });
+    await notifyUser(uid, ws, "Texto en imagen sin leer", message, "/chat/loki-ia");
+    throw Object.assign(new Error(message), { terminal: true });
+  }
+
+  // --- 4. Sin visión configurada no se gasta nada: por nombre no más ---
+  if (!isOcrConfigured()) {
+    await saveAttachment(row.id, { ocr_status: "skipped" });
+    throw Object.assign(new Error("OCR sin configurar."), { terminal: true });
+  }
+
+  // --- 5. Descarga con permisos de servidor ---
+  let bytes: ArrayBuffer;
+  let mime: string;
+  try {
+    const file = await downloadObject(row.bucket, row.object_path);
+    if (file === null) {
+      await saveAttachment(row.id, { ocr_status: "error" });
+      throw Object.assign(new Error("Imagen no encontrada."), { terminal: true });
+    }
+    bytes = file.bytes;
+    // Storage puede devolver octet-stream: el MIME que declaró la subida
+    // (file.type del cliente) manda si el guardado no parece imagen.
+    mime = file.mime.toLowerCase().startsWith("image/") ? file.mime : row.mime;
+  } catch (error) {
+    if (error instanceof OcrError) {
+      await saveAttachment(row.id, { ocr_status: "error" });
+      throw Object.assign(new Error(error.message), {
+        terminal: !error.retryable,
+        ocrRetryable: error.retryable,
+      });
+    }
+    if (isRecord(error) && (error as { terminal?: unknown }).terminal === true) {
+      throw error;
+    }
+    await saveAttachment(row.id, { ocr_status: "error" });
+    throw Object.assign(new Error("No se pudo descargar la imagen."), { terminal: true });
+  }
+
+  // --- 6. Extracción (una imagen sin texto devuelve "" y queda lista) ---
+  try {
+    const result = await extractImageText({ bytes, mimeType: mime });
+    await saveAttachment(row.id, {
+      ocr_status: "ready",
+      ocr_text: result.text.slice(0, 8000),
+    });
+    return { attachment_id: row.id, chars: result.text.length, provider: result.provider };
+  } catch (error) {
+    const message =
+      error instanceof OcrError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "No se pudo leer el texto de la imagen.";
+    const retryable = error instanceof OcrError
+      ? error.retryable
+      : /HTTP 5|fetch failed|network/i.test(message);
+    // Sin config a mitad de camino (clave revocada): omitir, no reintentar.
+    const skipped = error instanceof OcrError && error.code === "not_configured";
+    await saveAttachment(row.id, { ocr_status: skipped ? "skipped" : "error" });
+    throw Object.assign(new Error(message), { terminal: !retryable || skipped, ocrRetryable: retryable && !skipped });
   }
 }
 
@@ -995,9 +1206,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
   if (req.method === "GET") {
     // Público a propósito (como /health de loki-chat): solo booleanos y el
-    // nombre del proveedor/modelo. Sirve para el aviso "Transcripción sin
-    // configurar" sin gastar un trabajo.
-    return json(200, { stt: sttHealth(), llm: llmConfigured() });
+    // nombre del proveedor/modelo. Sirve para los avisos "sin configurar"
+    // sin gastar un trabajo.
+    return json(200, { stt: sttHealth(), ocr: ocrHealth(), llm: llmConfigured() });
   }
   if (req.method !== "POST") {
     return json(405, { code: "method_not_allowed" });
@@ -1039,10 +1250,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const rec = isRecord(error) ? (error as Record<string, unknown>) : {};
     const terminal = rec["terminal"] === true;
     const message = error instanceof Error ? error.message : "Error del trabajador.";
-    // La transcripción marca si su fallo es reintentable (red o 5xx); el resto
-    // de trabajos deducen del mensaje, como antes.
+    // La transcripción marca si su fallo es reintentable (red o 5xx); el OCR
+    // igual; el resto de trabajos deducen del mensaje, como antes.
     const providerDown =
-      rec["sttRetryable"] === true || /HTTP 4|HTTP 5|fetch failed|network/i.test(message);
+      rec["sttRetryable"] === true || rec["ocrRetryable"] === true ||
+      /HTTP 4|HTTP 5|fetch failed|network/i.test(message);
     await finishError(job.id, message, !terminal && providerDown, job.attempts, job.max_attempts);
     return json(200, { claimed: true, status: !terminal && providerDown ? "queued" : "error" });
   }

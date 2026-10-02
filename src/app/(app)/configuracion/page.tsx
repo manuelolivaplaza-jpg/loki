@@ -16,6 +16,7 @@ import { isNativePlatform, registerNativePush } from "@/lib/push/native";
 import { DEFAULT_PREFS } from "@/lib/data/notifications";
 import { GcalSection } from "@/components/calendar/gcal-section";
 import { AiUsageSection } from "@/components/ai/ai-usage-section";
+import { OcrSettingsSection } from "@/components/search/ocr-settings-section";
 import { useMembers } from "@/hooks/use-chat";
 import { useWorkspaces } from "@/stores/workspace-store";
 import { MembersSection } from "@/components/members/members-section";
@@ -356,6 +357,12 @@ export default function ConfiguracionPage(): React.JSX.Element {
           isAdmin={isSpaceAdmin}
         />
       ) : null}
+
+      <OcrSettingsSection
+        wsId={currentWorkspaceId}
+        uid={user?.uid ?? null}
+        isAdmin={isSpaceAdmin}
+      />
 
       <MembersSection />
 

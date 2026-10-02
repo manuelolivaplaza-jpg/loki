@@ -56,9 +56,18 @@ flowchart LR
 - **Convertir una nota de voz**: "Convertir en…" (tarea, evento o
   recordatorio) sobre un mensaje con audio transcribe primero y usa la
   transcripción como texto.
-- **Búsqueda universal**: Cmd/Ctrl+K busca en mensajes, **notas de voz
-  transcritas**, **recuerdos del espacio**, tareas, proyectos, eventos y
-  personas.
+- **Búsqueda universal**: Cmd/Ctrl+K (escritorio) o la lupa → `/buscar`
+  (móvil) busca en mensajes, **notas de voz transcritas**, **archivos e
+  imágenes (por nombre y por texto OCR)**, **listas e ítems**,
+  **encuestas**, **ideas**, **recuerdos del espacio**, tareas, proyectos,
+  eventos y personas. Filtros por tipo (chips), `de: Sofi`, `en: General`,
+  `solo míos` y fechas (`la semana pasada`), "ver más" paginado y botón
+  **Preguntar a Loki** al final (responde con los resultados como contexto,
+  nunca automático).
+- **Texto en imágenes (opcional, por espacio)**: con el OCR activado en
+  Configuración, cada foto subida se lee sola con el modelo de visión y su
+  texto queda indexado. Cuesta cuota de IA; sin configurar, las imágenes se
+  encuentran por nombre.
 - **Encuestas en el chat** (decidir sin 40 mensajes): desde el `+` del
   composer, desde Acciones rápidas o pidiéndoselo a Loki ("haz una encuesta
   para elegir el día del asado entre viernes y sábado", que además funciona
@@ -133,6 +142,7 @@ Secretos en `supabase/functions/.env` (gitignored; ver
 |---|---|
 | `LLM_PROVIDER`, `LLM_MODEL`, `LLM_MODEL_FAST`, `LLM_MODEL_SMART`, `LLM_API_KEY`, `LLM_BASE_URL` | Loki IA (`loki-chat`, `loki-worker`) |
 | `STT_PROVIDER`, `STT_MODEL`, `STT_API_KEY`, `STT_BASE_URL` | Voz a texto de notas de voz y dictado |
+| `OCR_PROVIDER`, `OCR_MODEL`, `OCR_API_KEY`, `OCR_BASE_URL` | Texto en imágenes (vacío = reutiliza la config del LLM) |
 | `WORKER_KEY` | Clave interna que valida el trigger `wake_ai_worker` (mismo valor que `loki.worker_key` en la base) |
 | `FCM_SERVICE_ACCOUNT` | Push (FCM) |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URL`, `GOOGLE_TOKEN_KEY` | Google Calendar |

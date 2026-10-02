@@ -3,72 +3,46 @@
 /**
  * Paleta de búsqueda global (Cmd/Ctrl+K y lupa).
  *
- * Montaje único en `AppShell`: overlay + input con grupos de resultados
- * (Mensajes, Notas de voz, Recuerdos, Tareas, Proyectos, Eventos y Personas),
- * acciones rápidas y recientes cuando la consulta está vacía. Teclado: ↑↓
- * navegar, Enter abrir, Esc cerrar. Las coincidencias se resaltan con
- * `<mark>`.
+ * Montaje único en `AppShell`: overlay + input con chips de tipo, grupos de
+ * resultados (mensajes, voz, archivos, listas, ítems, encuestas, ideas,
+ * recuerdos, tareas, proyectos, eventos y personas), "ver más" paginado por
+ * grupo y el botón "Preguntar a Loki" al final. Teclado: ↑↓ navegar, Tab
+ * saltar entre grupos, Enter abrir, Esc cerrar. Las coincidencias se
+ * resaltan con `<mark>`.
  */
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
   Brain,
-  CalendarDays,
   CalendarPlus,
   ClipboardList,
-  FolderKanban,
   FolderPlus,
   History,
-  MessageCircle,
   Search,
   Sparkles,
   UserPlus,
-  Users,
   X,
-  Mic,
   type LucideIcon,
 } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
 import {
-  EMPTY_RESULTS,
+  buildLokiQuestion,
   getRecents,
-  highlight,
   pushRecent,
-  searchAll,
   type RecentItem,
-  type RecentKind,
-  type SearchResults,
+  type SearchGroupKey,
 } from "@/lib/data/search";
+import {
+  Marked,
+  TYPE_CHIPS,
+  buildResultSections,
+  type ResultItem,
+  type ResultSection,
+} from "@/components/search/search-sections";
+import { useSearchResults } from "@/hooks/use-search";
 import { useSearchStore } from "@/stores/search-store";
 import { cn } from "@/lib/utils";
-
-/** Espera tras la última tecla antes de llamar a la RPC. */
-const SEARCH_DEBOUNCE_MS = 220;
-
-type ActionKind =
-  | "message"
-  | "task"
-  | "project"
-  | "event"
-  | "action"
-  | "recent"
-  | "transcription"
-  | "memory";
-
-type PaletteItem = {
-  key: string;
-  kind: ActionKind;
-  recentKind: RecentKind;
-  title: string;
-  subtitle: string;
-  href: string;
-  icon: LucideIcon;
-  /** Texto donde se resaltan las coincidencias (por defecto el título). */
-  highlightText: string;
-  /** Emoji en vez de icono (proyectos). */
-  emoji?: string;
-};
 
 type QuickAction = {
   key: string;
@@ -123,12 +97,6 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
   },
 ];
 
-const ROLE_LABELS: Record<string, string> = {
-  owner: "Propietario",
-  admin: "Administrador",
-  member: "Miembro",
-};
-
 /** Normaliza para filtrar acciones (minúsculas y sin tildes). */
 function normalize(value: string): string {
   return value
@@ -137,44 +105,7 @@ function normalize(value: string): string {
     .replace(/\p{Diacritic}/gu, "");
 }
 
-function formatEventDate(iso: string): string {
-  if (iso === "") return "Evento";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "Evento";
-  return date.toLocaleDateString("es", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-  });
-}
-
-/** Texto con las coincidencias envueltas en `<mark>`. */
-function Marked({ query, text }: { query: string; text: string }): React.JSX.Element {
-  const parts = highlight(query, text);
-  return (
-    <>
-      {parts.map((part, index) =>
-        part.hit ? (
-          <mark
-            key={index}
-            className="rounded-sm bg-accent/20 font-semibold text-inherit"
-          >
-            {part.text}
-          </mark>
-        ) : (
-          <React.Fragment key={index}>{part.text}</React.Fragment>
-        ),
-      )}
-    </>
-  );
-}
-
-type PaletteSection = {
-  label: string;
-  items: PaletteItem[];
-};
-
-function recentToItem(recent: RecentItem): PaletteItem {
+function recentToItem(recent: RecentItem): ResultItem {
   const action = QUICK_ACTIONS.find((item) => item.href === recent.href);
   return {
     key: `recent:${recent.href}`,
@@ -182,6 +113,7 @@ function recentToItem(recent: RecentItem): PaletteItem {
     recentKind: recent.kind,
     title: recent.title,
     subtitle: recent.subtitle,
+    detail: null,
     href: recent.href,
     icon: action?.icon ?? History,
     highlightText: recent.title,
@@ -196,26 +128,36 @@ export function SearchPalette({
   const router = useRouter();
   const open = useSearchStore((state) => state.open);
   const setOpen = useSearchStore((state) => state.setOpen);
+  const setLokiQuestion = useSearchStore((state) => state.setLokiQuestion);
   const [query, setQuery] = React.useState("");
-  const [results, setResults] = React.useState<SearchResults>(EMPTY_RESULTS);
+  const [chip, setChip] = React.useState("all");
   const [recents, setRecents] = React.useState<RecentItem[]>([]);
   const [active, setActive] = React.useState(0);
-  const [searching, setSearching] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const requestRef = React.useRef(0);
   const rowRefs = React.useRef(new Map<string, HTMLButtonElement>());
+
+  const activeChip = TYPE_CHIPS.find((item) => item.key === chip) ?? TYPE_CHIPS[0];
+  const types = activeChip?.types ?? null;
+  const {
+    parsed,
+    results,
+    hasQuery,
+    searching,
+    error,
+    totalHits,
+    more,
+    loadMore,
+    retry,
+  } = useSearchResults(wsId, query, { types });
 
   const close = React.useCallback(() => setOpen(false), [setOpen]);
 
-  // Al abrir: consulta limpia, resultados vacíos y recientes del espacio.
+  // Al abrir: consulta limpia, chip en Todo y recientes del espacio.
   React.useEffect(() => {
     if (!open) return;
     setQuery("");
-    setResults(EMPTY_RESULTS);
-    setError(null);
+    setChip("all");
     setActive(0);
-    requestRef.current += 1;
     setRecents(wsId === null ? [] : getRecents(wsId));
   }, [open, wsId]);
 
@@ -228,57 +170,32 @@ export function SearchPalette({
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [open]);
-
-  // Búsqueda con debounce (a partir de 2 letras).
-  React.useEffect(() => {
-    if (!open || wsId === null) return;
-    const trimmed = query.trim();
-    if (trimmed.length < 2) {
-      requestRef.current += 1;
-      setResults(EMPTY_RESULTS);
-      setSearching(false);
-      setError(null);
-      return;
-    }
-    setSearching(true);
-    setError(null);
-    const id = requestRef.current + 1;
-    requestRef.current = id;
-    const timer = setTimeout(() => {
-      void searchAll(wsId, trimmed)
-        .then((next) => {
-          if (requestRef.current !== id) return;
-          setResults(next);
-          setSearching(false);
-        })
-        .catch(() => {
-          if (requestRef.current !== id) return;
-          setResults(EMPTY_RESULTS);
-          setSearching(false);
-          setError("No se pudo buscar. Inténtalo de nuevo.");
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [open, wsId, query]);
+  }, [open ]);
 
   const trimmedQuery = query.trim();
-  const hasQuery = trimmedQuery.length >= 2;
 
-  const sections: PaletteSection[] = React.useMemo(() => {
+  const sections: ResultSection[] = React.useMemo(() => {
     if (!hasQuery) {
-      const out: PaletteSection[] = [];
+      const out: ResultSection[] = [];
       if (recents.length > 0) {
-        out.push({ label: "Recientes", items: recents.map(recentToItem) });
+        out.push({
+          key: "recents",
+          label: "Recientes",
+          group: null,
+          items: recents.map(recentToItem),
+        });
       }
       out.push({
+        key: "actions",
         label: "Acciones",
+        group: null,
         items: QUICK_ACTIONS.map((action) => ({
           key: `action:${action.key}`,
           kind: "action",
           recentKind: "action",
           title: action.title,
           subtitle: action.subtitle,
+          detail: null,
           href: action.href,
           icon: action.icon,
           highlightText: action.title,
@@ -287,106 +204,7 @@ export function SearchPalette({
       return out;
     }
     const norm = normalize(trimmedQuery);
-    const out: PaletteSection[] = [];
-    if (results.messages.length > 0) {
-      out.push({
-        label: "Mensajes",
-        items: results.messages.map((hit) => ({
-          key: `message:${hit.id}`,
-          kind: "message",
-          recentKind: "message",
-          title: hit.text === "" ? "(sin texto)" : hit.text,
-          subtitle: `${hit.authorName} · ${hit.chatName}`,
-          href: `/chat/c?id=${encodeURIComponent(hit.chatId)}`,
-          icon: MessageCircle,
-          highlightText: hit.text,
-        })),
-      });
-    }
-    if (results.transcriptions.length > 0) {
-      out.push({
-        label: "Notas de voz",
-        items: results.transcriptions.map((hit) => ({
-          key: `transcription:${hit.id}`,
-          kind: "transcription",
-          recentKind: "message",
-          title: hit.text === "" ? "(sin texto)" : hit.text,
-          subtitle:
-            hit.authorName === ""
-              ? "Transcripción"
-              : `${hit.authorName} · transcripción`,
-          // Sin mensaje (dictado suelto): al chat de Loki, que es donde se
-          // puede volver a escuchar. Con mensaje: al chat de la nota.
-          href:
-            hit.chatId !== null && hit.chatId !== ""
-              ? `/chat/c?id=${encodeURIComponent(hit.chatId)}`
-              : "/chat/loki-ia",
-          icon: Mic,
-          highlightText: hit.text,
-        })),
-      });
-    }
-    if (results.memories.length > 0) {
-      out.push({
-        label: "Recuerdos",
-        items: results.memories.map((hit) => ({
-          key: `memory:${hit.id}`,
-          kind: "memory",
-          recentKind: "action",
-          title: hit.content,
-          subtitle: `Recuerdo · ${hit.authorName}`,
-          href: "/memoria",
-          icon: Brain,
-          highlightText: hit.content,
-        })),
-      });
-    }
-    if (results.tasks.length > 0) {
-      out.push({
-        label: "Tareas",
-        items: results.tasks.map((hit) => ({
-          key: `task:${hit.id}`,
-          kind: "task",
-          recentKind: "task",
-          title: hit.title,
-          subtitle: hit.projectName === "" ? "Tarea" : hit.projectName,
-          href: `/proyectos?project=${encodeURIComponent(hit.projectId)}&task=${encodeURIComponent(hit.id)}`,
-          icon: ClipboardList,
-          highlightText: hit.title,
-        })),
-      });
-    }
-    if (results.projects.length > 0) {
-      out.push({
-        label: "Proyectos",
-        items: results.projects.map((hit) => ({
-          key: `project:${hit.id}`,
-          kind: "project",
-          recentKind: "project",
-          title: hit.name,
-          subtitle: "Proyecto",
-          href: `/proyectos?project=${encodeURIComponent(hit.id)}`,
-          icon: FolderKanban,
-          highlightText: hit.name,
-          emoji: hit.emoji,
-        })),
-      });
-    }
-    if (results.events.length > 0) {
-      out.push({
-        label: "Eventos",
-        items: results.events.map((hit) => ({
-          key: `event:${hit.id}`,
-          kind: "event",
-          recentKind: "event",
-          title: hit.title,
-          subtitle: formatEventDate(hit.startsAt),
-          href: "/calendario",
-          icon: CalendarDays,
-          highlightText: hit.title,
-        })),
-      });
-    }
+    const out = buildResultSections(results, parsed.text === "" ? trimmedQuery : parsed.text);
     const actions = QUICK_ACTIONS.filter(
       (action) =>
         normalize(action.title).includes(norm) ||
@@ -397,28 +215,37 @@ export function SearchPalette({
       recentKind: "action" as const,
       title: action.title,
       subtitle: action.subtitle,
-      href: action.href,
+      detail: null as string | null,
+      href: action.href as string | null,
       icon: action.icon,
       highlightText: action.title,
     }));
     if (actions.length > 0) {
-      out.push({ label: "Acciones", items: actions });
+      out.push({ key: "actions", label: "Acciones", group: null, items: actions });
     }
     return out;
-  }, [hasQuery, trimmedQuery, results, recents]);
+  }, [hasQuery, trimmedQuery, results, parsed, recents]);
 
-  // Personas: informativas (sin destino propio), fuera de la navegación.
-  const people = hasQuery ? results.people : [];
-
-  const flat: PaletteItem[] = React.useMemo(
+  const flat: ResultItem[] = React.useMemo(
     () => sections.flatMap((section) => section.items),
     [sections],
   );
 
+  // Inicios de grupo para saltar con Tab.
+  const groupStarts = React.useMemo(() => {
+    const starts: number[] = [];
+    let cursor = 0;
+    for (const section of sections) {
+      if (section.items.length > 0) starts.push(cursor);
+      cursor += section.items.length;
+    }
+    return starts;
+  }, [sections]);
+
   // Al cambiar los resultados se vuelve al primero.
   React.useEffect(() => {
     setActive(0);
-  }, [query, results]);
+  }, [query, results, chip]);
 
   const safeActive = flat.length === 0 ? -1 : Math.min(active, flat.length - 1);
 
@@ -430,7 +257,8 @@ export function SearchPalette({
     });
   }, [safeActive, flat]);
 
-  function choose(item: PaletteItem): void {
+  function choose(item: ResultItem): void {
+    if (item.href === null) return;
     if (wsId !== null) {
       pushRecent(wsId, {
         kind: item.recentKind,
@@ -443,10 +271,32 @@ export function SearchPalette({
     router.push(item.href);
   }
 
+  function askLoki(): void {
+    if (wsId === null || totalHits === 0) return;
+    const question = buildLokiQuestion(trimmedQuery, results);
+    setLokiQuestion({ id: crypto.randomUUID(), text: question });
+    close();
+    router.push("/chat/loki-ia");
+  }
+
   function handleKey(event: React.KeyboardEvent<HTMLInputElement>): void {
     if (event.key === "Escape") {
       event.preventDefault();
       close();
+      return;
+    }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      if (groupStarts.length === 0) return;
+      const forward = !event.shiftKey;
+      const current = safeActive < 0 ? 0 : safeActive;
+      if (forward) {
+        const next = groupStarts.find((start) => start > current);
+        setActive(next ?? groupStarts[0] ?? 0);
+      } else {
+        const prev = [...groupStarts].reverse().find((start) => start < current);
+        setActive(prev ?? groupStarts[groupStarts.length - 1] ?? 0);
+      }
       return;
     }
     if (flat.length === 0) return;
@@ -465,14 +315,8 @@ export function SearchPalette({
 
   if (!open) return null;
 
-  const totalHits =
-    results.messages.length +
-    results.transcriptions.length +
-    results.memories.length +
-    results.tasks.length +
-    results.projects.length +
-    results.events.length +
-    results.people.length;
+  const showAskLoki = hasQuery && !searching && error === null && totalHits > 0;
+  const highlightQuery = parsed.text === "" ? trimmedQuery : parsed.text;
 
   return (
     <div
@@ -502,7 +346,7 @@ export function SearchPalette({
                 : undefined
             }
             aria-label="Buscar"
-            placeholder="Buscar mensajes, tareas, proyectos…"
+            placeholder="Buscar mensajes, archivos, listas… (de:, en:, solo míos)"
             value={query}
             onChange={(formEvent) => setQuery(formEvent.target.value)}
             onKeyDown={handleKey}
@@ -522,19 +366,73 @@ export function SearchPalette({
         </div>
 
         <div
+          role="toolbar"
+          aria-label="Filtrar por tipo"
+          className="flex gap-1.5 overflow-x-auto border-b border-divider px-3 py-2"
+        >
+          {TYPE_CHIPS.map((item) => {
+            const selected = item.key === chip;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setChip(item.key)}
+                className={cn(
+                  "shrink-0 rounded-full px-3 py-1.5 text-body-sm font-medium outline-none interactive",
+                  selected
+                    ? "bg-foreground text-background"
+                    : "bg-surface-soft text-muted-foreground",
+                )}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {parsed.labels.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5 px-4 pt-2" aria-label="Filtros activos">
+            {parsed.labels.map((label) => (
+              <span
+                key={label}
+                className="rounded-full bg-accent/15 px-2.5 py-1 text-meta font-medium text-accent"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        <div
           id="search-results"
           role="listbox"
           aria-label="Resultados"
           className="max-h-[55vh] overflow-y-auto pb-2"
         >
-          {searching ? (
-            <p className="px-4 py-6 text-center text-body-sm text-muted-foreground">
-              Buscando…
-            </p>
+          {searching && totalHits === 0 ? (
+            <div aria-label="Buscando" className="flex flex-col gap-2 px-4 py-3">
+              {[0, 1, 2].map((index) => (
+                <span
+                  key={index}
+                  aria-hidden="true"
+                  className="block h-12 animate-pulse rounded-lg bg-surface-soft"
+                />
+              ))}
+            </div>
           ) : error !== null ? (
-            <p role="alert" className="px-4 py-6 text-center text-body-sm text-danger">
-              {error}
-            </p>
+            <div className="px-4 py-6 text-center">
+              <p role="alert" className="text-body-sm text-danger">
+                {error}
+              </p>
+              <button
+                type="button"
+                onClick={retry}
+                className="mt-2 rounded-full bg-surface-soft px-4 py-2 text-body-sm font-medium text-foreground outline-none interactive"
+              >
+                Reintentar
+              </button>
+            </div>
           ) : hasQuery && totalHits === 0 && sections.length === 0 ? (
             <p className="px-4 py-6 text-center text-body-sm text-muted-foreground">
               Sin resultados para «{trimmedQuery}».
@@ -548,6 +446,7 @@ export function SearchPalette({
                 {section.items.map((item) => {
                   const index = flat.indexOf(item);
                   const isActive = index === safeActive;
+                  const clickable = item.href !== null;
                   return (
                     <button
                       key={item.key}
@@ -563,12 +462,14 @@ export function SearchPalette({
                       role="option"
                       aria-selected={isActive}
                       onClick={() => choose(item)}
+                      disabled={!clickable}
                       onMouseMove={() => {
                         if (index !== active) setActive(index);
                       }}
                       className={cn(
                         "flex w-full items-center gap-3 px-4 py-2.5 text-left outline-none",
                         isActive ? "bg-surface-soft" : "bg-transparent",
+                        !clickable && "cursor-default",
                       )}
                     >
                       <span
@@ -584,7 +485,7 @@ export function SearchPalette({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-body text-foreground">
                           {hasQuery && item.kind !== "recent" ? (
-                            <Marked query={trimmedQuery} text={item.highlightText} />
+                            <Marked query={highlightQuery} text={item.highlightText} />
                           ) : (
                             item.title
                           )}
@@ -592,40 +493,53 @@ export function SearchPalette({
                         <span className="block truncate text-meta leading-5 text-muted-foreground">
                           {item.subtitle}
                         </span>
+                        {item.detail !== null ? (
+                          <span className="block truncate text-meta leading-5 text-muted-foreground">
+                            {hasQuery ? (
+                              <Marked query={highlightQuery} text={item.detail} />
+                            ) : (
+                              item.detail
+                            )}
+                          </span>
+                        ) : null}
                       </span>
                     </button>
                   );
                 })}
+                {section.group !== null ? (
+                  <MoreButton
+                    group={section.group}
+                    loading={more[section.group].loading}
+                    exhausted={more[section.group].exhausted}
+                    onMore={() => loadMore(section.group as SearchGroupKey)}
+                  />
+                ) : null}
               </div>
             ))
           )}
 
-          {people.length > 0 ? (
-            <div>
-              <p className="px-4 pb-1 pt-3 text-meta font-semibold uppercase tracking-wide text-muted-foreground">
-                Personas
-              </p>
-              {people.map((person) => (
-                <div
-                  key={person.userId}
-                  className="flex w-full items-center gap-3 px-4 py-2.5"
+          {showAskLoki ? (
+            <div className="px-4 py-3">
+              <button
+                type="button"
+                onClick={askLoki}
+                className="flex w-full items-center gap-3 rounded-xl bg-surface-soft px-4 py-3 text-left outline-none interactive"
+              >
+                <span
+                  aria-hidden="true"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background dark:bg-white dark:text-black"
                 >
-                  <span
-                    aria-hidden="true"
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-soft"
-                  >
-                    <Icon icon={Users} size={20} />
+                  <Icon icon={Sparkles} size={20} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-body font-medium text-foreground">
+                    Preguntar a Loki
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-body text-foreground">
-                      <Marked query={trimmedQuery} text={person.displayName} />
-                    </span>
-                    <span className="block truncate text-meta leading-5 text-muted-foreground">
-                      {ROLE_LABELS[person.role] ?? "Miembro"}
-                    </span>
+                  <span className="block truncate text-meta leading-5 text-muted-foreground">
+                    Responde usando estos resultados como contexto
                   </span>
-                </div>
-              ))}
+                </span>
+              </button>
             </div>
           ) : null}
 
@@ -637,10 +551,35 @@ export function SearchPalette({
         </div>
 
         <div className="hidden items-center justify-between border-t border-divider px-4 py-2 text-meta text-muted-foreground sm:flex">
-          <span>↑↓ navegar · Enter abrir · Esc cerrar</span>
+          <span>↑↓ navegar · Tab entre grupos · Enter abrir · Esc cerrar</span>
           <span>⌘K / Ctrl+K</span>
         </div>
       </div>
     </div>
+  );
+}
+
+function MoreButton({
+  group,
+  loading,
+  exhausted,
+  onMore,
+}: {
+  group: SearchGroupKey;
+  loading: boolean;
+  exhausted: boolean;
+  onMore: () => void;
+}): React.JSX.Element | null {
+  void group;
+  if (exhausted) return null;
+  return (
+    <button
+      type="button"
+      onClick={onMore}
+      disabled={loading}
+      className="ml-[4.25rem] rounded-full px-3 py-1.5 text-body-sm font-medium text-accent outline-none interactive disabled:opacity-60"
+    >
+      {loading ? "Cargando…" : "Ver más"}
+    </button>
   );
 }

@@ -12,12 +12,13 @@ Este directorio contiene:
 | `migrations/20260929000000_init.sql` | Esquema base: tablas, índices, triggers, vistas, RLS, buckets y políticas de Storage |
 | `migrations/` (resto) | Una migración NUEVA por lote, con fecha posterior a la anterior. Nunca se edita una ya aplicada |
 | `functions/loki-chat/` | Loki IA con herramientas (streaming SSE + protocolo `tool_pending`) |
-| `functions/loki-worker/` | Trabajadora de `ai_jobs`: resúmenes, digest y transcripción de audio |
+| `functions/loki-worker/` | Trabajadora de `ai_jobs`: resúmenes, digest, transcripción de audio y OCR de imágenes |
 | `functions/push-send/` | Envío de FCM (respeta `notification_prefs` y el horario de silencio) |
 | `functions/google-calendar/` | Sincronización bidireccional con Google Calendar |
 | `functions/_shared/intent.ts` | Analizador determinista de intenciones (copia sincronizada con `src/lib/chat/intent.ts`) |
 | `functions/_shared/memory.ts` | Categorías y utilidades de la memoria del espacio (copia sincronizada con `src/lib/memory/memory.ts`) |
 | `functions/_shared/transcribe.ts` | Voz a texto: `openai` (`/audio/transcriptions`) o `gemini` (`generateContent` con audio inline) |
+| `functions/_shared/vision.ts` | Texto en imágenes: visión del proveedor (`openai` con `image_url`, `anthropic` con imagen base64 o `gemini` inline). `OCR_*` cae a `LLM_*` si no se pone |
 | `seed.sql` | Datos iniciales, vacío a propósito |
 | `README.md` | Este archivo |
 
@@ -171,7 +172,8 @@ desde las políticas:
 | `reserve_ai_quota(workspace_id, user_id, job_type, units)` | Reserva atómica de cuota (espacio + usuario) antes de cada llamada a un modelo o a voz a texto |
 | `retry_ai_job(job_id)` | Reencola un trabajo fallido (quien lo pidió o un admin) |
 | `retry_transcription(transcription_id)` | Reencola la transcripción de un audio que falló |
-| `global_search(workspace_id, q)` | Búsqueda de Cmd/Ctrl+K: mensajes, transcripciones, **recuerdos no sensibles**, tareas, proyectos, eventos y personas |
+| `global_search(workspace_id, q, ...)` | Búsqueda de Cmd/Ctrl+K y `/buscar`: 12 grupos (mensajes, transcripciones, **recuerdos no sensibles**, tareas, proyectos, eventos, personas, listas, ítems, encuestas, ideas y adjuntos con OCR). Filtros opcionales: tipos, chat, autor (`de:`), solo míos, fechas y límite por grupo |
+| `search_more(workspace_id, q, grupo, ...)` | "Ver más" paginado de un grupo (misma puerta y filtros) |
 | `search_space_memories(workspace_id, query, limit)` | Memoria del espacio con full-text en español (sin IA): respeta visibilidad, caducidad y membresía. La usan la pantalla Memoria y el recall de `loki-chat` |
 | `poll_results(poll_id)` | Estado de una encuesta: opciones con votos, ganador o empate, quién falta y qué puede hacer cada uno. En las anónimas no expone los uids (la RLS tampoco los deja ver) |
 | `cast_poll_vote(poll_id, option_ids)` | Vota, cambia o retira el voto (lista vacía = retirar). Valida acceso, encuesta abierta y tipo |
@@ -184,6 +186,33 @@ Además, en la migración de encuestas: `close_due_polls()` cierra lo vencido,
 (dedupe por encuesta y usuario) y `poll_tick()` las dos cosas; es el job de
 `pg_cron` de 5 minutos (SQL barato, sin IA). El cierre por tiempo también
 ocurre al leer la encuesta, así que la tarjeta nunca sale "abierta" vencida.
+
+### Búsqueda total (`message_attachments`, `workspace_search_settings`)
+
+Migración `20261010000000_search_all.sql`: que Cmd/Ctrl+K y `/buscar`
+encuentren todo lo que se guarda en Loki.
+
+- **Índice de adjuntos**: los archivos viven en `messages.attachments`
+  (jsonb); el trigger `sync_message_attachments` los indexa en
+  `message_attachments` (nombre, tipo, tamaño, ruta, mensaje, chat, espacio
+  y texto OCR) al insertar o corregir el mensaje, sin bloquear el envío. La
+  RLS hereda la del mensaje (`can_access_chat`): un DM ajeno queda fuera con
+  sus archivos, transcripciones y OCR. El cliente no escribe el índice.
+- **OCR por eventos**: cada imagen con ruta de Storage nace `pending`; si el
+  espacio activó el OCR, `enqueue_image_ocr` deja UN trabajo `ocr_image` y
+  `wake_ai_worker` despierta a `loki-worker` por `pg_net`. El worker verifica
+  membresía y chat, reserva cuota ANTES de bajar la imagen y guarda el texto
+  (listo o `skipped` sin config). Sin OCR activado no se encola nada y la
+  imagen se encuentra por nombre. Opción por espacio en
+  `workspace_search_settings` (solo admins, Configuración → Búsqueda en
+  imágenes).
+- **Sintaxis**: `de: Sofi` (autor), `en: General` (chat), `solo míos`,
+  `hoy`, `ayer`, `esta semana`, `la semana pasada`, `este mes` y
+  `el mes pasado`. La entiende el analizador determinista del cliente
+  (`parseSearchQuery`); la RPC recibe los filtros ya separados.
+- **"Preguntar a Loki"**: botón al final de los resultados (nunca automático)
+  que convierte la búsqueda en pregunta con los mejores resultados como
+  contexto; Loki responde por su camino normal (cuota del espacio).
 
 ### Memoria del espacio (`space_memories`)
 

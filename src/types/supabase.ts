@@ -166,6 +166,40 @@ type SpaceMemoryRow = {
   updated_at: string;
 };
 
+/**
+ * Ajustes de búsqueda por espacio (`workspace_search_settings`, migración
+ * `20261010000000_search_all.sql`).
+ */
+type WorkspaceSearchSettingsRow = {
+  workspace_id: string;
+  ocr_enabled: boolean;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+/**
+ * Adjunto indexado para la búsqueda (`message_attachments`, migración
+ * `20261010000000_search_all.sql`).
+ */
+type MessageAttachmentRow = {
+  id: string;
+  workspace_id: string;
+  chat_id: string;
+  message_id: string;
+  bucket: string | null;
+  object_path: string | null;
+  name: string;
+  mime: string;
+  kind: string;
+  size_bytes: number;
+  author_id: string | null;
+  author_name: string;
+  ocr_text: string;
+  ocr_status: string;
+  created_at: string;
+  updated_at: string;
+};
+
 type InviteRow = {
   id: string;
   code: string;
@@ -739,6 +773,54 @@ export type Database = {
             columns: ["user_id"];
             isOneToOne: false;
             referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      message_attachments: {
+        Row: MessageAttachmentRow;
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          chat_id: string;
+          message_id: string;
+          bucket?: string | null;
+          object_path?: string | null;
+          name?: string;
+          mime?: string;
+          kind?: string;
+          size_bytes?: number;
+          author_id?: string | null;
+          author_name?: string;
+          ocr_text?: string;
+          ocr_status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          chat_id?: string;
+          message_id?: string;
+          bucket?: string | null;
+          object_path?: string | null;
+          name?: string;
+          mime?: string;
+          kind?: string;
+          size_bytes?: number;
+          author_id?: string | null;
+          author_name?: string;
+          ocr_text?: string;
+          ocr_status?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "message_attachments_message_id_fkey";
+            columns: ["message_id"];
+            isOneToOne: false;
+            referencedRelation: "messages";
             referencedColumns: ["id"];
           },
         ];
@@ -1429,6 +1511,22 @@ export type Database = {
           },
         ];
       };
+      workspace_search_settings: {
+        Row: WorkspaceSearchSettingsRow;
+        Insert: {
+          workspace_id: string;
+          ocr_enabled?: boolean;
+          updated_by?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          workspace_id?: string;
+          ocr_enabled?: boolean;
+          updated_by?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       post_likes: {
@@ -1528,6 +1626,28 @@ export type Database = {
         Args: {
           p_ws: string;
           p_q: string;
+          p_types?: string[] | null;
+          p_chat?: string | null;
+          p_author?: string | null;
+          p_mine?: boolean | null;
+          p_from?: string | null;
+          p_to?: string | null;
+          p_limit?: number | null;
+        };
+        Returns: Json;
+      };
+      search_more: {
+        Args: {
+          p_ws: string;
+          p_q: string;
+          p_group: string;
+          p_limit?: number | null;
+          p_offset?: number | null;
+          p_chat?: string | null;
+          p_author?: string | null;
+          p_mine?: boolean | null;
+          p_from?: string | null;
+          p_to?: string | null;
         };
         Returns: Json;
       };

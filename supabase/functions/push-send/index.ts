@@ -231,6 +231,8 @@ function prefKeyFor(type: string): string | null {
     case "daily": return "daily";
     // Agentes personales: "@mi-bot terminó" o "@mi-bot necesita tu respuesta".
     case "agent": return "agent";
+    // Compañero de escritorio: "Tu PC necesita tu aprobación" (sin datos del PC).
+    case "device": return "device";
     default: return null;
   }
 }

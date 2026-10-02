@@ -53,6 +53,7 @@ export const DEFAULT_PREFS: NotificationPrefs = {
   memory: true,
   daily: true,
   agent: true,
+  device: true,
   quietStart: null,
   quietEnd: null,
 };
@@ -72,6 +73,7 @@ function toPrefs(row: PrefsRow): NotificationPrefs {
     memory: row.memory,
     daily: row.daily,
     agent: row.agent,
+    device: row.device,
     quietStart: row.quiet_start,
     quietEnd: row.quiet_end,
   };
@@ -128,7 +130,7 @@ export async function getNotificationPrefs(uid: string): Promise<NotificationPre
   const { data, error } = await getSupabaseClient()
     .from("notification_prefs")
     .select(
-      "user_id, mention, reply, reaction, task_assigned, task_due, event_reminder, invite, ai_alert, list, poll, memory, daily, agent, quiet_start, quiet_end, updated_at",
+      "user_id, mention, reply, reaction, task_assigned, task_due, event_reminder, invite, ai_alert, list, poll, memory, daily, agent, device, quiet_start, quiet_end, updated_at",
     )
     .eq("user_id", uid)
     .maybeSingle();
@@ -158,6 +160,7 @@ export async function saveNotificationPrefs(
         memory: prefs.memory,
         daily: prefs.daily,
         agent: prefs.agent,
+        device: prefs.device,
         quiet_start: prefs.quietStart,
         quiet_end: prefs.quietEnd,
       },

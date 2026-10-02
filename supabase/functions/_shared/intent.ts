@@ -19,7 +19,8 @@ export type IntentAction =
   | "add_list"
   | "create_poll"
   | "remember"
-  | "recall";
+  | "recall"
+  | "device_command";
 
 /** Tipos de encuesta que el analizador puede proponer sin modelo. */
 export type PollIntentKind = "single" | "multiple" | "yesno" | "date";
@@ -55,6 +56,10 @@ export interface AnalyzedIntent {
   pollKind: PollIntentKind | null;
   /** Opciones en create_poll (vacío = sí/no o falta información). */
   pollOptions: PollIntentOption[];
+  /** Acción del catálogo del PC en device_command, o null en el resto. */
+  deviceAction: string | null;
+  /** Argumentos de la acción (text/dir/level/muted/op), o {} en el resto. */
+  deviceArgs: Record<string, string>;
   /** True = no hace falta llamar al modelo. */
   confident: boolean;
 }
@@ -522,6 +527,141 @@ function parsePoll(
   };
 }
 
+// --- Comandos al PC (device_command) ----------------------------------------
+//
+// "@mi-pc abre Spotify" o "toma una captura de mi pc" se resuelven SIN modelo:
+// la marca al PC da el destino y el verbo da la acción del catálogo cerrado
+// (ver `src/lib/devices/catalog.ts`, espejo en `_shared/devices.ts`). Lo
+// sensible (mandar archivos, scripts, terminal) viaja igual por tarjeta +
+// aprobación en el teléfono; aquí solo se detecta, nunca se ejecuta.
+
+const DEVICE_MARK_RE = /(^|[\s,.;:¡!¿?])(@mi-?pc|@mipc|mi-?pc)\b/;
+
+type DeviceParse = {
+  action: string;
+  title: string;
+  args: Record<string, string>;
+  confident: boolean;
+};
+
+/** Quita la marca al PC del inicio o del final ("@mi-pc abre X", "X de mi pc"). */
+function stripDeviceMark(normalized: string): string {
+  let rest = normalized
+    .replace(/^[\s,.;:¡!¿?]*(loki\s*,?\s*)?(@mi-?pc|@mipc|mi-?pc)\b[\s,.;:¡!¿?]*/, "")
+    .replace(/[\s,.;:¡!¿?]+(de |a |en |al )?mi-?pc[\s,.;:¡!¿?]*$/, "")
+    .replace(/^(por favor\s+)?(loki\s*,?\s*)?/, "")
+    .trim();
+  // "abre spotify en mi pc": la cola ya se quitó; "en mi pc abre X" al inicio
+  // también (primer replace). Recorta restos intermedios comunes.
+  rest = rest.replace(/\s+en mi-?pc(\s+|$)/, " ").trim();
+  return rest;
+}
+
+function deviceTargetText(original: string, normalizedRest: string): string {
+  return cleanTitle(restoreAccents(original, normalizedRest) || normalizedRest).slice(0, 200);
+}
+
+/**
+ * Parsea una orden al PC sin modelo. Devuelve null si no hay marca al PC o no
+ * se reconoce el verbo (el llamador sigue al modelo).
+ */
+function parseDevice(original: string, normalized: string): DeviceParse | null {
+  if (!DEVICE_MARK_RE.test(normalized)) return null;
+  const rest = stripDeviceMark(normalized);
+  if (rest === "") return null;
+  const none: Record<string, string> = {};
+
+  // Estado: "cómo está mi pc", "batería de mi pc".
+  if (/(como est|estado|bateria|encendido|\bcpu\b|memoria|uso de)/.test(rest)) {
+    return { action: "pc_status", title: "Estado del PC", args: none, confident: true };
+  }
+  // Captura: "toma una captura de mi pc", "pantallazo".
+  if (/(captura|pantallazo|screenshot|foto de la pantalla)/.test(rest)) {
+    return { action: "screenshot", title: "Captura de pantalla", args: none, confident: true };
+  }
+  // Bloqueo: "bloquea mi pc".
+  if (/^(bloquea|bloquear|bloquea la pantalla)\b/.test(rest)) {
+    return { action: "lock_screen", title: "Bloquear pantalla", args: none, confident: true };
+  }
+  // Volumen: "pon el volumen al 50", "silencia mi pc".
+  if (/volumen|silencia|mute/.test(rest)) {
+    if (/(silencia|mute|volumen (cero|0)|sin volumen)/.test(rest)) {
+      return { action: "volume_set", title: "Volumen: silenciar", args: { muted: "1" }, confident: true };
+    }
+    const level = rest.match(/(\d{1,3})\s*(por ciento|%|porciento)?/);
+    if (level !== null) {
+      const n = Math.max(0, Math.min(100, parseInt(level[1] ?? "0", 10)));
+      return { action: "volume_set", title: `Volumen: ${n}`, args: { level: String(n) }, confident: true };
+    }
+    // "sube/baja el volumen" sin número: lo resuelve el modelo.
+    return { action: "volume_set", title: "Volumen", args: none, confident: false };
+  }
+  // Multimedia: "pausa la música de mi pc", "siguiente canción".
+  if (/(pausa|pausar|pon en pausa)/.test(rest)) {
+    return { action: "media_control", title: "Multimedia: pausa", args: { op: "pause" }, confident: true };
+  }
+  if (/(reproduce|reproducir|reanuda|reanudar|dale play|pon (la |el )?(musica|video|play))/.test(rest)) {
+    return { action: "media_control", title: "Multimedia: reproducir", args: { op: "play" }, confident: true };
+  }
+  if (/(siguiente|proxima).*(cancion|tema|video)|cancion siguiente/.test(rest)) {
+    return { action: "media_control", title: "Multimedia: siguiente", args: { op: "next" }, confident: true };
+  }
+  if (/(anterior|previa).*(cancion|tema|video)|cancion anterior/.test(rest)) {
+    return { action: "media_control", title: "Multimedia: anterior", args: { op: "prev" }, confident: true };
+  }
+  // Buscar archivos: "busca el archivo informe en mi pc".
+  {
+    const find = rest.match(/^(busca|buscar|encuentra|encontrar)\s+(el\s+|la\s+|los\s+|un\s+)?(archivo\s+|archivos\s+|fichero\s+)?(.+)$/);
+    if (find !== null) {
+      const query = deviceTargetText(original, (find[4] ?? "").trim());
+      if (query === "") return null;
+      return { action: "find_files", title: `Buscar: ${query}`, args: { text: query }, confident: true };
+    }
+  }
+  // Mandar archivo al chat: "manda el informe a este chat".
+  {
+    const send = rest.match(/^(manda|mandar|envia|enviar|sube|subir)\s+(el\s+|la\s+|este\s+)?(archivo\s+)?(.+?)(\s+(a|al|a este|al) (chat|grupo|conversacion))?$/);
+    if (send !== null && /(archivo|manda|envia|sube)/.test(rest)) {
+      const target = deviceTargetText(original, (send[4] ?? "").trim());
+      if (target === "") return null;
+      return { action: "send_file", title: `Mandar: ${target}`, args: { text: target }, confident: true };
+    }
+  }
+  // Scripts registrados: "ejecuta el script respaldo".
+  {
+    const script = rest.match(/^(ejecuta|ejecutar|corre|correr|lanza|lanzar)\s+(el\s+)?script\s+(.+)$/);
+    if (script !== null) {
+      const name = deviceTargetText(original, (script[3] ?? "").trim());
+      if (name === "") return null;
+      return { action: "run_script", title: `Script: ${name}`, args: { text: name }, confident: true };
+    }
+  }
+  // Terminal libre: "ejecuta en mi pc: ls" (siempre sensible + confirmación).
+  {
+    const term = rest.match(/^(ejecuta|ejecutar|corre|correr|comando|en la terminal:?)\s*:?\s*(.+)$/);
+    if (term !== null) {
+      const command = deviceTargetText(original, (term[2] ?? "").trim());
+      if (command === "") return null;
+      return { action: "arbitrary_exec", title: `Terminal: ${command.slice(0, 80)}`, args: { text: command }, confident: true };
+    }
+  }
+  // Abrir app o URL: "abre spotify", "abre https://…".
+  {
+    const open = rest.match(/^(abre|abrir|inicia|iniciar|lanza|lanzar)\s+(.+)$/);
+    if (open !== null) {
+      const target = deviceTargetText(original, (open[2] ?? "").trim());
+      if (target === "") return null;
+      const bare = normalizeIntent(target);
+      if (/^(https?:\/\/|www\.|[a-z0-9-]+\.(com|cl|org|net|dev|io|app|gob|edu)(\/\S*)?$)/.test(bare)) {
+        const url = bare.startsWith("http") ? target : `https://${target}`;
+        return { action: "open_url", title: `Abrir: ${target}`, args: { text: url }, confident: true };
+      }
+      return { action: "open_app", title: `Abrir: ${target}`, args: { text: target }, confident: true };
+    }
+  }
+  return null;
+}
+
 /**
  * Analiza un pedido en español. Si `confident` es true, el llamador puede
  * actuar sin modelo (crear con confirmación o responder con plantilla).
@@ -531,6 +671,25 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
   const normalized = normalizeIntent(text);
   const mentions = extractIntentMentions(text);
   const wall = santiagoWall(nowMs);
+
+  // Comandos al PC: "@mi-pc abre Spotify" se resuelve sin modelo (el que pide
+  // manda a su propio PC; lo sensible igual pide aprobación en el teléfono).
+  const device = parseDevice(text, normalized);
+  if (device !== null) {
+    return {
+      action: "device_command",
+      title: device.title,
+      dateISO: null,
+      recurrence: null,
+      mentions,
+      listName: null,
+      pollKind: null,
+      pollOptions: [],
+      deviceAction: device.action,
+      deviceArgs: device.args,
+      confident: device.confident,
+    };
+  }
 
   // Encuesta: tiene su propio camino (pregunta + opciones, a veces con
   // fecha) y no necesita el análisis de recordatorio/evento de más abajo.
@@ -545,6 +704,8 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
       listName: null,
       pollKind: poll.kind,
       pollOptions: poll.options,
+      deviceAction: null,
+      deviceArgs: {},
       confident: poll.kind === "yesno" || poll.options.length >= 2,
     };
   }
@@ -562,6 +723,8 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
       listName: null,
       pollKind: null,
       pollOptions: [],
+      deviceAction: null,
+      deviceArgs: {},
       confident: true,
     };
   }
@@ -732,6 +895,8 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
     listName,
     pollKind: null,
     pollOptions: [],
+    deviceAction: null,
+    deviceArgs: {},
     confident,
   };
 }

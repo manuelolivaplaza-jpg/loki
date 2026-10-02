@@ -145,6 +145,8 @@ type NotificationPrefsRow = {
   daily: boolean;
   /** Agentes personales (20261012000000_agents.sql). */
   agent: boolean;
+  /** Compañero de escritorio (20261014000000_devices.sql). */
+  device: boolean;
   quiet_start: string | null;
   quiet_end: string | null;
   updated_at: string;
@@ -516,8 +518,7 @@ type AgentSpaceGrantRow = {
   updated_at: string;
 };
 
-/**
- * Ejecución de un agente (`agent_runs`). `run_token_hash` tiene REVOKE a
+/** Ejecución de un agente (`agent_runs`). `run_token_hash` tiene REVOKE a
  * nivel de columna: el cliente nunca lo selecciona.
  */
 type AgentRunRow = {
@@ -554,6 +555,66 @@ type AgentRunEventRow = {
   percent: number | null;
   client_event_id: string | null;
   payload: Json;
+  created_at: string;
+};
+
+/**
+ * PC vinculado (`user_devices`, migración `20261014000000_devices.sql`).
+ * `credential_hash` tiene REVOKE a nivel de columna: el cliente usa listas
+ * explícitas de columnas seguras, nunca `*`.
+ */
+type UserDeviceRow = {
+  id: string;
+  owner_id: string;
+  name: string;
+  platform: string;
+  app_version: string;
+  allowed_actions: string[];
+  readable_dirs: string[];
+  can_send_files: boolean;
+  allow_arbitrary: boolean;
+  revoked_at: string | null;
+  last_seen_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Orden al PC del catálogo cerrado (`device_commands`). */
+type DeviceCommandRow = {
+  id: string;
+  device_id: string;
+  owner_id: string;
+  workspace_id: string | null;
+  chat_id: string;
+  message_id: string | null;
+  requested_by: string | null;
+  action: string;
+  params: Json;
+  risk: string;
+  status: string;
+  result_text: string;
+  result_path: string | null;
+  result_mime: string;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  delivered_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  expires_at: string;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Auditoría inmutable de PCs (`device_audit_log`, solo inserción). */
+type DeviceAuditRow = {
+  id: string;
+  device_id: string;
+  owner_id: string;
+  command_id: string | null;
+  actor_id: string | null;
+  action: string;
+  detail: string;
   created_at: string;
 };
 
@@ -1355,6 +1416,7 @@ export type Database = {
           memory?: boolean;
           daily?: boolean;
           agent?: boolean;
+          device?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
@@ -1374,6 +1436,7 @@ export type Database = {
           memory?: boolean;
           daily?: boolean;
           agent?: boolean;
+          device?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
@@ -1782,6 +1845,79 @@ export type Database = {
         };
         Relationships: [];
       };
+      user_devices: {
+        Row: UserDeviceRow;
+        Insert: {
+          id?: string;
+          owner_id: string;
+          name: string;
+          platform?: string;
+          app_version?: string;
+          credential_hash?: string;
+          allowed_actions?: string[];
+          readable_dirs?: string[];
+          can_send_files?: boolean;
+          allow_arbitrary?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          platform?: string;
+          app_version?: string;
+          allowed_actions?: string[];
+          readable_dirs?: string[];
+          can_send_files?: boolean;
+          allow_arbitrary?: boolean;
+        };
+        Relationships: [];
+      };
+      device_commands: {
+        Row: DeviceCommandRow;
+        Insert: {
+          id?: string;
+          device_id: string;
+          owner_id: string;
+          workspace_id?: string | null;
+          chat_id?: string;
+          message_id?: string | null;
+          requested_by?: string | null;
+          action: string;
+          params?: Json;
+          risk: string;
+          status?: string;
+        };
+        Update: {
+          id?: string;
+          status?: string;
+        };
+        Relationships: [];
+      };
+      device_audit_log: {
+        Row: DeviceAuditRow;
+        Insert: {
+          id?: string;
+          device_id: string;
+          owner_id: string;
+          command_id?: string | null;
+          actor_id?: string | null;
+          action: string;
+          detail?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          device_id?: string;
+          owner_id?: string;
+          command_id?: string | null;
+          actor_id?: string | null;
+          action?: string;
+          detail?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       post_likes: {
@@ -2034,6 +2170,61 @@ export type Database = {
         Args: {
           p_grant_id: string;
           p_disabled: boolean;
+        };
+        Returns: boolean;
+      };
+      create_device_pair_code: {
+        Args: {
+          p_name: string;
+        };
+        Returns: string;
+      };
+      revoke_device: {
+        Args: {
+          p_device_id: string;
+        };
+        Returns: boolean;
+      };
+      request_device_command: {
+        Args: {
+          p_device_id: string;
+          p_action: string;
+          p_params: Json;
+          p_workspace_id: string | null;
+          p_chat_id: string;
+          p_message_id?: string | null;
+        };
+        Returns: Json;
+      };
+      confirm_device_command: {
+        Args: {
+          p_command_id: string;
+          p_ok: boolean;
+        };
+        Returns: boolean;
+      };
+      update_device_settings: {
+        Args: {
+          p_device_id: string;
+          p_name?: string | null;
+          p_allowed_actions?: string[] | null;
+          p_readable_dirs?: string[] | null;
+          p_can_send_files?: boolean | null;
+          p_allow_arbitrary?: boolean | null;
+        };
+        Returns: boolean;
+      };
+      can_order_device: {
+        Args: {
+          p_device_id: string;
+          p_workspace_id: string | null;
+          p_chat_id: string;
+        };
+        Returns: boolean;
+      };
+      device_command_rate_ok: {
+        Args: {
+          p_device_id: string;
         };
         Returns: boolean;
       };

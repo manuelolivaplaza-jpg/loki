@@ -217,6 +217,40 @@ equal(
   "una frase ambigua no se fuerza a memoria",
 );
 
+// --- Comandos al PC (sin LLM) -------------------------------------------------
+const d1 = analyzeIntent("@mi-pc abre Spotify", { now: NOW });
+ok(d1 !== null, "detecta @mi-pc");
+equal(d1.action, "device_command", "acción device_command");
+equal(d1.deviceAction, "open_app", "abrir app");
+equal(d1.deviceArgs["text"], "Spotify", "la app con mayúscula del original");
+equal(d1.confident, true, "seguro sin modelo");
+
+const d2 = analyzeIntent("toma una captura de mi pc", { now: NOW });
+ok(d2 !== null, "detecta la marca al final");
+equal(d2.deviceAction, "screenshot", "captura");
+
+const d3 = analyzeIntent("mi-pc pon el volumen al 50", { now: NOW });
+equal(d3.deviceAction, "volume_set", "volumen");
+equal(d3.deviceArgs["level"], "50", "nivel como texto");
+
+const d4 = analyzeIntent("@mi-pc ejecuta el script respaldo", { now: NOW });
+equal(d4.deviceAction, "run_script", "script registrado");
+equal(d4.deviceArgs["text"], "respaldo", "nombre del script");
+
+const d5 = analyzeIntent("@mi-pc ejecuta: ls -la", { now: NOW });
+equal(d5.deviceAction, "arbitrary_exec", "terminal libre");
+equal(d5.confident, true, "se detecta (la confirmación la pide la tarjeta)");
+
+const d6 = analyzeIntent("@mi-pc abre https://example.com", { now: NOW });
+equal(d6.deviceAction, "open_url", "URL va por open_url");
+
+const d7 = analyzeIntent("pausa la música de mi pc", { now: NOW });
+equal(d7.deviceAction, "media_control", "multimedia");
+
+// Sin marca al PC no hay comando (no roba "abre Spotify" normal).
+equal(analyzeIntent("abre Spotify", { now: NOW })?.action ?? null, null, "sin marca no hay comando");
+equal(analyzeIntent("@mi-pc", { now: NOW }), null, "marca sola no alcanza");
+
 // --- Sincronía con la Edge -------------------------------------------------------
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(resolve(here, "../src/lib/chat/intent.ts"), "utf8");
@@ -234,5 +268,14 @@ const memoryEdge = readFileSync(
   "utf8",
 );
 equal(memoryEdge, memorySrc, "la copia de memory.ts en la Edge es idéntica");
+
+// `devices.ts` (catálogo del PC) también está duplicado: la Edge y la base
+// (`device_action_risk`) espejan los mismos riesgos.
+const devicesSrc = readFileSync(resolve(here, "../src/lib/devices/catalog.ts"), "utf8");
+const devicesEdge = readFileSync(
+  resolve(here, "../supabase/functions/_shared/devices.ts"),
+  "utf8",
+);
+equal(devicesEdge, devicesSrc, "la copia de devices.ts en la Edge es idéntica");
 
 console.log(`intent: ${checks} checks ok`);

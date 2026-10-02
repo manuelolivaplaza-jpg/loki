@@ -11,6 +11,7 @@ import {
   ClipboardCheck,
   Heart,
   ListChecks,
+  MonitorSmartphone,
   Reply,
   Sparkles,
   Sunrise,
@@ -37,6 +38,7 @@ export const NOTIFICATION_ICONS: Record<NotificationType, LucideIcon> = {
   memory: Brain,
   daily: Sunrise,
   agent: Bot,
+  device: MonitorSmartphone,
 };
 
 /** Campana del header con punto si hay no leídas. */

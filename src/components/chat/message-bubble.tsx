@@ -39,6 +39,20 @@ const PollCard = dynamic(
   },
 );
 
+/** Tarjeta viva de un comando al PC (code splitting: solo se descarga al verla). */
+const DeviceCommandCard = dynamic(
+  () => import("@/components/devices/device-command-card").then((mod) => mod.DeviceCommandCard),
+  {
+    ssr: false,
+    loading: () => (
+      <span
+        aria-label="Cargando orden al PC"
+        className="block h-24 w-[280px] max-w-full animate-pulse rounded-xl bg-surface-soft"
+      />
+    ),
+  },
+);
+
 /**
  * Burbuja de tarjeta compartida (lista viva): título + progreso + marcar
  * desde el chat. El texto siempre por SafeText (nunca HTML).
@@ -78,6 +92,52 @@ function pollIdOf(message: MessageDoc): string {
   if (meta.kind !== "poll") return "";
   const id = meta.poll_id;
   return typeof id === "string" && id !== "" ? id : "";
+}
+
+/** Id de comando al PC ('card' con meta {kind:"device_command"}). "" si no es. */
+function deviceCommandIdOf(message: MessageDoc): string {
+  const meta = message.meta;
+  if (meta === null || meta === undefined) return "";
+  if (meta.kind !== "device_command") return "";
+  const id = meta.command_id;
+  return typeof id === "string" && id !== "" ? id : "";
+}
+
+/**
+ * Burbuja de comando al PC: la tarjeta ES el mensaje (el resumen ya viene en
+ * la tarjeta) y el estado llega en vivo por Realtime.
+ */
+function DeviceCommandBubble({
+  message,
+  showAuthor,
+  showTime,
+}: {
+  message: MessageDoc;
+  showAuthor: boolean;
+  showTime: boolean;
+}): React.JSX.Element {
+  const commandId = deviceCommandIdOf(message);
+  return (
+    <div className="w-full">
+      {showAuthor ? (
+        <p className="mb-1 ml-9 text-meta font-semibold leading-4 text-muted-foreground">
+          {message.authorName}
+        </p>
+      ) : null}
+      {message.deleted || commandId === "" ? (
+        <div className="w-fit max-w-full rounded-[22px] border border-divider bg-card px-[14px] py-[10px]">
+          <p className="break-words text-[15px] leading-[1.45] text-muted-foreground">
+            <span className="italic">Orden eliminada</span>
+          </p>
+        </div>
+      ) : (
+        <div className="w-full max-w-[320px] rounded-[22px] border border-divider bg-card p-3">
+          <DeviceCommandCard commandId={commandId} />
+        </div>
+      )}
+      {showTime ? <MessageMeta message={message} /> : null}
+    </div>
+  );
 }
 
 /**
@@ -415,11 +475,13 @@ export function MessageBubble({
   }
 
   if (message.type === "card") {
-    return pollIdOf(message) !== "" ? (
-      <PollBubble message={message} showAuthor={showAuthor} showTime={showTime} />
-    ) : (
-      <ListShareBubble message={message} showAuthor={showAuthor} showTime={showTime} />
-    );
+    if (pollIdOf(message) !== "") {
+      return <PollBubble message={message} showAuthor={showAuthor} showTime={showTime} />;
+    }
+    if (deviceCommandIdOf(message) !== "") {
+      return <DeviceCommandBubble message={message} showAuthor={showAuthor} showTime={showTime} />;
+    }
+    return <ListShareBubble message={message} showAuthor={showAuthor} showTime={showTime} />;
   }
 
   const deleted = message.deleted;

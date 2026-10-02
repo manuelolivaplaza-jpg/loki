@@ -19,6 +19,11 @@ import type {
   UndoItem,
 } from "@/lib/ai/tools-client";
 import { cn } from "@/lib/utils";
+import {
+  deviceCatalogEntry,
+  deviceRiskOf,
+  deviceSummary,
+} from "@/lib/devices/catalog";
 
 export type CardMember = { uid: string; name: string };
 export type CardProject = { id: string; name: string; isSystem: boolean };
@@ -355,6 +360,59 @@ const inputClass =
 const labelClass = "block text-meta leading-4 text-muted-foreground";
 
 /**
+ * Campos de una orden al PC en la tarjeta de confirmación: resumen de lo que
+ * se va a ejecutar, texto editable cuando la acción lo pide y el camino según
+ * riesgo (directo, tarjeta o aprobación en el teléfono).
+ */
+function DevicePendingFields({
+  params,
+  draft,
+  onPatch,
+}: {
+  params: Record<string, unknown>;
+  draft: ItemDraft;
+  onPatch: (patch: Partial<ItemDraft>) => void;
+}): React.JSX.Element {
+  const catalogAction = typeof params["action"] === "string" ? params["action"] : "";
+  const entry = deviceCatalogEntry(catalogAction);
+  const deviceName =
+    typeof params["deviceName"] === "string" && params["deviceName"] !== ""
+      ? params["deviceName"]
+      : "tu PC";
+  const risk = deviceRiskOf(catalogAction);
+  const rest: Record<string, unknown> = { ...params, text: draft.title };
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-body-sm leading-5 text-foreground">
+        {deviceSummary(catalogAction, rest)}{" "}
+        <span className="text-muted-foreground">en {deviceName}</span>
+      </p>
+      {entry?.needsText === true ? (
+        <label className="flex flex-col gap-1">
+          <span className={labelClass}>
+            <Pencil className="mr-1 inline h-3 w-3" aria-hidden="true" />
+            {catalogAction === "open_url" ? "URL https" : "Detalle"}
+          </span>
+          <input
+            type="text"
+            aria-label="Detalle de la orden al PC"
+            value={draft.title}
+            onChange={(event) => onPatch({ title: event.target.value })}
+            maxLength={2000}
+            className={cn(inputClass, "min-h-11")}
+          />
+        </label>
+      ) : null}
+      <p className="text-meta leading-4 text-muted-foreground">
+        {risk === "sensible"
+          ? "Acción sensible: al confirmar se pide tu aprobación en el teléfono."
+          : "Se ejecuta en tu PC al confirmar."}
+      </p>
+    </div>
+  );
+}
+
+/**
  * Tarjeta de confirmación para acciones de Loki IA.
  * - Una acción: resumen + edición compacta (título, fecha/hora, responsable,
  *   proyecto) + Confirmar/Cancelar.
@@ -512,7 +570,13 @@ export function AiToolCard({
                   {item.label}
                 </p>
               </div>
-              {item.warning !== undefined ? (
+              {item.action === "run_device_command" ? (
+                <DevicePendingFields
+                  params={item.params}
+                  draft={draft}
+                  onPatch={(patch) => setDraft(index, patch)}
+                />
+              ) : item.warning !== undefined ? (
                 <p role="alert" className="text-body-sm leading-5 text-danger">
                   {item.warning}
                 </p>

@@ -244,13 +244,38 @@ Loki usa al responder ("la clave del wifi es…", "Tomás es alérgico al maní"
   el espacio" a los demás miembros y "está por caducar" al autor, ambas con
   dedupe. El actor no se avisa a sí mismo.
 
+### Compañero de escritorio (`user_devices`, `device_commands`, ...)
+
+Migración `20261014000000_devices.sql`: ordenar acciones en el propio PC desde
+el chat (contrato completo en `docs/DISPOSITIVOS.md`).
+
+- **Emparejamiento fuerte**: `create_device_pair_code()` (código de 6, un solo
+  uso, 5 min); la Edge `device-pair` lo canjea y crea una identidad Auth propia
+  para el dispositivo (clave = secreto largo; en la base solo su hash SHA-256).
+  El PC entra con signIn normal y tokens cortos. `revoke_device()` invalida al
+  instante (la RLS bloquea aunque al JWT le quede vida).
+- **RLS por identidad**: `my_device_id()` dice qué PC es cada JWT; el
+  dispositivo solo lee sus comandos y su ficha (sin el hash, con REVOKE de
+  columna). No es miembro de ningún espacio, así que el resto le niega todo.
+- **Comandos** (`device_commands`, catálogo cerrado con riesgo
+  `device_action_risk()`): `request_device_command()` valida todo (catálogo,
+  parámetros, 10/min, chat permitido); lo sensible queda en
+  `pending_confirmation` + notificación tipo `device` **sin datos del PC**.
+  `confirm_device_command()` (5 min), `device_claim_command()` (doble control
+  en el PC) y `device_report_result()` (texto corto o archivo en
+  `device-results`). `expire_device_commands()` por pg_cron cada minuto.
+- **Auditoría** (`device_audit_log`): solo inserción, la escriben las RPC y la
+  Edge. Lenguaje natural: `@mi-pc …` lo resuelve el analizador determinista
+  (`intent.ts`, ambas copias); si no, `run_device_command` en `loki-chat`.
+
 ---
 
 ## Realtime
 
 En la publicación `supabase_realtime`: `messages`, `message_reactions`, `chats`,
 `chat_reads` y las tablas que la UI mira en vivo (`ai_jobs`,
-`audio_transcriptions`, `projects`, `polls`, `space_memories`, …). La RLS se
+`audio_transcriptions`, `projects`, `polls`, `space_memories`, `user_devices`,
+`device_commands`, `device_audit_log`, …). La RLS se
 aplica también al realtime, así que solo llegan eventos de lo que el usuario
 puede ver.
 
@@ -266,6 +291,7 @@ Typing y presencia **no** usan tabla: van por Broadcast y Presence en el canal
 | `attachments` | no | `{workspace_id}/{chat_id}/...` | Lectura y escritura solo para miembros del espacio |
 | `chat-media` | no | `{workspace_id}/{uuid}-{nombre}` | Adjuntos de chat y notas de voz; solo miembros del espacio |
 | `post-media` | no | `{workspace_id}/{uuid}-{nombre}` | Adjuntos de publicaciones; solo miembros del espacio |
+| `device-results` | no | `{owner_id}/{device_id}/...` | Capturas y archivos del PC al chat; el dueño lee, el PC sube lo suyo |
 | `avatars` | sí (lectura) | `{uid}/...` | Escritura solo en tu propia carpeta |
 
 El primer segmento de la ruta de `chat-media`/`post-media` es el espacio: es lo
@@ -288,6 +314,7 @@ que es lo que arregló el commit `ecd83f9` ("arreglo del bundle Deno").
 | `agent-connections` | El cliente, con su JWT | Registro de agentes: crea, guarda URL/secreto (cifrado) y genera el token entrante (una vez) |
 | `agent-dispatch` | El trigger `notify_agent_dispatch` (pg_net) o el dueño con su JWT (reintento) | Valida grant y cuota, genera el token de la ejecución y llama al adaptador (`generic_webhook` en esta etapa) |
 | `agent-callback` | El agente (sin JWT; auth propia con `run_token`) | Progreso y resultado: `verify_jwt = false`, idempotencia por `event_id`, límites del contrato |
+| `device-pair` | El compañero de escritorio, con el JWT del dueño (una vez) | Canjea el código corto y crea la identidad Auth propia del PC (secreto largo + mapeo). Sin dependencias externas |
 
 `loki-worker` exige `Authorization: Bearer <WORKER_KEY>` (secreto del servidor,
 el mismo valor que `loki.worker_key` en la base): un cliente nunca puede

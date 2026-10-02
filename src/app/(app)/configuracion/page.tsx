@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Brain, ChevronRight, LogOut } from "lucide-react";
+import { Brain, ChevronRight, LogOut, MonitorSmartphone } from "lucide-react";
 import { Card, CardDivider, CardRow } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -44,6 +44,7 @@ const PREF_ROWS: readonly { key: keyof Omit<NotificationPrefs, "quietStart" | "q
   { key: "poll", label: "Encuestas", detail: "Cuando falta tu voto antes del cierre" },
   { key: "memory", label: "Memoria", detail: "Recuerdos nuevos o por caducar del espacio" },
   { key: "agent", label: "Agentes", detail: "Cuando tu bot termina o necesita tu respuesta" },
+  { key: "device", label: "Mi PC", detail: "Cuando tu PC necesita tu aprobación" },
   { key: "daily", label: "Resumen diario", detail: "Push de la mañana con tu día" },
 ];
 
@@ -337,6 +338,37 @@ export default function ConfiguracionPage(): React.JSX.Element {
           defaultSpaceId={currentWorkspaceId}
         />
       ) : null}
+
+      <section aria-label="Mis dispositivos">
+        <SectionLabel>Mis dispositivos</SectionLabel>
+        <Card>
+          <CardRow
+            role="link"
+            tabIndex={0}
+            onClick={() => router.push("/dispositivos")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                router.push("/dispositivos");
+              }
+            }}
+            className="cursor-pointer outline-none"
+          >
+            <span aria-hidden="true" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-background text-foreground dark:bg-surface-2">
+              <Icon icon={MonitorSmartphone} size={22} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-body leading-6 text-foreground">
+                Mis PCs
+              </span>
+              <span className="block text-body-sm leading-5 text-muted-foreground">
+                Vincula tu PC y ordénale cosas desde el chat
+              </span>
+            </span>
+            <Icon icon={ChevronRight} size={20} className="shrink-0 text-muted-foreground" />
+          </CardRow>
+        </Card>
+      </section>
 
       <section aria-label="Memoria">
         <SectionLabel>Memoria del espacio</SectionLabel>

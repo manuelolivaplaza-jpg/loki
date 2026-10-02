@@ -113,13 +113,29 @@ tarjeta se resuelve sola y un reintento no duplica nada.
   elegir el día del asado entre viernes y sábado" → viernes y sábado con
   fecha); con modelo, la misma tarjeta llega desde la primera pasada de tools.
 
+## Órdenes al PC (`src/components/devices/`)
+
+El comando es un mensaje `type: "card"` con `meta = {kind:"device_command",
+command_id}` (lo inserta `loki-chat` al confirmar `run_device_command`):
+
+- `DeviceCommandCard`: tarjeta viva con el estado por Realtime (un solo canal
+  por comando, que se cierra al terminar) y el resultado (texto o captura /
+  archivo con URL firmada de `device-results`).
+- La tarjeta de **confirmación** (`AiToolCard`, acción `run_device_command`)
+  resume lo que se va a ejecutar y deja editar el detalle; lo sensible avisa
+  que se aprueba en el teléfono.
+- **Loki**: `@mi-pc …` lo resuelve el analizador determinista sin modelo
+  (`intent.ts` → `device_command`); si no, el modelo barato llama a
+  `run_device_command` con la acción del catálogo
+  (`src/lib/devices/catalog.ts`, espejo en `_shared/devices.ts`).
+
 ## Utilidades (`src/lib/chat/`)
 
 - `format.ts`: `formatHour`, `formatDayLabel`, `formatChatTime`, `dayKey`, `groupMessages` (ventana 5 min).
 - `posts.ts` (T17): id/nombre/emoji del chat `posts`, `POST_LIKE_EMOJI`, textos de la pantalla, `formatPostTime` y los helpers de like/comentarios.
 - `reactions.ts`: `QUICK_REACTIONS` (6) y `EXTENDED_REACTIONS` (24) como {emoji, nombre accesible, codepoints} construidos con `String.fromCodePoint` (sin emojis pegados a mano en el código).
 - `mentions.ts`: `getMentionQuery`, `filterMentionCandidates`, `resolveMentionIds`, `parseMentionSegments`, `mentionsLoki`, `buildLokiDisabledMessage` (puras, testeables con Node sin runner).
-- `intent.ts`: analizador determinista en español (recordatorio, evento, tarea, ítem de lista y **encuesta**), con la copia idéntica en `supabase/functions/_shared/intent.ts` (el test `intent-sync` la compara). La encuesta resuelve "entre viernes y sábado" a fechas de Santiago sin gastar modelo.
+- `intent.ts`: analizador determinista en español (recordatorio, evento, tarea, ítem de lista, **encuesta** y **órdenes al PC** `@mi-pc`), con la copia idéntica en `supabase/functions/_shared/intent.ts` (el test `intent-sync` la compara). La encuesta resuelve "entre viernes y sábado" a fechas de Santiago sin gastar modelo; `@mi-pc abre Spotify` resuelve la acción del catálogo sin gastar modelo.
 - `preview.ts`: `updatesChatPreview(type)` — qué mensajes pueden tocar `lastMessage`/`updated_at` del chat (los del preview de la lista). `type "system"` NO (misma regla que el trigger de Postgres).
 - `src/lib/ai/constants.ts`: `AI_CHAT_ID`/`AI_CHAT_NAME`/`AI_AUTHOR_ID`, `AI_SUGGESTIONS` (los tres chips), `AI_PLACEHOLDER`, `AI_EMPTY_TITLE`/`AI_EMPTY_DESCRIPTION`, `AI_CONNECTING_TEXT`. Solo literales de UI.
 - `src/lib/ai/loki.ts`: cliente de la Edge Function (`getLokiStatus`, `streamLokiReply` por SSE, textos "Loki IA sin configurar").

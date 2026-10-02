@@ -112,6 +112,15 @@ flowchart LR
   encuestas por votar y destacados con IA bajo demanda (`day_highlights`,
   modelo barato, cuota del espacio, cacheado por día). Preferencias en
   Configuración → Notificaciones → Resumen diario.
+- **Compañero de escritorio** (contrato en `docs/DISPOSITIVOS.md`): desde el
+  chat ("@mi-pc abre Spotify" o pidiéndoselo a Loki) ordenas acciones en tu
+  propio PC y ves el resultado en una tarjeta viva. Vinculación con código de
+  un solo uso (Configuración → Mis dispositivos); el PC usa su propia
+  credencial con tokens cortos, nunca tu contraseña. Catálogo cerrado con
+  niveles de riesgo: lo sensible se aprueba en el teléfono (push tipo
+  `device`, pantalla `/dispositivos/aprobar?cmd=…`, con re-autenticación como
+  fallback en web) y el PC lo vuelve a comprobar antes de ejecutar. Permisos
+  por PC, historial con filtros y auditoría inmutable.
 
 ## Requisitos
 

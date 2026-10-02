@@ -35,6 +35,12 @@
 
 import { analyzeIntent, parseQuantity } from "../_shared/intent.ts";
 import {
+  deviceLabelOf,
+  deviceSummary,
+  isDeviceAction,
+  validateDeviceParams,
+} from "../_shared/devices.ts";
+import {
   cleanMemoryContent,
   guessMemoryCategory,
   looksSensitiveMemory,
@@ -161,7 +167,14 @@ const SYSTEM_PROMPT =
   "fecha y hora ISO en `startsAt`); las opciones van en `options`. " +
   "Resuelve personas contra los miembros (pide user_id por nombre " +
   "solo si es único; si hay dos iguales, dilo y no adivines) y fechas con " +
-  "la herramienta tal cual te las dicen en ISO (mañana, el viernes, etc.).";
+  "la herramienta tal cual te las dicen en ISO (mañana, el viernes, etc.). " +
+  "Para el PC del usuario ('@mi-pc abre Spotify', 'toma una captura de mi " +
+  "PC'): usa run_device_command con la acción del catálogo (pc_status, " +
+  "open_app, open_url, find_files, send_file, screenshot, lock_screen, " +
+  "volume_set, media_control, run_script, arbitrary_exec) y el texto libre " +
+  "en `text` (app, URL https, búsqueda, ruta, script o comando). El sistema " +
+  "pide confirmación y lo sensible además se aprueba en el teléfono. Si no " +
+  "hay PC vinculado, dilo y no inventes nada.";
 
 const SYSTEM_PROMPT_SUMMARY =
   "Resume la conversación en 2 líneas en español, solo lo esencial " +
@@ -691,7 +704,7 @@ const TOOLS: ToolDef[] = [
             properties: {
               action: {
                 type: "string",
-                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task", "add_list_items", "check_list_item", "remove_list_item", "create_poll", "remember"],
+                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task", "add_list_items", "check_list_item", "remove_list_item", "create_poll", "remember", "run_device_command"],
               },
               title: { type: "string" },
               startsAt: { type: "string" },
@@ -741,6 +754,28 @@ const TOOLS: ToolDef[] = [
         closeBy: { type: "string", enum: ["creator", "anyone"] },
       },
       required: ["workspaceId", "question", "kind"],
+    },
+  },
+  {
+    name: "run_device_command",
+    description:
+      "Ordena una acción al PC vinculado del usuario ('@mi-pc abre Spotify', 'toma una captura de mi PC'). action es del catálogo cerrado: pc_status (estado), open_app, open_url (solo https), find_files (nombre en carpetas permitidas), send_file (un archivo del PC al chat), screenshot, lock_screen, volume_set (level 0-100 o muted true), media_control (op: play|pause|toggle|next|prev), run_script (de su lista registrada), arbitrary_exec (terminal, solo si lo habilitó). Requiere confirmación; lo sensible además se aprueba en el teléfono.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        chatId: { type: "string" },
+        deviceId: { type: "string", description: "Id del PC (vacío = el primero activo)" },
+        action: {
+          type: "string",
+          enum: ["pc_status", "open_app", "open_url", "find_files", "send_file", "screenshot", "lock_screen", "volume_set", "media_control", "run_script", "arbitrary_exec"],
+        },
+        text: { type: "string", description: "App, URL, búsqueda, ruta, script o comando (máx 2000)" },
+        level: { type: "number", description: "Volumen 0-100 (solo volume_set)" },
+        muted: { type: "boolean", description: "Silenciar (solo volume_set)" },
+        op: { type: "string", enum: ["play", "pause", "toggle", "next", "prev"] },
+      },
+      required: ["action"],
     },
   },
   {
@@ -860,6 +895,7 @@ const WRITE_ACTIONS: ReadonlySet<string> = new Set([
   "create_poll",
   "remember",
   "propose_plan",
+  "run_device_command",
 ]);
 
 const ACTION_LABELS: Record<string, string> = {
@@ -877,6 +913,7 @@ const ACTION_LABELS: Record<string, string> = {
   create_poll: "Crear encuesta",
   remember: "Recordar en el espacio",
   propose_plan: "Plan de acciones",
+  run_device_command: "Ordenar a mi PC",
 };
 
 function actionLabel(action: string): string {
@@ -1264,6 +1301,59 @@ async function allowThirdPartyPing(
 
 type Precheck = { ok: boolean; message: string };
 
+type OwnedDevice = { id: string; name: string };
+
+/** PCs activos del usuario (con su JWT: la RLS solo deja ver los suyos). */
+async function listOwnDevices(jwt: string): Promise<OwnedDevice[]> {
+  const res = await userRest(
+    `/user_devices?revoked_at=is.null&select=id,name&order=created_at.asc&limit=10`,
+    jwt,
+  );
+  if (!res.ok || !Array.isArray(res.data)) return [];
+  const out: OwnedDevice[] = [];
+  for (const row of res.data) {
+    if (!isRecord(row)) continue;
+    const id = asString(row["id"]);
+    if (id === null) continue;
+    out.push({ id, name: asString(row["name"]) ?? "Mi PC" });
+  }
+  return out;
+}
+
+/**
+ * Resuelve el PC destino (por id o nombre aproximado; vacío = el primero).
+ * Null = no hay ninguno vinculado (o el pedido nombra uno que no existe).
+ */
+async function resolveDevice(
+  params: Record<string, unknown>,
+  ctx: { uid: string; jwt: string },
+): Promise<OwnedDevice | null> {
+  const devices = await listOwnDevices(ctx.jwt);
+  if (devices.length === 0) return null;
+  const want = paramStr(params, "deviceId") ?? paramStr(params, "device");
+  if (want === null) return devices[0] ?? null;
+  const q = normName(want);
+  return devices.find((d) => d.id === want || normName(d.name) === q) ?? null;
+}
+
+/**
+ * Parámetros del catálogo desde lo que trae la tarjeta o el modelo (solo
+ * claves conocidas: el resto no viaja a la base).
+ */
+function deviceParamsFrom(params: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const text = paramStr(params, "text");
+  if (text !== null) out["text"] = text.slice(0, 2000);
+  const dir = paramStr(params, "dir");
+  if (dir !== null) out["dir"] = dir.slice(0, 200);
+  const level = params["level"];
+  if (typeof level === "number" && Number.isFinite(level)) out["level"] = level;
+  if (params["muted"] === true || params["muted"] === "1") out["muted"] = true;
+  const op = paramStr(params, "op");
+  if (op !== null) out["op"] = op;
+  return out;
+}
+
 /**
  * Revisa ANTES de confirmar si la acción pasaría la RLS (editar evento
  * ajeno, tarea de otro, etc.). La tarjeta muestra el aviso y no deja
@@ -1311,6 +1401,24 @@ async function precheckAction(
       const exists = Array.isArray(res.data) && res.data.length > 0;
       if (!exists) return { ok: false, message: "Esa tarea ya no existe." };
     }
+    return ok;
+  }
+  if (action === "run_device_command") {
+    // Orden al PC: el catálogo es cerrado y los parámetros se validan aquí y
+    // en la base (request_device_command). Sin PC vinculado se dice directo.
+    const catalogAction = paramStr(params, "action");
+    if (catalogAction === null || !isDeviceAction(catalogAction)) {
+      return { ok: false, message: "Esa acción no existe en el catálogo del PC." };
+    }
+    const device = await resolveDevice(params, ctx);
+    if (device === null) {
+      const want = paramStr(params, "deviceId") ?? paramStr(params, "device");
+      return want !== null
+        ? { ok: false, message: "Ese PC no existe o está revocado." }
+        : { ok: false, message: "No tienes ningún PC vinculado. Vincúlalo en Configuración → Mis dispositivos." };
+    }
+    const invalid = validateDeviceParams(catalogAction, deviceParamsFrom(params));
+    if (invalid !== null) return { ok: false, message: invalid };
     return ok;
   }
   if (action === "remember") {
@@ -1660,6 +1768,25 @@ function detectIntentFallback(text: string): LlmToolCall {
   if (/(mis proyectos|proyectos)/.test(lower)) {
     return { name: "list_projects", args: {} };
   }
+  // Compañero de escritorio (por si el proveedor no soporta tools): el
+  // analizador ya resolvió verbo y parámetros sin modelo.
+  if (/(mi-?pc|@mi-?pc|@mipc)/.test(lower)) {
+    const parsed = analyzeIntent(text);
+    if (
+      parsed !== null && parsed.action === "device_command" &&
+      parsed.deviceAction !== null && isDeviceAction(parsed.deviceAction)
+    ) {
+      const rawArgs: Record<string, unknown> = { ...parsed.deviceArgs };
+      if (parsed.deviceAction === "volume_set" && typeof rawArgs["level"] === "string") {
+        const n = parseInt(rawArgs["level"], 10);
+        if (Number.isFinite(n)) rawArgs["level"] = n; else delete rawArgs["level"];
+      }
+      if (rawArgs["muted"] === "1") rawArgs["muted"] = true;
+      if (validateDeviceParams(parsed.deviceAction, rawArgs) === null) {
+        return { name: "run_device_command", args: { action: parsed.deviceAction, ...rawArgs } };
+      }
+    }
+  }
   return null;
 }
 
@@ -1706,6 +1833,70 @@ async function execConfirmedAction(
     undo: [],
   });
   const workspaceId = paramStr(params, "workspaceId") ?? ctx.workspaceId ?? null;
+
+  if (action === "run_device_command") {
+    // Orden al PC: se pide por RPC (valida catálogo, permisos, ritmo y chat)
+    // y queda una tarjeta viva en el chat (el estado llega por Realtime). Lo
+    // sensible vuelve en pending_confirmation y se aprueba en el teléfono.
+    const catalogAction = paramStr(params, "action");
+    if (catalogAction === null || !isDeviceAction(catalogAction)) {
+      return fail("Esa acción no existe en el catálogo del PC.");
+    }
+    const device = await resolveDevice(params, ctx);
+    if (device === null) {
+      return fail("No tienes ningún PC vinculado. Vincúlalo en Configuración → Mis dispositivos.");
+    }
+    const deviceParams = deviceParamsFrom(params);
+    const invalid = validateDeviceParams(catalogAction, deviceParams);
+    if (invalid !== null) return fail(invalid);
+    const chatId = paramStr(params, "chatId") ?? paramStr(params, "chat_id");
+    const res = await userRest("/rpc/request_device_command", ctx.jwt, {
+      method: "POST",
+      body: {
+        p_device_id: device.id,
+        p_action: catalogAction,
+        p_params: deviceParams,
+        p_workspace_id: workspaceId,
+        p_chat_id: chatId ?? "",
+        p_message_id: null,
+      },
+    });
+    const cmdId = res.ok && isRecord(res.data) ? asString(res.data["id"]) : null;
+    const cmdStatus = res.ok && isRecord(res.data) ? asString(res.data["status"]) : null;
+    if (!res.ok || cmdId === null) {
+      const detail = isRecord(res.data) ? asString(res.data["message"]) : null;
+      return fail(detail ?? "No pude mandar la orden a tu PC. Inténtalo de nuevo.");
+    }
+    const summary = deviceSummary(catalogAction, deviceParams);
+    // Tarjeta viva en el chat del espacio (en el privado la respuesta basta).
+    if (workspaceId !== null && chatId !== null) {
+      await userRest("/messages", ctx.jwt, {
+        method: "POST",
+        body: {
+          workspace_id: workspaceId,
+          chat_id: chatId,
+          author_id: ctx.uid,
+          author_name: "Loki",
+          text: summary,
+          type: "card",
+          mentions: [],
+          meta: { kind: "device_command", command_id: cmdId },
+        },
+      });
+    }
+    if (cmdStatus === "pending_confirmation") {
+      return done(
+        `Es algo sensible: te mandé la aprobación al teléfono para “${summary}” en ${device.name}.`,
+        [`/dispositivos/aprobar?cmd=${cmdId}`],
+      );
+    }
+    return done(
+      `Listo: le mandé “${summary}” a ${device.name}.` +
+      (workspaceId !== null && chatId !== null
+        ? " El estado se ve en la tarjeta de aquí abajo."
+        : " Lo ves en Mis dispositivos."),
+    );
+  }
 
   if (action === "create_event") {
     const title = paramStr(params, "title");
@@ -2844,6 +3035,53 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return sseReplyStream(null, async (_send, sendPending) => {
         sendPending(pending);
       });
+    }
+    // Comandos al PC: "@mi-pc abre Spotify" se arma con el analizador, sin
+    // modelo: es código, no IA. Sin PC vinculado (o verbo poco claro) se sigue
+    // al modelo, que lo explica con la tarjeta de confirmación.
+    if (
+      quick !== null && quick.action === "device_command" &&
+      quick.deviceAction !== null && quick.confident &&
+      isDeviceAction(quick.deviceAction)
+    ) {
+      const rawArgs: Record<string, unknown> = { ...quick.deviceArgs };
+      if (quick.deviceAction === "volume_set" && typeof rawArgs["level"] === "string") {
+        const n = parseInt(rawArgs["level"], 10);
+        if (Number.isFinite(n)) rawArgs["level"] = n; else delete rawArgs["level"];
+      }
+      if (rawArgs["muted"] === "1") rawArgs["muted"] = true;
+      if (validateDeviceParams(quick.deviceAction, rawArgs) === null) {
+        let wsQuick: string | undefined;
+        if (input.mode === "mention") {
+          const member = await isMember(input.workspaceId, uid);
+          if (!member) return json(403, { code: "forbidden" });
+          wsQuick = input.workspaceId;
+        }
+        const quickDevice = await resolveDevice({}, { uid, jwt: token });
+        if (quickDevice !== null) {
+          const pending = {
+            id: crypto.randomUUID(),
+            action: "run_device_command",
+            label: actionLabel("run_device_command"),
+            params: pendingParams(
+              {
+                action: quick.deviceAction,
+                ...rawArgs,
+                deviceId: quickDevice.id,
+                deviceName: quickDevice.name,
+              },
+              {
+                ...(wsQuick !== undefined ? { workspaceId: wsQuick } : {}),
+                ...(input.mode === "mention" ? { chatId: input.chatId } : {}),
+              },
+            ),
+          };
+          return sseReplyStream(null, async (_send, sendPending) => {
+            sendPending(pending);
+          });
+        }
+      }
+      // Sin PC (o verbo a medias): sigue al modelo.
     }
     if (
       quick !== null && quick.confident && quick.dateISO !== null &&

@@ -169,6 +169,7 @@ describe("RLS: búsqueda total", () => {
         workspace_id: ws,
         content: "El asado se hace con carbón de espino",
         category: "casa",
+        sensitive: false,
         created_by: member.id,
       },
       {

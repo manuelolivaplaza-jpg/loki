@@ -62,17 +62,19 @@ export function DigestSettingsSection({ uid }: { uid: string | null }): React.JS
   }
   if (prefs === null) return <></>;
 
-  const allSpaces = prefs.workspaceIds.length === 0;
+  // Captura para los manejadores: el estrechamiento de `prefs` no entra en closures.
+  const currentPrefs = prefs;
+  const allSpaces = currentPrefs.workspaceIds.length === 0;
 
   function toggleSpace(wsId: string): void {
-    const current = allSpaces ? workspaces.map((space) => space.wsId) : prefs.workspaceIds;
+    const current = allSpaces ? workspaces.map((space) => space.wsId) : currentPrefs.workspaceIds;
     const next = current.includes(wsId)
       ? current.filter((id) => id !== wsId)
       : [...current, wsId];
     // Todos marcados = todos los espacios (se guarda vacío).
     const normalized =
       next.length >= workspaces.length ? [] : next;
-    handleChange({ ...prefs, workspaceIds: normalized });
+    handleChange({ ...currentPrefs, workspaceIds: normalized });
   }
 
   return (

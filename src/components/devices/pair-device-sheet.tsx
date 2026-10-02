@@ -132,7 +132,7 @@ export function PairDeviceSheet({
               <img src={qr} alt="QR con el código de vinculación" width={180} height={180} className="rounded-xl border border-divider" />
             ) : (
               <span className="flex h-24 w-24 items-center justify-center rounded-xl bg-surface-soft">
-                <Icon icon={MonitorSmartphone} size={32} className="text-muted-foreground" />
+                <Icon icon={MonitorSmartphone} size={24} className="text-muted-foreground" />
               </span>
             )}
             <p
@@ -153,7 +153,7 @@ export function PairDeviceSheet({
                 onClick={() => void handleCopy()}
                 className="min-h-11 flex-1"
               >
-                <Icon icon={copied ? Check : Copy} size={18} />
+                <Icon icon={copied ? Check : Copy} size={20} />
                 {copied ? "Copiado" : "Copiar"}
               </Button>
               <Button

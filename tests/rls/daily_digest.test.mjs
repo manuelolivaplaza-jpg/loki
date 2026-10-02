@@ -309,6 +309,15 @@ describe("RLS: resumen diario", () => {
       workspace_ids: [],
       send_when_empty: false,
     });
+    // Aislamiento: el test anterior dejó evento, tarea, lista y encuesta de
+    // hoy en el espacio (cuentan a nivel espacio, no por usuario). Sin
+    // limpiarlos, el miembro nunca estaría "vacío".
+    await admin.from("poll_options").delete().eq("workspace_id", ws);
+    await admin.from("polls").delete().eq("workspace_id", ws);
+    await admin.from("list_items").delete().eq("workspace_id", ws);
+    await admin.from("lists").delete().eq("workspace_id", ws);
+    await admin.from("tasks").delete().eq("workspace_id", ws);
+    await admin.from("events").delete().eq("workspace_id", ws);
     await admin
       .from("notifications")
       .delete()

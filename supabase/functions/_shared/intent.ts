@@ -535,7 +535,7 @@ function parsePoll(
 // sensible (mandar archivos, scripts, terminal) viaja igual por tarjeta +
 // aprobación en el teléfono; aquí solo se detecta, nunca se ejecuta.
 
-const DEVICE_MARK_RE = /(^|[\s,.;:¡!¿?])(@mi-?pc|@mipc|mi-?pc)\b/;
+const DEVICE_MARK_RE = /(^|[\s,.;:¡!¿?])(@mi-?pc|@mipc|mi[ -]?pc)\b/;
 
 type DeviceParse = {
   action: string;
@@ -547,13 +547,13 @@ type DeviceParse = {
 /** Quita la marca al PC del inicio o del final ("@mi-pc abre X", "X de mi pc"). */
 function stripDeviceMark(normalized: string): string {
   let rest = normalized
-    .replace(/^[\s,.;:¡!¿?]*(loki\s*,?\s*)?(@mi-?pc|@mipc|mi-?pc)\b[\s,.;:¡!¿?]*/, "")
-    .replace(/[\s,.;:¡!¿?]+(de |a |en |al )?mi-?pc[\s,.;:¡!¿?]*$/, "")
+    .replace(/^[\s,.;:¡!¿?]*(loki\s*,?\s*)?(@mi-?pc|@mipc|mi[ -]?pc)\b[\s,.;:¡!¿?]*/, "")
+    .replace(/[\s,.;:¡!¿?]+(de |a |en |al )?mi[ -]?pc[\s,.;:¡!¿?]*$/, "")
     .replace(/^(por favor\s+)?(loki\s*,?\s*)?/, "")
     .trim();
   // "abre spotify en mi pc": la cola ya se quitó; "en mi pc abre X" al inicio
   // también (primer replace). Recorta restos intermedios comunes.
-  rest = rest.replace(/\s+en mi-?pc(\s+|$)/, " ").trim();
+  rest = rest.replace(/\s+en mi[ -]?pc(\s+|$)/, " ").trim();
   return rest;
 }
 

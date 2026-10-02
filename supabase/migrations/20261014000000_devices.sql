@@ -93,12 +93,6 @@ create policy "dispositivos: el dueño ve los suyos"
   on public.user_devices for select to authenticated
   using (owner_id is not distinct from auth.uid());
 
-drop policy if exists "dispositivos: el dispositivo ve su ficha"
-  on public.user_devices;
-create policy "dispositivos: el dispositivo ve su ficha"
-  on public.user_devices for select to authenticated
-  using (id is not distinct from public.my_device_id());
-
 -- El hash del secreto y el alcance no vuelven al cliente en lectura, y el
 -- ciclo de vida (crear/revocar) pasa por la Edge device-pair y revoke_device.
 revoke all on public.user_devices from anon, authenticated;
@@ -168,6 +162,32 @@ comment on table public.device_auth_users is
 
 alter table public.device_auth_users enable row level security;
 -- Sin políticas: ningún cliente lee ni escribe; solo la service role.
+
+-- Helper RLS (va antes que las políticas que lo usan).
+
+-- ¿Qué dispositivo es este JWT? Null = persona (o sin sesión).
+create or replace function public.my_device_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select m.device_id
+  from public.device_auth_users m
+  where m.auth_user_id is not distinct from auth.uid()
+  limit 1;
+$$;
+
+comment on function public.my_device_id() is
+  'Dispositivo dueño de este JWT (null si es una persona). Base de la RLS de PCs.';
+
+drop policy if exists "dispositivos: el dispositivo ve su ficha"
+  on public.user_devices;
+create policy "dispositivos: el dispositivo ve su ficha"
+  on public.user_devices for select to authenticated
+  using (id is not distinct from public.my_device_id());
+
 
 -- -----------------------------------------------------------------------------
 -- 4. Comandos al PC (catálogo cerrado).
@@ -290,22 +310,6 @@ grant select on public.device_audit_log to authenticated;
 -- 6. Helpers SECURITY DEFINER (search_path fijo).
 -- -----------------------------------------------------------------------------
 
--- ¿Qué dispositivo es este JWT? Null = persona (o sin sesión).
-create or replace function public.my_device_id()
-returns uuid
-language sql
-stable
-security definer
-set search_path = public, pg_temp
-as $$
-  select m.device_id
-  from public.device_auth_users m
-  where m.auth_user_id is not distinct from auth.uid()
-  limit 1;
-$$;
-
-comment on function public.my_device_id() is
-  'Dispositivo dueño de este JWT (null si es una persona). Base de la RLS de PCs.';
 
 -- Dueño de un dispositivo (para RLS sin recursión).
 create or replace function public.device_owner_id(p_device_id uuid)

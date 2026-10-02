@@ -20,6 +20,7 @@ import type {
   DevicePlatform,
   DeviceSettingsPatch,
 } from "@/types/devices";
+import type { Json } from "@/types/supabase";
 
 export type Unsubscribe = () => void;
 
@@ -229,7 +230,7 @@ export async function listDeviceCommands(
 export async function requestDeviceCommand(input: {
   deviceId: string;
   action: DeviceAction;
-  params: Record<string, unknown>;
+  params: Json;
   workspaceId: string | null;
   chatId: string;
   messageId?: string | null;

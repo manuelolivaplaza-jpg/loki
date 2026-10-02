@@ -31,7 +31,84 @@
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- 0. Helpers de ajustes y permisos (SECURITY DEFINER, search_path fijo)
+-- 0. Tablas
+-- -----------------------------------------------------------------------------
+
+-- La encuesta es un mensaje 'card': `message_id` es único (así el reintento no
+-- duplica) y al borrar el mensaje se lleva la encuesta y sus votos.
+create table if not exists public.polls (
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid not null unique references public.messages (id) on delete cascade,
+  workspace_id uuid not null,
+  chat_id text not null,
+  question text not null check (char_length(btrim(question)) between 1 and 200),
+  kind text not null default 'single' check (kind in ('single', 'multiple', 'yesno', 'date')),
+  settings jsonb not null default '{"anonymous":false,"allowSuggestions":true,"remindMissing":false,"closeBy":"creator"}'::jsonb,
+  closes_at timestamptz,
+  closed_at timestamptz,
+  closed_by uuid references auth.users (id) on delete set null,
+  created_by uuid references auth.users (id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint polls_chat_fk
+    foreign key (workspace_id, chat_id)
+    references public.chats (workspace_id, id) on delete cascade
+);
+
+comment on table public.polls is
+  'Encuesta del chat. El resultado se calcula de los votos al leer (al cerrar '
+  'ya no se pueden cambiar, así queda fijado sin desnormalizar).';
+
+comment on column public.polls.settings is
+  'Ajustes: anonymous, allowSuggestions, remindMissing, closeBy.';
+
+-- Opciones: texto siempre; en kind 'date' además el rango (starts_at/ends_at).
+create table if not exists public.poll_options (
+  id uuid primary key default gen_random_uuid(),
+  poll_id uuid not null references public.polls (id) on delete cascade,
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  text text not null check (char_length(btrim(text)) between 1 and 200),
+  starts_at timestamptz,
+  ends_at timestamptz,
+  position numeric not null default 0,
+  added_by uuid references auth.users (id) on delete set null,
+  created_at timestamptz not null default now(),
+  constraint poll_options_range check (starts_at is null or ends_at is null or ends_at >= starts_at)
+);
+
+comment on table public.poll_options is
+  'Opciones de la encuesta. En kind date, starts_at/ends_at son la franja propuesta.';
+
+create table if not exists public.poll_votes (
+  id uuid primary key default gen_random_uuid(),
+  poll_id uuid not null references public.polls (id) on delete cascade,
+  option_id uuid not null references public.poll_options (id) on delete cascade,
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  constraint poll_votes_once unique (poll_id, option_id, user_id)
+);
+
+comment on table public.poll_votes is
+  'Votos. En single/yesno el trigger deja uno por persona (cambiar = borrar).';
+
+create index if not exists polls_chat_idx
+  on public.polls (workspace_id, chat_id, created_at desc);
+create index if not exists polls_open_idx
+  on public.polls (closes_at)
+  where closed_at is null;
+create index if not exists poll_options_poll_idx
+  on public.poll_options (poll_id, position);
+create index if not exists poll_votes_poll_idx
+  on public.poll_votes (poll_id, user_id);
+
+-- updated_at automático.
+drop trigger if exists polls_touch_updated_at on public.polls;
+create trigger polls_touch_updated_at
+  before update on public.polls
+  for each row execute function public.touch_updated_at();
+
+-- -----------------------------------------------------------------------------
+-- 1. Helpers de ajustes y permisos (SECURITY DEFINER, search_path fijo)
 -- -----------------------------------------------------------------------------
 
 -- Lee un booleano de `settings` con default. Un valor basura devuelve el
@@ -84,7 +161,7 @@ as $$
         p.created_by is not distinct from auth.uid()
         or public.is_space_admin(p.workspace_id)
         or (
-          public.poll_flag(p.settings, 'closeBy', 'creator') = 'anyone'
+          coalesce(p.settings ->> 'closeBy', 'creator') = 'anyone'
           and public.can_access_chat(p.workspace_id, p.chat_id)
         )
       )
@@ -200,82 +277,6 @@ $$;
 comment on function public.poll_electors(uuid, text) is
   'Uids que pueden votar: miembros del espacio (o del dm si es privado).';
 
--- -----------------------------------------------------------------------------
--- 1. Tablas
--- -----------------------------------------------------------------------------
-
--- La encuesta es un mensaje 'card': `message_id` es único (así el reintento no
--- duplica) y al borrar el mensaje se lleva la encuesta y sus votos.
-create table if not exists public.polls (
-  id uuid primary key default gen_random_uuid(),
-  message_id uuid not null unique references public.messages (id) on delete cascade,
-  workspace_id uuid not null,
-  chat_id text not null,
-  question text not null check (char_length(btrim(question)) between 1 and 200),
-  kind text not null default 'single' check (kind in ('single', 'multiple', 'yesno', 'date')),
-  settings jsonb not null default '{"anonymous":false,"allowSuggestions":true,"remindMissing":false,"closeBy":"creator"}'::jsonb,
-  closes_at timestamptz,
-  closed_at timestamptz,
-  closed_by uuid references auth.users (id) on delete set null,
-  created_by uuid references auth.users (id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint polls_chat_fk
-    foreign key (workspace_id, chat_id)
-    references public.chats (workspace_id, id) on delete cascade
-);
-
-comment on table public.polls is
-  'Encuesta del chat. El resultado se calcula de los votos al leer (al cerrar '
-  'ya no se pueden cambiar, así queda fijado sin desnormalizar).';
-
-comment on column public.polls.settings is
-  'Ajustes: anonymous, allowSuggestions, remindMissing, closeBy.';
-
--- Opciones: texto siempre; en kind 'date' además el rango (starts_at/ends_at).
-create table if not exists public.poll_options (
-  id uuid primary key default gen_random_uuid(),
-  poll_id uuid not null references public.polls (id) on delete cascade,
-  workspace_id uuid not null references public.workspaces (id) on delete cascade,
-  text text not null check (char_length(btrim(text)) between 1 and 200),
-  starts_at timestamptz,
-  ends_at timestamptz,
-  position numeric not null default 0,
-  added_by uuid references auth.users (id) on delete set null,
-  created_at timestamptz not null default now(),
-  constraint poll_options_range check (starts_at is null or ends_at is null or ends_at >= starts_at)
-);
-
-comment on table public.poll_options is
-  'Opciones de la encuesta. En kind date, starts_at/ends_at son la franja propuesta.';
-
-create table if not exists public.poll_votes (
-  id uuid primary key default gen_random_uuid(),
-  poll_id uuid not null references public.polls (id) on delete cascade,
-  option_id uuid not null references public.poll_options (id) on delete cascade,
-  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
-  created_at timestamptz not null default now(),
-  constraint poll_votes_once unique (poll_id, option_id, user_id)
-);
-
-comment on table public.poll_votes is
-  'Votos. En single/yesno el trigger deja uno por persona (cambiar = borrar).';
-
-create index if not exists polls_chat_idx
-  on public.polls (workspace_id, chat_id, created_at desc);
-create index if not exists polls_open_idx
-  on public.polls (closes_at)
-  where closed_at is null;
-create index if not exists poll_options_poll_idx
-  on public.poll_options (poll_id, position);
-create index if not exists poll_votes_poll_idx
-  on public.poll_votes (poll_id, user_id);
-
--- updated_at automático.
-drop trigger if exists polls_touch_updated_at on public.polls;
-create trigger polls_touch_updated_at
-  before update on public.polls
-  for each row execute function public.touch_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- 2. Guardas de escritura

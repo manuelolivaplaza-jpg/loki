@@ -268,7 +268,7 @@ export function DeviceHistory({ deviceId }: { deviceId: string | null }): React.
               key={entry.id}
               className="flex items-center gap-2 rounded-2xl border border-border bg-card p-3"
             >
-              <Icon icon={History} size={18} className="shrink-0 text-muted-foreground" />
+              <Icon icon={History} size={20} className="shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1">
                 <span className="block text-body-sm font-medium leading-5 text-foreground">
                   {AUDIT_LABEL[entry.action] ?? entry.action}

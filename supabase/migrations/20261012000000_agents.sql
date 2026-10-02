@@ -143,24 +143,6 @@ create policy "agentes: el dueño borra los suyos"
   on public.agent_connections for delete to authenticated
   using (owner_id is not distinct from auth.uid());
 
--- Habilitados en mis espacios: los miembros ven lo básico (nombre, handle,
--- dueño) para la vista "Agentes en este espacio". Los secretos siguen
--- ocultos por el REVOKE a nivel de columna, que manda sobre esta política.
-drop policy if exists "agentes: habilitados en mis espacios"
-  on public.agent_connections;
-create policy "agentes: habilitados en mis espacios"
-  on public.agent_connections for select to authenticated
-  using (
-    exists (
-      select 1
-      from public.agent_space_grants g
-      where g.connection_id = agent_connections.id
-        and g.enabled
-        and not g.admin_disabled
-        and public.is_member(g.workspace_id)
-    )
-  );
-
 -- Secretos: ni el dueño los vuelve a leer. Sin estos REVOKE a nivel de
 -- columna, un `select` los expondría. El cliente usa siempre listas
 -- explícitas de columnas seguras (ver src/lib/data/agents.ts), nunca `*`.
@@ -227,6 +209,24 @@ create trigger agent_space_grants_touch_updated_at
   for each row execute function public.touch_updated_at();
 
 alter table public.agent_space_grants enable row level security;
+
+-- Habilitados en mis espacios: los miembros ven lo básico (nombre, handle,
+-- dueño) para la vista "Agentes en este espacio". Los secretos siguen
+-- ocultos por el REVOKE a nivel de columna, que manda sobre esta política.
+drop policy if exists "agentes: habilitados en mis espacios"
+  on public.agent_connections;
+create policy "agentes: habilitados en mis espacios"
+  on public.agent_connections for select to authenticated
+  using (
+    exists (
+      select 1
+      from public.agent_space_grants g
+      where g.connection_id = agent_connections.id
+        and g.enabled
+        and not g.admin_disabled
+        and public.is_member(g.workspace_id)
+    )
+  );
 
 -- El dueño gestiona sus grants; los miembros del espacio los leen (vista
 -- "Agentes en este espacio": de quién es cada uno y quién puede usarlo).
@@ -311,6 +311,99 @@ create trigger agent_runs_touch_updated_at
   for each row execute function public.touch_updated_at();
 
 alter table public.agent_runs enable row level security;
+
+-- Helpers RLS (van antes que las políticas que los usan; el resto sigue en la sección 4).
+
+-- Dueño de una conexión (para RLS sin recursión).
+create or replace function public.agent_connection_owner(p_connection_id uuid)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select c.owner_id
+  from public.agent_connections c
+  where c.id = p_connection_id;
+$$;
+
+comment on function public.agent_connection_owner(uuid) is
+  'Dueño de una conexión de agente (interno de RLS).';
+
+-- ¿Puedo invocar este agente en este espacio? El dueño siempre; los demás
+-- según el grant habilitado (y sin bloqueo de admin).
+create or replace function public.agent_can_invoke(
+  p_connection_id uuid, p_workspace_id uuid
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from public.agent_connections c
+    where c.id = p_connection_id
+      and c.status = 'active'
+      and c.owner_id is not distinct from auth.uid()
+  ) or exists (
+    select 1
+    from public.agent_connections c
+    join public.agent_space_grants g
+      on g.connection_id = c.id
+     and g.workspace_id = p_workspace_id
+    where c.id = p_connection_id
+      and c.status = 'active'
+      and g.enabled
+      and not g.admin_disabled
+      and public.is_member(p_workspace_id)
+      and (
+        g.allowed_callers = 'space_members'
+        or (g.allowed_callers = 'listed' and auth.uid() = any (g.allowed_user_ids))
+        or (
+          g.allowed_callers = 'owner_only'
+          and c.owner_id is not distinct from auth.uid()
+        )
+      )
+  );
+$$;
+
+comment on function public.agent_can_invoke(uuid, uuid) is
+  '¿Puede el usuario actual invocar este agente en este espacio? Dueño siempre; el resto según el grant (habilitado, sin bloqueo de admin y llamador permitido).';
+
+-- ¿Puedo leer esta ejecución? Quien la pidió, el dueño del agente, o un
+-- miembro del chat cuando el resultado es público (grant con publish y acceso
+-- al chat; en DMs ajenos can_access_chat ya deja fuera).
+create or replace function public.agent_can_read_run(p_run_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from public.agent_runs r
+    join public.agent_connections c on c.id = r.connection_id
+    left join public.agent_space_grants g
+      on g.connection_id = r.connection_id
+     and g.workspace_id = r.workspace_id
+    where r.id = p_run_id
+      and (
+        r.requested_by is not distinct from auth.uid()
+        or c.owner_id is not distinct from auth.uid()
+        or (
+          coalesce(g.allow_publish, true)
+          and public.can_access_chat(r.workspace_id, r.chat_id)
+        )
+      )
+  );
+$$;
+
+comment on function public.agent_can_read_run(uuid) is
+  'Visibilidad de una ejecución: quien la pidió, el dueño del agente, o miembros del chat si el grant permite publicar.';
+
 
 -- Lee: quien la pidió, el dueño del agente, o un miembro del chat cuando el
 -- grant permite publicar (el resultado es público). Los resultados privados

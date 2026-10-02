@@ -145,8 +145,8 @@ export function useAgentRun(
     enabled: runId !== null,
     staleTime: 5_000,
     retry: false,
-    refetchInterval: (data) => {
-      const status = data?.run?.status;
+    refetchInterval: (query) => {
+      const status = query.state.data?.run?.status;
       if (status === undefined) return false;
       return status === "queued" || status === "dispatched" || status === "running" ||
           status === "needs_input"
@@ -344,8 +344,10 @@ export function useMessageAgentRuns(messageId: string | null): {
     // La fila queued la crea el cliente justo después del mensaje: mientras no
     // haya filas se reintenta corto (el trigger despierta al despacho en
     // segundos); con filas, manda el Realtime por ejecución.
-    refetchInterval: (data) =>
-      data !== undefined && data.length === 0 ? 5_000 : false,
+    refetchInterval: (query) => {
+      const rows = query.state.data;
+      return rows !== undefined && rows.length === 0 ? 5_000 : false;
+    },
   });
   React.useEffect(() => {
     if (messageId === null || messageId === "") return;

@@ -148,7 +148,7 @@ export function ApprovalView({ commandId }: { commandId: string }): React.JSX.El
         >
           <Icon
             icon={approved ? Check : X}
-            size={32}
+            size={24}
             className={approved ? "text-success" : "text-muted-foreground"}
           />
         </span>
@@ -181,7 +181,7 @@ export function ApprovalView({ commandId }: { commandId: string }): React.JSX.El
     <div className="flex min-h-full flex-col gap-4 pb-40">
       <div className="flex flex-col items-center gap-2 pt-6 text-center">
         <span className="flex h-16 w-16 items-center justify-center rounded-full bg-warning/15">
-          <Icon icon={MonitorSmartphone} size={32} className="text-warning-foreground" />
+          <Icon icon={MonitorSmartphone} size={24} className="text-warning-foreground" />
         </span>
         <p className="text-body-sm font-medium text-muted-foreground">{deviceName}</p>
         <h1 className="max-w-sm text-title font-semibold leading-8 text-foreground">

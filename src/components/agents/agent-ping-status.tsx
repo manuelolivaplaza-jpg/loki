@@ -63,7 +63,7 @@ export function AgentPingStatus(props: {
   if (isPending) {
     return (
       <p role="status" className="flex items-center gap-2 text-body-sm text-muted-foreground">
-        <Icon icon={Loader2} size={16} className="animate-spin" />
+        <Icon icon={Loader2} size={20} className="animate-spin" />
         Iniciando la prueba…
       </p>
     );
@@ -89,11 +89,11 @@ export function AgentPingStatus(props: {
           return (
             <li key={step.key} className="flex items-center gap-2 text-body-sm">
               {done ? (
-                <Icon icon={Check} size={16} className="shrink-0 text-success" />
+                <Icon icon={Check} size={20} className="shrink-0 text-success" />
               ) : stepFailed ? (
-                <Icon icon={X} size={16} className="shrink-0 text-danger" />
+                <Icon icon={X} size={20} className="shrink-0 text-danger" />
               ) : current ? (
-                <Icon icon={Loader2} size={16} className="shrink-0 animate-spin text-accent" />
+                <Icon icon={Loader2} size={20} className="shrink-0 animate-spin text-accent" />
               ) : (
                 <span aria-hidden="true" className="h-4 w-4 shrink-0 rounded-full border border-border" />
               )}

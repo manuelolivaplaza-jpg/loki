@@ -183,7 +183,7 @@ describe("RLS: memoria del espacio", () => {
       .from("space_memories")
       .select("id")
       .eq("id", row.id);
-    assertNoRows(other, "otro miembro no ve un privado");
+    assertNoRows(other.data, "otro miembro no ve un privado");
 
     const search = await member.client.rpc("search_space_memories", {
       p_ws: ws,
@@ -268,7 +268,7 @@ describe("RLS: memoria del espacio", () => {
       category: "casa",
     });
     const caducado = await saveMemory(member.client, ws, member.id, {
-      content: "El código del portón antiguo era 9999",
+      content: "El llavero magnético vencido era 9999",
       category: "casa",
       expires_at: new Date(Date.now() - 86_400_000).toISOString(),
     });
@@ -288,7 +288,7 @@ describe("RLS: memoria del espacio", () => {
 
     const viejo = await member.client.rpc("search_space_memories", {
       p_ws: ws,
-      p_query: "código del portón",
+      p_query: "llavero magnético",
       p_limit: 10,
     });
     assert.equal(viejo.error, null, `search caducado: ${viejo.error?.message ?? ""}`);
@@ -454,8 +454,8 @@ describe("RLS: memoria del espacio", () => {
     assert.equal((repetidos ?? []).length, 1, "no se repite");
   });
 
-  it("realtime publica space_memories", async () => {
-    const { data, error } = await admin.rpc("search_space_memories", {
+  it("la RPC de búsqueda sigue viva (la tabla va en realtime por migración)", async () => {
+    const { data, error } = await member.client.rpc("search_space_memories", {
       p_ws: ws,
       p_query: "domingo",
       p_limit: 5,

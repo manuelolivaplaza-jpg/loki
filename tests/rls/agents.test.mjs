@@ -398,12 +398,15 @@ describe("agentes personales (RLS)", () => {
     });
     assertDenied(written, "el cliente no escribe eventos");
 
+    // agent_runs no tiene GRANT UPDATE para el cliente (ni update ni delete:
+    // el ciclo lo mueven las Edges y cancelar es por RPC), así que el UPDATE
+    // se deniega con error en vez de afectar 0 filas.
     const moved = await member.client
       .from("agent_runs")
       .update({ status: "done" })
       .eq("id", runId)
       .select("id");
-    assertNoRowsAffected(moved, "el cliente no mueve estados");
+    assertDenied(moved, "el cliente no mueve estados");
   });
 
   it("cancelar: quien pidió o el dueño; el resto no", async () => {

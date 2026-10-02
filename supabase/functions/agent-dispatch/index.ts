@@ -471,7 +471,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // Contexto mínimo: últimos mensajes si el grant lo autoriza. Nada de DMs
   // salvo invocación dentro de ese DM con permiso explícito.
-  let context: Array<{ author: string; text: string; at: string }> = [];
+  const context: Array<{ author: string; text: string; at: string }> = [];
   const allowContext = grant === null ? true : grant["allow_context"] !== false;
   const contextN = grant !== null && typeof grant["context_messages"] === "number"
     ? Math.max(0, Math.min(50, grant["context_messages"] as number))

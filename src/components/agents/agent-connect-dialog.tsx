@@ -439,11 +439,11 @@ export function AgentConnectDialog(props: {
                 </p>
                 <div className="flex gap-2">
                   <Button type="button" variant="secondary" onClick={() => void handleCopyToken()} className="min-h-11 flex-1">
-                    <Icon icon={copied ? Check : Copy} size={18} />
+                    <Icon icon={copied ? Check : Copy} size={20} />
                     {copied ? "¡Copiado!" : "Copiar"}
                   </Button>
                   <Button type="button" variant="secondary" onClick={() => void handleShareToken()} className="min-h-11 flex-1">
-                    <Icon icon={Share2} size={18} />
+                    <Icon icon={Share2} size={20} />
                     Compartir
                   </Button>
                 </div>

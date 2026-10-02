@@ -141,7 +141,7 @@ export function AgentsSection(props: {
             onClick={() => setDialogOpen(true)}
             className="w-full"
           >
-            <Icon icon={Plus} size={18} />
+            <Icon icon={Plus} size={20} />
             Conectar agente
           </Button>
         </div>
@@ -235,7 +235,7 @@ function AgentRow(props: {
         </span>
         <Icon
           icon={ChevronDown}
-          size={18}
+          size={20}
           className={cn("shrink-0 text-muted-foreground transition-transform", expanded && "rotate-180")}
         />
       </button>
@@ -443,11 +443,11 @@ function AgentInbound(props: { agent: AgentConnection; uid: string | null }): Re
           </p>
           <div className="flex gap-2">
             <Button type="button" variant="secondary" onClick={() => void handleCopy()} className="min-h-11 flex-1">
-              <Icon icon={copied ? Check : Copy} size={18} />
+              <Icon icon={copied ? Check : Copy} size={20} />
               {copied ? "¡Copiado!" : "Copiar"}
             </Button>
             <Button type="button" variant="secondary" onClick={() => void handleShare()} className="min-h-11 flex-1">
-              <Icon icon={Share2} size={18} />
+              <Icon icon={Share2} size={20} />
               Compartir
             </Button>
           </div>
@@ -557,7 +557,7 @@ function AgentGrantEditor(props: {
           </div>
         ) : (
           <Button type="button" variant="secondary" onClick={() => setAdding(true)} className="w-full">
-            <Icon icon={Plus} size={18} />
+            <Icon icon={Plus} size={20} />
             Habilitar en otro espacio
           </Button>
         )

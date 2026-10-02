@@ -21,6 +21,7 @@ import type {
   AgentAllowedCallers,
   AgentConnection,
   AgentEventType,
+  AgentProposedAction,
   AgentProvider,
   AgentRun,
   AgentRunEvent,
@@ -127,20 +128,27 @@ function parseResult(raw: unknown): AgentRunResult | null {
       .filter((link) => link.url !== ""),
     proposedActions: actionsRaw
       .filter(isRecord)
-      .map((entry) => ({
-        type: entry["type"],
-        title: text(entry["title"]),
-        due_at: typeof entry["due_at"] === "string" ? entry["due_at"] : undefined,
-        notes: typeof entry["notes"] === "string" ? entry["notes"] : undefined,
-        items: Array.isArray(entry["items"])
-          ? entry["items"].filter((item): item is string => typeof item === "string")
-          : undefined,
-      }))
-      .filter((action) =>
-        (action.type === "create_task" || action.type === "create_event" ||
-          action.type === "create_reminder" || action.type === "add_list_items") &&
-        action.title !== ""
-      ),
+      .map((entry): AgentProposedAction | null => {
+        const type = entry["type"];
+        if (
+          type !== "create_task" && type !== "create_event" &&
+          type !== "create_reminder" && type !== "add_list_items"
+        ) {
+          return null;
+        }
+        const title = text(entry["title"]);
+        if (title === "") return null;
+        return {
+          type,
+          title,
+          due_at: typeof entry["due_at"] === "string" ? entry["due_at"] : undefined,
+          notes: typeof entry["notes"] === "string" ? entry["notes"] : undefined,
+          items: Array.isArray(entry["items"])
+            ? entry["items"].filter((item): item is string => typeof item === "string")
+            : undefined,
+        };
+      })
+      .filter((action): action is AgentProposedAction => action !== null),
   };
 }
 

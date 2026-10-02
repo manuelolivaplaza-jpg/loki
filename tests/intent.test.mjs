@@ -218,34 +218,34 @@ equal(
 );
 
 // --- Comandos al PC (sin LLM) -------------------------------------------------
-const d1 = analyzeIntent("@mi-pc abre Spotify", { now: NOW });
-ok(d1 !== null, "detecta @mi-pc");
-equal(d1.action, "device_command", "acción device_command");
-equal(d1.deviceAction, "open_app", "abrir app");
-equal(d1.deviceArgs["text"], "Spotify", "la app con mayúscula del original");
-equal(d1.confident, true, "seguro sin modelo");
+const pc1 = analyzeIntent("@mi-pc abre Spotify", { now: NOW });
+ok(pc1 !== null, "detecta @mi-pc");
+equal(pc1.action, "device_command", "acción device_command");
+equal(pc1.deviceAction, "open_app", "abrir app");
+equal(pc1.deviceArgs["text"], "Spotify", "la app con mayúscula del original");
+equal(pc1.confident, true, "seguro sin modelo");
 
-const d2 = analyzeIntent("toma una captura de mi pc", { now: NOW });
-ok(d2 !== null, "detecta la marca al final");
-equal(d2.deviceAction, "screenshot", "captura");
+const pc2 = analyzeIntent("toma una captura de mi pc", { now: NOW });
+ok(pc2 !== null, "detecta la marca al final");
+equal(pc2.deviceAction, "screenshot", "captura");
 
-const d3 = analyzeIntent("mi-pc pon el volumen al 50", { now: NOW });
-equal(d3.deviceAction, "volume_set", "volumen");
-equal(d3.deviceArgs["level"], "50", "nivel como texto");
+const pc3 = analyzeIntent("mi-pc pon el volumen al 50", { now: NOW });
+equal(pc3.deviceAction, "volume_set", "volumen");
+equal(pc3.deviceArgs["level"], "50", "nivel como texto");
 
-const d4 = analyzeIntent("@mi-pc ejecuta el script respaldo", { now: NOW });
-equal(d4.deviceAction, "run_script", "script registrado");
-equal(d4.deviceArgs["text"], "respaldo", "nombre del script");
+const pc4 = analyzeIntent("@mi-pc ejecuta el script respaldo", { now: NOW });
+equal(pc4.deviceAction, "run_script", "script registrado");
+equal(pc4.deviceArgs["text"], "respaldo", "nombre del script");
 
-const d5 = analyzeIntent("@mi-pc ejecuta: ls -la", { now: NOW });
-equal(d5.deviceAction, "arbitrary_exec", "terminal libre");
-equal(d5.confident, true, "se detecta (la confirmación la pide la tarjeta)");
+const pc5 = analyzeIntent("@mi-pc ejecuta: ls -la", { now: NOW });
+equal(pc5.deviceAction, "arbitrary_exec", "terminal libre");
+equal(pc5.confident, true, "se detecta (la confirmación la pide la tarjeta)");
 
-const d6 = analyzeIntent("@mi-pc abre https://example.com", { now: NOW });
-equal(d6.deviceAction, "open_url", "URL va por open_url");
+const pc6 = analyzeIntent("@mi-pc abre https://example.com", { now: NOW });
+equal(pc6.deviceAction, "open_url", "URL va por open_url");
 
-const d7 = analyzeIntent("pausa la música de mi pc", { now: NOW });
-equal(d7.deviceAction, "media_control", "multimedia");
+const pc7 = analyzeIntent("pausa la música de mi pc", { now: NOW });
+equal(pc7.deviceAction, "media_control", "multimedia");
 
 // Sin marca al PC no hay comando (no roba "abre Spotify" normal).
 equal(analyzeIntent("abre Spotify", { now: NOW })?.action ?? null, null, "sin marca no hay comando");

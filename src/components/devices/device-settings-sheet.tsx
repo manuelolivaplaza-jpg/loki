@@ -53,6 +53,9 @@ export function DeviceSettingsSheet({
 
   if (device === null) return null;
 
+  // Captura para los manejadores: el estrechamiento de `device` no entra en closures.
+  const currentDevice = device;
+
   function toggleAction(action: DeviceAction, next: boolean): void {
     setActions((prev) =>
       next ? [...prev, action] : prev.filter((entry) => entry !== action),
@@ -65,7 +68,7 @@ export function DeviceSettingsSheet({
       .map((line) => line.trim().replace(/^\/+|\/+$/g, ""))
       .filter((line) => line !== "" && !line.includes(".."))
       .slice(0, 20);
-    saver.save(device.id, {
+    saver.save(currentDevice.id, {
       allowedActions: actions,
       readableDirs: dirs,
       canSendFiles: canSend,

@@ -428,7 +428,7 @@ describe("RLS: encuestas", () => {
   });
 
   it("el tick cierra lo vencido y avisa UNA vez a quien no voto", async () => {
-    const { pollId } = await createPoll(member.client, {
+    const { pollId, optionIds } = await createPoll(member.client, {
       wsId: ws,
       chatId,
       uid: member.id,
@@ -438,8 +438,13 @@ describe("RLS: encuestas", () => {
       settings: { anonymous: false, allowSuggestions: true, remindMissing: true, closeBy: "creator" },
       options: [{ text: "A" }, { text: "B" }],
     });
-    // El owner vota: no debe recibir aviso. Plain y… quedan sin votar.
-    await owner.client.rpc("cast_poll_vote", { p_poll_id: pollId, p_option_ids: [] });
+    // El owner vota de verdad, así que no debe recibir aviso. Ojo: en
+    // cast_poll_vote la lista VACÍA significa "retirar el voto", no votar.
+    const ownerVote = await owner.client.rpc("cast_poll_vote", {
+      p_poll_id: pollId,
+      p_option_ids: [optionIds[0]],
+    });
+    assertAllowed(ownerVote, "el owner vota la encuesta que ya venció");
 
     await admin
       .from("polls")
@@ -478,6 +483,13 @@ describe("RLS: encuestas", () => {
       .from("polls")
       .update({ closes_at: new Date(Date.now() + 30 * 60_000).toISOString() })
       .eq("id", soon.pollId);
+    // El owner vota también esta: así el único aviso es el de Plain (y el
+    // creador ni se avisa a sí mismo).
+    const ownerVoteSoon = await owner.client.rpc("cast_poll_vote", {
+      p_poll_id: soon.pollId,
+      p_option_ids: [soon.optionIds[0]],
+    });
+    assertAllowed(ownerVoteSoon, "el owner vota la encuesta que vence en media hora");
     await admin
       .from("notifications")
       .delete()
@@ -492,6 +504,7 @@ describe("RLS: encuestas", () => {
       .like("dedupe", `poll:${soon.pollId}:%`);
     assert.equal((first.data ?? []).length, 1, "un aviso por quien no voto (el owner votó)");
     const recipient = first.data[0].user_id;
+    assert.equal(recipient, plain.id, "el aviso es para quien no votó");
     assert.ok(recipient !== member.id, "el creador no se avisa a sí mismo");
     assert.ok(first.data[0].link.includes("msg="), "el aviso abre el chat en la encuesta");
 

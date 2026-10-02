@@ -78,7 +78,7 @@ export function AgentRunCard({
   if (isPending) {
     return (
       <p role="status" className="flex items-center gap-2 px-1 py-1 text-body-sm text-muted-foreground">
-        <Icon icon={Loader2} size={16} className="animate-spin" />
+        <Icon icon={Loader2} size={20} className="animate-spin" />
         Enviando al bot…
       </p>
     );
@@ -92,14 +92,16 @@ export function AgentRunCard({
           onClick={retry}
           className="flex min-h-11 items-center gap-1 self-start text-body-sm font-semibold text-accent outline-none"
         >
-          <Icon icon={RotateCcw} size={16} />
+          <Icon icon={RotateCcw} size={20} />
           Reintentar
         </button>
       </div>
     );
   }
 
-  const status = run.status;
+  // Captura para los manejadores: el estrechamiento de `run` no entra en closures.
+  const currentRun = run;
+  const status = currentRun.status;
   const live = status === "queued" || status === "dispatched" ||
     status === "running" || status === "needs_input";
   const lastEvent = events.length > 0 ? events[events.length - 1] : null;
@@ -113,7 +115,7 @@ export function AgentRunCard({
 
   async function handleCancel(): Promise<void> {
     try {
-      await cancelAgentRun(run.id);
+      await cancelAgentRun(currentRun.id);
     } catch {
       // El error ya quedó visible vía mutations o el próximo evento.
     }
@@ -124,12 +126,12 @@ export function AgentRunCard({
     setRetrying(true);
     try {
       await startAgentTask({
-        connectionId: run.connectionId,
-        workspaceId: run.workspaceId,
-        chatId: run.chatId,
+        connectionId: currentRun.connectionId,
+        workspaceId: currentRun.workspaceId,
+        chatId: currentRun.chatId,
         messageId: null,
         uid,
-        instruction: run.instruction === "" ? "Reintenta lo pedido." : run.instruction,
+        instruction: currentRun.instruction === "" ? "Reintenta lo pedido." : currentRun.instruction,
       });
     } catch {
       // Se muestra reintentando en la tarjeta original.
@@ -208,7 +210,7 @@ export function AgentRunCard({
         </p>
         {isPrivate ? (
           <span className="flex shrink-0 items-center gap-1 text-meta text-muted-foreground">
-            <Icon icon={Lock} size={14} />
+            <Icon icon={Lock} size={20} />
             Solo tú
           </span>
         ) : null}
@@ -267,7 +269,7 @@ export function AgentRunCard({
           {actions.length > 0 ? (
             <div className="flex flex-col gap-1.5 rounded-xl border border-divider p-2">
               <p className="flex items-center gap-1 text-meta font-semibold leading-4 text-muted-foreground">
-                <Icon icon={ListPlus} size={14} />
+                <Icon icon={ListPlus} size={20} />
                 Propone {actions.length === 1 ? "una acción" : `${actions.length} acciones`} · tú confirmas
               </p>
               <ul className="flex flex-col gap-1.5">
@@ -293,9 +295,9 @@ export function AgentRunCard({
                           className="flex min-h-11 shrink-0 items-center gap-1 rounded-full bg-surface-soft px-3 text-body-sm font-semibold text-foreground outline-none interactive disabled:opacity-60"
                         >
                           {confirming === key ? (
-                            <Icon icon={Loader2} size={16} className="animate-spin" />
+                            <Icon icon={Loader2} size={20} className="animate-spin" />
                           ) : (
-                            <Icon icon={Check} size={16} />
+                            <Icon icon={Check} size={20} />
                           )}
                           Crear
                         </button>
@@ -330,7 +332,7 @@ export function AgentRunCard({
           >
             <Icon
               icon={ChevronDown}
-              size={16}
+              size={20}
               className={cn("transition-transform", expanded && "rotate-180")}
             />
             {expanded ? "Ocultar progreso" : `Ver progreso (${events.length})`}
@@ -376,7 +378,7 @@ export function AgentRunCard({
             onClick={() => void handleCancel()}
             className="flex min-h-11 items-center gap-1 rounded-full px-2 text-body-sm font-medium text-muted-foreground outline-none interactive"
           >
-            <Icon icon={X} size={16} />
+            <Icon icon={X} size={20} />
             Cancelar
           </button>
         ) : null}
@@ -387,13 +389,13 @@ export function AgentRunCard({
             onClick={() => void handleRetry()}
             className="flex min-h-11 items-center gap-1 rounded-full px-2 text-body-sm font-semibold text-accent outline-none interactive disabled:opacity-60"
           >
-            <Icon icon={RotateCcw} size={16} />
+            <Icon icon={RotateCcw} size={20} />
             {retrying ? "Reintentando…" : "Reintentar"}
           </button>
         ) : null}
         {!live ? (
           <span className="flex items-center gap-1 text-meta text-muted-foreground">
-            <Icon icon={Bot} size={14} />
+            <Icon icon={Bot} size={20} />
             {AGENT_RUN_STATUS_LABEL[status]}
           </span>
         ) : null}

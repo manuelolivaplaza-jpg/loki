@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/icon-button";
 import { QueryRetry } from "@/components/ui/query-retry";
 import { useEventOccurrences } from "@/hooks/use-organizer";
+import { useSeriesOccurrences } from "@/hooks/use-series";
 import { useGcal } from "@/hooks/use-gcal";
 import { useWorkspaces } from "@/stores/workspace-store";
 import type { EventItem, EventOccurrence } from "@/types/organizer";
@@ -71,6 +73,7 @@ function agendaRange(anchor: Date): { from: Date; to: Date } {
 }
 
 export function CalendarView(): React.JSX.Element {
+  const router = useRouter();
   const { currentWorkspaceId } = useWorkspaces();
   const [view, setView] = React.useState<CalendarView>(defaultView);
   const [anchor, setAnchor] = React.useState(() => new Date());
@@ -81,6 +84,24 @@ export function CalendarView(): React.JSX.Element {
   const range =
     view === "month" ? monthRange(anchor) : view === "week" ? weekRange(anchor) : agendaRange(anchor);
   const { occurrences, isPending, error, retry } = useEventOccurrences(currentWorkspaceId, range.from, range.to);
+  // Turnos y tareas recurrentes: marcas discretas (las ocurrencias son tareas
+  // normales de una serie, generadas por la base).
+  const shiftsQuery = useSeriesOccurrences(currentWorkspaceId, range.from, range.to);
+  const shiftMarks = React.useMemo(
+    () =>
+      (shiftsQuery.data ?? [])
+        .filter((task) => task.due_at !== null)
+        .map((task) => ({
+          date: new Date(task.due_at as string),
+          mark: {
+            taskId: task.id,
+            projectId: task.project_id,
+            title: task.title,
+            assigneeId: task.assignee_ids[0] ?? "",
+          },
+        })),
+    [shiftsQuery.data],
+  );
 
   // Pull automático de Google al abrir el calendario: si hay conexión y el
   // último sync tiene más de 15 min (o nunca hubo), importa y refresca
@@ -216,13 +237,28 @@ export function CalendarView(): React.JSX.Element {
           <CalendarMonth
             anchor={anchor}
             occurrences={occurrences}
+            shifts={shiftMarks}
             onSelectDay={(day) => openCreate(day)}
             onSelectEvent={openEdit}
+            onSelectShift={(mark) =>
+              router.push(
+                `/proyectos?project=${encodeURIComponent(mark.projectId)}&task=${encodeURIComponent(mark.taskId)}`,
+              )
+            }
           />
         ) : view === "week" ? (
           <CalendarWeek anchor={anchor} occurrences={occurrences} onSelectEvent={openEdit} />
         ) : (
-          <CalendarAgenda occurrences={occurrences} onSelectEvent={openEdit} />
+          <CalendarAgenda
+            occurrences={occurrences}
+            shifts={shiftMarks}
+            onSelectEvent={openEdit}
+            onSelectShift={(mark) =>
+              router.push(
+                `/proyectos?project=${encodeURIComponent(mark.projectId)}&task=${encodeURIComponent(mark.taskId)}`,
+              )
+            }
+          />
         )}
       </div>
 

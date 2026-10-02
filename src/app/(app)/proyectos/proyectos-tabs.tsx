@@ -27,6 +27,17 @@ import { ProjectsList } from "@/components/projects/projects-list";
 import { ListsTab } from "@/components/lists/lists-tab";
 import { ListDetail } from "@/components/lists/list-detail";
 import { ShareListDialog } from "@/components/lists/share-list-dialog";
+/** Vista Turnos por code splitting: solo se descarga al abrir la pestaña. */
+const ShiftsViewLazy = dynamic(
+  () => import("@/components/series/shifts-view").then((mod) => mod.ShiftsView),
+  { ssr: false, loading: () => (
+    <div aria-label="Cargando turnos" className="mt-2 flex flex-col gap-2">
+      {[0, 1, 2].map((index) => (
+        <span key={index} aria-hidden="true" className="block h-14 animate-pulse rounded-xl bg-surface-soft" />
+      ))}
+    </div>
+  ) },
+);
 import {
   useConvertIdea,
   useCreateIdea,
@@ -40,12 +51,13 @@ import { useWorkspaces } from "@/stores/workspace-store";
 import type { IdeaItem, ProjectItem, ShoppingList } from "@/types/organizer";
 import { cn } from "@/lib/utils";
 
-export type ProyectosTab = "proyectos" | "ideas" | "listas";
+export type ProyectosTab = "proyectos" | "ideas" | "listas" | "turnos";
 
 const TABS: readonly { key: ProyectosTab; label: string }[] = [
   { key: "proyectos", label: "Proyectos" },
   { key: "ideas", label: "Ideas" },
   { key: "listas", label: "Listas" },
+  { key: "turnos", label: "Turnos" },
 ];
 
 function ListsTabView({
@@ -368,9 +380,11 @@ export function ProyectosTabs({
       ? "ideas"
       : searchParams.get("tab") === "listas"
         ? "listas"
-        : defaultTab === "ideas"
-          ? "ideas"
-          : "proyectos";
+        : searchParams.get("tab") === "turnos"
+          ? "turnos"
+          : defaultTab === "ideas"
+            ? "ideas"
+            : "proyectos";
   const projectParam = searchParams.get("project");
   const taskParam = searchParams.get("task");
   const listParam = searchParams.get("list");
@@ -385,7 +399,13 @@ export function ProyectosTabs({
   function selectTab(tab: ProyectosTab): void {
     if (tab === activeTab) return;
     router.replace(
-      tab === "ideas" ? "/proyectos?tab=ideas" : tab === "listas" ? "/proyectos?tab=listas" : "/proyectos",
+      tab === "ideas"
+        ? "/proyectos?tab=ideas"
+        : tab === "listas"
+          ? "/proyectos?tab=listas"
+          : tab === "turnos"
+            ? "/proyectos?tab=turnos"
+            : "/proyectos",
     );
   }
 
@@ -429,6 +449,9 @@ export function ProyectosTabs({
 
       {activeTab === "ideas" ? (
         <IdeasTab wsId={currentWorkspaceId} />
+      ) : activeTab === "turnos" ? (
+        /* Code splitting: la vista Turnos solo se descarga al abrirla. */
+        <ShiftsViewLazy />
       ) : activeTab === "listas" ? (
         <ListsTabView
           wsId={currentWorkspaceId}

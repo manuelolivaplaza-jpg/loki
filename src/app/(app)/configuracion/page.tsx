@@ -46,6 +46,7 @@ const PREF_ROWS: readonly { key: keyof Omit<NotificationPrefs, "quietStart" | "q
   { key: "agent", label: "Agentes", detail: "Cuando tu bot termina o necesita tu respuesta" },
   { key: "device", label: "Mi PC", detail: "Cuando tu PC necesita tu aprobación" },
   { key: "daily", label: "Resumen diario", detail: "Push de la mañana con tu día" },
+  { key: "shift", label: "Turnos y recurrentes", detail: "Tu turno de mañana, de hoy o si quedó sin hacer" },
 ];
 
 export default function ConfiguracionPage(): React.JSX.Element {

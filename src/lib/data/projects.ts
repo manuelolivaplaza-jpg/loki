@@ -63,6 +63,8 @@ function toTask(row: TaskRow): TaskItem {
     createdBy: row.created_by ?? "",
     createdAt: toTimestamp(row.created_at),
     updatedAt: toTimestamp(row.updated_at),
+    seriesId: row.series_id ?? null,
+    seriesOccurrence: row.series_occurrence ?? null,
   };
 }
 
@@ -194,7 +196,7 @@ export async function deleteProject(id: string): Promise<void> {
 // --- Tareas --------------------------------------------------------------------
 
 const TASK_COLUMNS =
-  "id, project_id, workspace_id, title, notes, status, priority, assignee_ids, due_at, reminder_at, position, parent_task_id, completed_at, created_by, created_at, updated_at";
+  "id, project_id, workspace_id, title, notes, status, priority, assignee_ids, due_at, reminder_at, position, parent_task_id, completed_at, created_by, created_at, updated_at, series_id, series_occurrence";
 
 export async function listTasks(projectId: string): Promise<TaskItem[]> {
   const { data, error } = await getSupabaseClient()

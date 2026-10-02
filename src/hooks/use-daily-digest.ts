@@ -25,6 +25,7 @@ import {
   listOpenPollsWithoutVote,
   listPinnedListsWithPending,
   listTodayEvents,
+  listTodayShifts,
   listTodayTasks,
   listenDayHighlightsJob,
   requestDayHighlights,
@@ -32,6 +33,7 @@ import {
   type DayHighlights,
   type TodayList,
   type TodayPoll,
+  type TodayShift,
 } from "@/lib/data/daily-digest";
 import type {
   DailyDigestPrefs,
@@ -76,6 +78,8 @@ export type TodaySpaceDigest = {
   events: EventOccurrence[];
   dueToday: TaskItem[];
   overdue: TaskItem[];
+  /** Turnos que me tocan hoy (ocurrencias de series). */
+  shifts: TodayShift[];
   lists: TodayList[];
   polls: TodayPoll[];
 };
@@ -109,9 +113,10 @@ export function useTodayDigest(
       if (uid === null) return [];
       const groups: TodaySpaceDigest[] = [];
       for (const space of scoped) {
-        const [events, tasks, lists, polls] = await Promise.all([
+        const [events, tasks, shifts, lists, polls] = await Promise.all([
           listTodayEvents(space.wsId).catch(() => []),
           listTodayTasks(space.wsId, uid).catch(() => ({ dueToday: [], overdue: [] })),
+          listTodayShifts(space.wsId, uid, day).catch(() => []),
           listPinnedListsWithPending(space.wsId).catch(() => []),
           listOpenPollsWithoutVote(space.wsId, uid).catch(() => []),
         ]);
@@ -122,6 +127,7 @@ export function useTodayDigest(
           events,
           dueToday: tasks.dueToday,
           overdue: tasks.overdue,
+          shifts,
           lists,
           polls,
         });

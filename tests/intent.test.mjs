@@ -251,6 +251,59 @@ equal(pc7.deviceAction, "media_control", "multimedia");
 equal(analyzeIntent("abre Spotify", { now: NOW })?.action ?? null, null, "sin marca no hay comando");
 equal(analyzeIntent("@mi-pc", { now: NOW }), null, "marca sola no alcanza");
 
+// --- Tareas recurrentes y turnos (create_series / shift_query) ------------------
+// "cada martes saca la basura" -> serie semanal, sin rotación.
+const s1 = analyzeIntent("cada martes saca la basura", { now: NOW });
+ok(s1 !== null, "detecta serie");
+equal(s1.action, "create_series", "acción create_series");
+equal(s1.title, "saca la basura", "título de la serie");
+deep(s1.series.weekdays, [2], "semanal los martes");
+equal(s1.series.rotates, false, "sin rotación cuando no se pide");
+equal(s1.confident, true, "seguro sin modelo");
+
+// Con gente nombrada: rota entre ellos, en orden.
+const s2 = analyzeIntent(
+  "cada domingo alguien distinto riega las plantas: Sofi, Tomás y yo",
+  { now: NOW },
+);
+ok(s2 !== null, "detecta turno rotativo");
+equal(s2.action, "create_series", "acción create_series con rotación");
+equal(s2.title, "riega las plantas", "título sin la lista de gente");
+deep(s2.series.weekdays, [0], "semanal los domingos");
+equal(s2.series.rotates, true, "pide que rote");
+deep(s2.series.people, ["sofi", "tomas", "yo"], "gente en orden, con el yo");
+
+// Mensual por día de mes y por "último día de la semana".
+const s3 = analyzeIntent("el 5 de cada mes pagar la luz", { now: NOW });
+equal(s3.series.kind, "monthly", "mensual por día");
+equal(s3.series.monthDay, 5, "el día 5");
+
+const s4 = analyzeIntent("el último viernes del mes revisamos cuentas", { now: NOW });
+equal(s4.series.kind, "monthly", "mensual por día de la semana");
+equal(s4.series.monthWeek, 5, "el último");
+equal(s4.series.monthWeekday, 5, "viernes");
+
+// Intervalo.
+const s5 = analyzeIntent("cada 3 días revisar el correo", { now: NOW });
+equal(s5.series.kind, "interval", "cada N días");
+equal(s5.series.interval, 3, "N = 3");
+equal(s5.series.unit, "days", "unidad días");
+
+// Turno rotativo sin día: propone hoy y la tarjeta deja cambiarlo.
+const s6 = analyzeIntent("turno rotativo para sacar la basura: Sofi y yo", { now: NOW });
+equal(s6.series.rotates, true, "turno rotativo");
+deep(s6.series.people, ["sofi", "yo"], "padrón de dos");
+
+// "¿A quién le toca…?" no necesita modelo.
+const q1 = analyzeIntent("¿a quién le toca la loza?", { now: NOW });
+ok(q1 !== null, "detecta pregunta de turno");
+equal(q1.action, "shift_query", "acción shift_query");
+equal(q1.title, "loza", "la tarea preguntada");
+
+// Un recordatorio con "le toca" sigue siendo recordatorio.
+const q2 = analyzeIntent("recuérdale a Sofi que le toca la basura", { now: NOW });
+equal(q2?.action ?? null, "remind", "el aviso no se convierte en pregunta");
+
 // --- Sincronía con la Edge -------------------------------------------------------
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(resolve(here, "../src/lib/chat/intent.ts"), "utf8");

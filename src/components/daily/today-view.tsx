@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ClipboardCheck,
   ListChecks,
+  Repeat,
   Sparkles,
   Sunrise,
 } from "lucide-react";
@@ -31,7 +32,7 @@ import { useCastPollVote, usePoll } from "@/hooks/use-polls";
 import { useDayHighlights, useTodayDigest, type TodaySpaceDigest } from "@/hooks/use-daily-digest";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
-import type { TodayList, TodayPoll } from "@/lib/data/daily-digest";
+import type { TodayList, TodayPoll, TodayShift } from "@/lib/data/daily-digest";
 import type { EventOccurrence, TaskItem } from "@/types/organizer";
 import { cn } from "@/lib/utils";
 
@@ -133,6 +134,51 @@ function EventRow({ occurrence }: { occurrence: EventOccurrence }): React.JSX.El
             {occurrence.location !== "" ? ` · ${occurrence.location}` : ""}
           </span>
         </span>
+      </Link>
+    </li>
+  );
+}
+
+/**
+ * "Te toca hoy": los turnos rotativos y tareas recurrentes que me tocan. Es una
+ * tarea normal (de una serie), así que se completa con el mismo check.
+ */
+function ShiftRow({ shift }: { shift: TodayShift }): React.JSX.Element {
+  const updateTask = useUpdateTask();
+  const [error, setError] = React.useState<string | null>(null);
+  return (
+    <li className="flex items-center gap-3 py-2.5">
+      <Checkbox
+        checked={false}
+        disabled={updateTask.isPending}
+        onCheckedChange={() => {
+          setError(null);
+          updateTask.mutate(
+            { id: shift.id, patch: { status: "done" } },
+            { onError: (err) => setError(err.message) },
+          );
+        }}
+        label={shift.title}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-body-sm font-medium text-foreground">
+          {shift.title}
+        </span>
+        <span className="block text-meta text-muted-foreground">
+          {formatTime(shift.dueAt.toDate())} · turno {shift.occurrence}
+        </span>
+        {error !== null ? (
+          <span role="alert" className="block text-meta text-danger">
+            {error}
+          </span>
+        ) : null}
+      </span>
+      <Link
+        href={`/proyectos?project=${encodeURIComponent(shift.projectId)}&task=${encodeURIComponent(shift.id)}`}
+        aria-label={`Abrir la tarea ${shift.title}`}
+        className="shrink-0 text-body-sm font-semibold text-mention outline-none interactive"
+      >
+        Abrir
       </Link>
     </li>
   );
@@ -288,15 +334,31 @@ function HighlightsBlock({ wsId, uid }: { wsId: string | null; uid: string | nul
 
 function SpaceGroup({ group, uid }: { group: TodaySpaceDigest; uid: string }): React.JSX.Element | null {
   const tasks = [...group.overdue, ...group.dueToday];
-  // La agenda (eventos) va en la columna izquierda; aquí tareas, listas y
-  // encuestas. Si el espacio no tiene nada de eso, no se pinta.
-  if (tasks.length === 0 && group.lists.length === 0 && group.polls.length === 0) return null;
+  // La agenda (eventos) va en la columna izquierda; aquí turnos, tareas, listas
+  // y encuestas. Si el espacio no tiene nada de eso, no se pinta.
+  if (
+    tasks.length === 0 &&
+    group.shifts.length === 0 &&
+    group.lists.length === 0 &&
+    group.polls.length === 0
+  ) {
+    return null;
+  }
   return (
     <div className="mt-4 first:mt-0">
       <p className="px-1 pb-2 text-body-sm font-semibold text-foreground">
         {group.wsEmoji} {group.wsName}
       </p>
       <div className="flex flex-col gap-3">
+        {group.shifts.length > 0 ? (
+          <Section icon={Repeat} title="Te toca hoy" count={group.shifts.length}>
+            <ul>
+              {group.shifts.map((shift) => (
+                <ShiftRow key={shift.id} shift={shift} />
+              ))}
+            </ul>
+          </Section>
+        ) : null}
         {tasks.length > 0 ? (
           <Section icon={ClipboardCheck} title="Tareas" count={tasks.length}>
             <ul>
@@ -350,7 +412,13 @@ export function TodayView(): React.JSX.Element {
   const total =
     groups.reduce(
       (sum, group) =>
-        sum + group.events.length + group.dueToday.length + group.overdue.length + group.lists.length + group.polls.length,
+        sum +
+        group.events.length +
+        group.dueToday.length +
+        group.overdue.length +
+        group.shifts.length +
+        group.lists.length +
+        group.polls.length,
       0,
     );
   const rawLabel = new Intl.DateTimeFormat("es", {
@@ -387,7 +455,7 @@ export function TodayView(): React.JSX.Element {
         <EmptyState
           icon={Sunrise}
           title="Nada pendiente hoy"
-          description="Sin eventos, tareas, listas ni encuestas por votar. Buen día para adelantar algo."
+          description="Sin eventos, turnos, tareas, listas ni encuestas por votar. Buen día para adelantar algo."
         />
         <Section icon={Sparkles} title="Destacados" count={0}>
           <HighlightsBlock wsId={currentWorkspaceId} uid={uid} />

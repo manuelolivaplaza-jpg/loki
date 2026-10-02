@@ -63,7 +63,7 @@ export type LokiConfirm = {
 };
 
 export type UndoItem = {
-  kind: "task" | "event" | "post" | "list_item";
+  kind: "task" | "event" | "post" | "list_item" | "series";
   id: string;
   label: string;
   workspaceId: string;
@@ -270,7 +270,11 @@ async function ssePost(
           const id = entry["id"];
           const workspaceId = entry["workspaceId"];
           if (
-            (kind === "task" || kind === "event" || kind === "post" || kind === "list_item") &&
+            (kind === "task" ||
+              kind === "event" ||
+              kind === "post" ||
+              kind === "list_item" ||
+              kind === "series") &&
             typeof id === "string" && id !== "" &&
             typeof workspaceId === "string" && workspaceId !== ""
           ) {

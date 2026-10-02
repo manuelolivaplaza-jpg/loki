@@ -19,16 +19,37 @@ function monthName(date: Date): string {
   return new Intl.DateTimeFormat("es", { month: "long" }).format(date);
 }
 
+/**
+ * Marca discreta de turno/tarea recurrente en la celda del mes: no compite con
+ * los eventos (va punteada y sin color de serie) y al tocarla abre la tarea.
+ */
+export type ShiftMark = {
+  taskId: string;
+  projectId: string;
+  title: string;
+  assigneeId: string;
+};
+
+/** Clave "año-mes-día" local (para agrupar por día sin pasar por UTC). */
+function localDayKey(date: Date): string {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
 export function CalendarMonth({
   anchor,
   occurrences,
+  shifts = [],
   onSelectDay,
   onSelectEvent,
+  onSelectShift,
 }: {
   anchor: Date;
   occurrences: EventOccurrence[];
+  /** Ocurrencias de series (turnos) de la ventana visible. */
+  shifts?: readonly { date: Date; mark: ShiftMark }[];
   onSelectDay: (day: Date) => void;
   onSelectEvent: (event: EventItem) => void;
+  onSelectShift?: (mark: ShiftMark) => void;
 }): React.JSX.Element {
   const today = React.useMemo(() => new Date(), []);
   const cells = React.useMemo(() => {
@@ -46,7 +67,7 @@ export function CalendarMonth({
     const map = new Map<string, EventOccurrence[]>();
     for (const occurrence of occurrences) {
       const day = occurrence.startsAt.toDate();
-      const key = `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
+      const key = localDayKey(day);
       const list = map.get(key) ?? [];
       list.push(occurrence);
       map.set(key, list);
@@ -56,6 +77,17 @@ export function CalendarMonth({
     }
     return map;
   }, [occurrences]);
+
+  const shiftsByDay = React.useMemo(() => {
+    const map = new Map<string, ShiftMark[]>();
+    for (const entry of shifts) {
+      const key = localDayKey(entry.date);
+      const list = map.get(key) ?? [];
+      list.push(entry.mark);
+      map.set(key, list);
+    }
+    return map;
+  }, [shifts]);
 
   return (
     <div role="grid" aria-label="Mes" className="overflow-hidden rounded-2xl border border-divider bg-background">
@@ -74,6 +106,7 @@ export function CalendarMonth({
         {cells.map((day, cellIndex) => {
           const key = `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
           const all = byDay.get(key) ?? [];
+          const marks = shiftsByDay.get(key) ?? [];
           const shown = all.slice(0, 3);
           const extra = all.length - shown.length;
           const inMonth = day.getMonth() === anchor.getMonth();
@@ -141,6 +174,29 @@ export function CalendarMonth({
                 {extra > 0 ? (
                   <span className="px-1.5 text-left text-meta font-medium leading-4 text-accent">
                     +{extra} más
+                  </span>
+                ) : null}
+                {/* Turnos y tareas recurrentes: marcas discretas debajo. */}
+                {marks.slice(0, 2).map((mark) => (
+                  <button
+                    key={mark.taskId}
+                    type="button"
+                    aria-label={`Turno: ${mark.title}`}
+                    onClick={() => onSelectShift?.(mark)}
+                    className="flex min-w-0 items-center gap-1 rounded-md border border-dashed border-divider px-1.5 py-0.5 text-left outline-none interactive"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-meta leading-4 text-muted-foreground">
+                      {mark.title}
+                    </span>
+                  </button>
+                ))}
+                {marks.length > 2 ? (
+                  <span className="px-1.5 text-left text-meta leading-4 text-muted-foreground">
+                    +{marks.length - 2} turnos
                   </span>
                 ) : null}
               </div>

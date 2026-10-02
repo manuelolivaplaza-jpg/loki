@@ -112,6 +112,14 @@ export async function registerNativePush(
 
   // Canal de Android (importancia alta + sonido): el servidor manda
   // `channel_id: "loki_default"`. Sin canal, algunos equipos lo silencian.
+  //
+  // Botón "Hecho" en la push: hoy NO. Un botón necesita que el servidor mande
+  // `android.notification.actions` y que la app tenga un receptor nativo que
+  // ejecute la acción (el plugin solo gestiona el toque). Como no lo hay, el
+  // aviso de turno abre la tarea directa (`data.link`), que es exactamente lo
+  // que hace `pushNotificationActionPerformed` más abajo. Cuando se añada el
+  // receptor, aquí se documenta el contrato: `action: "complete_task"` +
+  // `data.task_id`, y la acción se resuelve con el JWT del usuario.
   try {
     await PushNotifications.createChannel({
       id: "loki_default",

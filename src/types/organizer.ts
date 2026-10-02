@@ -73,6 +73,10 @@ export interface TaskItem {
   createdBy: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+  /** Serie de tareas recurrentes de la que nació (null = tarea normal). */
+  seriesId: string | null;
+  /** Número de ocurrencia dentro de la serie (1, 2, 3…). */
+  seriesOccurrence: number | null;
 }
 
 export interface IdeaItem {
@@ -101,7 +105,8 @@ export type NotificationType =
   | "memory"
   | "daily"
   | "agent"
-  | "device";
+  | "device"
+  | "shift";
 
 export interface NotificationItem {
   id: string;
@@ -129,7 +134,8 @@ export type NotificationTypeKey =
   | "memory"
   | "daily"
   | "agent"
-  | "device";
+  | "device"
+  | "shift";
 
 export interface NotificationPrefs {
   mention: boolean;
@@ -150,6 +156,8 @@ export interface NotificationPrefs {
   agent: boolean;
   /** Compañero de escritorio ("Tu PC necesita tu aprobación"). */
   device: boolean;
+  /** Turnos rotativos y tareas recurrentes ("mañana te toca", "se te pasó"). */
+  shift: boolean;
   quietStart: string | null;
   quietEnd: string | null;
 }

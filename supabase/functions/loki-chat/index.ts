@@ -168,6 +168,14 @@ const SYSTEM_PROMPT =
   "Resuelve personas contra los miembros (pide user_id por nombre " +
   "solo si es único; si hay dos iguales, dilo y no adivines) y fechas con " +
   "la herramienta tal cual te las dicen en ISO (mañana, el viernes, etc.). " +
+  "Para tareas que se repiten usa create_series con una regla acotada: " +
+  "'daily', 'weekly' (los días en weekdays, 0 domingo..6 sábado), 'monthly' " +
+  "(monthDay, o monthWeek 1-4 con monthWeekday para 'el primer lunes'; " +
+  "monthWeek 5 = el último) o 'interval' (interval + unit days|weeks). Si " +
+  "cada vez le toca a alguien distinto, pon los user_id en `rotation` en " +
+  "orden; si no, déjalo vacío. Para '¿a quién le toca la loza?' usa " +
+  "shift_query (o list_series para ver todas): contesta con los datos de la " +
+  "rotación, nunca con suposiciones. " +
   "Para el PC del usuario ('@mi-pc abre Spotify', 'toma una captura de mi " +
   "PC'): usa run_device_command con la acción del catálogo (pc_status, " +
   "open_app, open_url, find_files, send_file, screenshot, lock_screen, " +
@@ -510,7 +518,7 @@ type ToolDef = {
 const TOOLS: ToolDef[] = [
   {
     name: "get_today_summary",
-    description: "Resume el día del espacio: tareas que vencen hoy y atrasadas, eventos de hoy, listas fijadas con pendientes y encuestas abiertas sin tu voto (lo mismo que la vista 'Tu día').",
+    description: "Resume el día del espacio: tareas que vencen hoy y atrasadas, eventos de hoy, listas fijadas con pendientes, encuestas abiertas sin tu voto y los turnos que te tocan (lo mismo que la vista 'Tu día').",
     parameters: {
       type: "object",
       properties: { workspaceId: { type: "string", description: "Id del espacio" } },
@@ -704,7 +712,7 @@ const TOOLS: ToolDef[] = [
             properties: {
               action: {
                 type: "string",
-                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task", "add_list_items", "check_list_item", "remove_list_item", "create_poll", "remember", "run_device_command"],
+                enum: ["create_event", "create_task", "create_reminder", "create_post", "complete_task", "add_list_items", "check_list_item", "remove_list_item", "create_poll", "remember", "run_device_command", "create_series"],
               },
               title: { type: "string" },
               startsAt: { type: "string" },
@@ -877,6 +885,55 @@ const TOOLS: ToolDef[] = [
       required: ["workspaceId", "remindAt"],
     },
   },
+  {
+    name: "create_series",
+    description:
+      "Crea una tarea que se repite (plantilla) que genera ocurrencias como tareas normales. kind: 'daily', 'weekly' (días en weekdays, 0 domingo..6 sábado), 'monthly' (monthDay, o monthWeek 1-4 con monthWeekday para 'el primer lunes'; monthWeek 5 = el último) o 'interval' (cada interval unit 'days'|'weeks'). rotation = uids en orden para que cada vez le toque a alguien distinto (vacío = sin turnos). Requiere confirmación.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        projectId: { type: "string", description: "Opcional: sin él va a la Bandeja" },
+        title: { type: "string", description: "Lo que se repite, máx 200" },
+        kind: { type: "string", enum: ["daily", "weekly", "monthly", "interval"] },
+        interval: { type: "number", description: "kind 'interval': cada cuántas unidades (1-60)" },
+        unit: { type: "string", enum: ["days", "weeks"], description: "kind 'interval'" },
+        weekdays: { type: "array", items: { type: "number" }, description: "kind 'weekly': 0 domingo..6 sábado" },
+        monthDay: { type: "number", description: "kind 'monthly': día 1-31" },
+        monthWeek: { type: "number", description: "kind 'monthly': 1-4, o 5 para el último" },
+        monthWeekday: { type: "number", description: "kind 'monthly': 0 domingo..6 sábado" },
+        startDate: { type: "string", description: "YYYY-MM-DD de la primera vez" },
+        timeOfDay: { type: "string", description: "HH:MM local de cada ocurrencia" },
+        remindTime: { type: "string", description: "HH:MM del aviso (día antes y el día)" },
+        endsOn: { type: "string", description: "YYYY-MM-DD opcional: fecha de término" },
+        rotation: { type: "array", items: { type: "string" }, description: "uids en orden de rotación" },
+      },
+      required: ["workspaceId", "title", "kind", "startDate"],
+    },
+  },
+  {
+    name: "list_series",
+    description:
+      "Lista las tareas que se repiten del espacio con su regla y su rotación (para '¿a quién le toca la loza?' o '¿qué turnos hay?').",
+    parameters: {
+      type: "object",
+      properties: { workspaceId: { type: "string" } },
+      required: ["workspaceId"],
+    },
+  },
+  {
+    name: "shift_query",
+    description:
+      "Resuelve a quién le toca una tarea rotativa HOY y las próximas ('¿a quién le toca la loza?'). Devuelve la rotación en orden y quién tiene cada fecha.",
+    parameters: {
+      type: "object",
+      properties: {
+        workspaceId: { type: "string" },
+        title: { type: "string", description: "La tarea preguntada, aunque sea aproximado ('loza')" },
+      },
+      required: ["workspaceId"],
+    },
+  },
 ];
 
 /** Acciones que modifican datos: no se ejecutan, piden confirmación. */
@@ -896,6 +953,7 @@ const WRITE_ACTIONS: ReadonlySet<string> = new Set([
   "remember",
   "propose_plan",
   "run_device_command",
+  "create_series",
 ]);
 
 const ACTION_LABELS: Record<string, string> = {
@@ -903,6 +961,7 @@ const ACTION_LABELS: Record<string, string> = {
   create_task: "Crear tarea",
   complete_task: "Completar tarea",
   create_reminder: "Crear recordatorio",
+  create_series: "Crear tarea que se repite",
   update_task: "Editar tarea",
   update_event: "Editar evento",
   create_post: "Publicar aviso",
@@ -926,6 +985,11 @@ function dayRangeISO(now: Date): { start: string; end: string } {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
+/** "YYYY-MM-DD" de hoy (default de la primera ocurrencia de una serie). */
+function todayDateISO(now: Date = new Date()): string {
+  return new Date(now.getTime()).toISOString().slice(0, 10);
+}
+
 /** Primer espacio del usuario (para herramientas en modo personal). */
 async function defaultWorkspaceId(uid: string, jwt: string): Promise<string | null> {
   const res = await userRest(
@@ -935,6 +999,183 @@ async function defaultWorkspaceId(uid: string, jwt: string): Promise<string | nu
   if (!res.ok || !Array.isArray(res.data)) return null;
   const first = res.data[0];
   return isRecord(first) ? asString(first["workspace_id"]) : null;
+}
+
+// --- Tareas recurrentes y turnos (lectura) ------------------------------------
+
+const WEEKDAY_LABELS: readonly string[] = [
+  "domingo",
+  "lunes",
+  "martes",
+  "miércoles",
+  "jueves",
+  "viernes",
+  "sábado",
+];
+
+/** Regla de la serie en texto llano (para el modelo y para las respuestas). */
+function describeSeriesRule(row: Record<string, unknown>): string {
+  const kind = String(row["recurrence_kind"] ?? "weekly");
+  if (kind === "daily") return "todos los días";
+  if (kind === "interval") {
+    const unit = String(row["recurrence_unit"] ?? "weeks") === "days" ? "días" : "semanas";
+    const amount = typeof row["recurrence_interval"] === "number" ? row["recurrence_interval"] : 1;
+    return `cada ${amount} ${unit}`;
+  }
+  if (kind === "monthly") {
+    const monthDay = typeof row["month_day"] === "number" ? row["month_day"] : null;
+    if (monthDay !== null) return `el ${monthDay} de cada mes`;
+    const week = typeof row["month_week"] === "number" ? row["month_week"] : null;
+    const weekday = typeof row["month_weekday"] === "number" ? row["month_weekday"] : null;
+    if (week !== null && weekday !== null) {
+      const label = week >= 5 ? "último" : ["primer", "segundo", "tercer", "cuarto"][week - 1] ?? "primer";
+      return `el ${label} ${WEEKDAY_LABELS[weekday] ?? ""} de cada mes`;
+    }
+    return "cada mes";
+  }
+  const days = Array.isArray(row["weekdays"]) ? (row["weekdays"] as unknown[]) : [];
+  const names = days
+    .filter((day): day is number => typeof day === "number")
+    .map((day) => WEEKDAY_LABELS[day] ?? "")
+    .filter((name) => name !== "");
+  return names.length === 0 ? "cada semana" : `cada ${names.join(", ")}`;
+}
+
+type ShiftAnswer = {
+  encontrado: boolean;
+  titulo: string;
+  rotacion: string[];
+  hoy: { fecha: string; quien: string; turno: number | null; tarea: string } | null;
+  proximos: { fecha: string; quien: string; turno: number | null }[];
+  /** Cuando no hay tarea creada todavía, quién sigue en la rotación. */
+  sigue: string;
+  otras: string[];
+};
+
+/**
+ * "¿A quién le toca la loza?" con datos reales: la serie que calza, su rotación
+ * en orden y las ocurrencias ya creadas (hoy y las próximas). SQL barato, sin
+ * modelo: es lo mismo que ve la vista Turnos.
+ */
+async function resolveShiftAnswer(
+  workspaceId: string,
+  jwt: string,
+  asked: string,
+  selfUid: string,
+): Promise<ShiftAnswer> {
+  const empty: ShiftAnswer = {
+    encontrado: false,
+    titulo: "",
+    rotacion: [],
+    hoy: null,
+    proximos: [],
+    sigue: "",
+    otras: [],
+  };
+  const res = await userRest(
+    `/task_series?workspace_id=eq.${encodeURIComponent(workspaceId)}&active=is.true&select=id,title,rotation,rotation_index,recurrence_kind,recurrence_unit,recurrence_interval,weekdays,month_day,month_week,month_weekday&order=created_at.asc&limit=50`,
+    jwt,
+  );
+  if (!res.ok || !Array.isArray(res.data)) return empty;
+  const rows = res.data as Record<string, unknown>[];
+  if (rows.length === 0) return empty;
+
+  const members = await listSpaceMembers(workspaceId, jwt);
+  const nameOf = (value: string): string => {
+    if (value === selfUid) return "yo";
+    return members.find((member) => member.uid === value)?.name ?? "alguien";
+  };
+
+  // La serie que mejor calza con lo pedido ("loza" -> "Lavar la loza").
+  const q = normName(asked);
+  const scored = rows
+    .map((row) => {
+      const title = String(row["title"] ?? "");
+      const t = normName(title);
+      let score = 0;
+      if (t === q) score = 100;
+      else if (t.includes(q) || q.includes(t)) score = 60;
+      else if (t.split(/\s+/).some((word) => word.length > 3 && (q.includes(word) || word.includes(q)))) {
+        score = 40;
+      }
+      return { row, title, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
+  const best = scored[0] ?? null;
+  if (best === null) {
+    return {
+      ...empty,
+      otras: rows.slice(0, 6).map((row) => String(row["title"] ?? "")),
+    };
+  }
+
+  const rotation = (Array.isArray(best.row["rotation"]) ? (best.row["rotation"] as unknown[]) : [])
+    .filter((entry): entry is string => typeof entry === "string");
+  const index = typeof best.row["rotation_index"] === "number" ? best.row["rotation_index"] : 0;
+  const siguiente = rotation.length === 0
+    ? ""
+    : nameOf(rotation[((index % rotation.length) + rotation.length) % rotation.length] ?? "");
+
+  // Ocurrencias ya creadas (la base genera las de hoy y mañana).
+  const today = new Date();
+  const from = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const to = new Date(from.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const occ = await userRest(
+    `/tasks?workspace_id=eq.${encodeURIComponent(workspaceId)}&series_id=eq.${encodeURIComponent(String(best.row["id"]))}&due_at=gte.${encodeURIComponent(from.toISOString())}&due_at=lt.${encodeURIComponent(to.toISOString())}&select=id,title,due_at,assignee_ids,series_occurrence,status&order=due_at.asc&limit=20`,
+    jwt,
+  );
+  const ocurrencias = occ.ok && Array.isArray(occ.data) ? (occ.data as Record<string, unknown>[]) : [];
+  const lista = ocurrencias.map((row) => {
+    const due = asString(row["due_at"]) ?? "";
+    const assignees = Array.isArray(row["assignee_ids"]) ? (row["assignee_ids"] as unknown[]) : [];
+    const first = assignees.find((entry): entry is string => typeof entry === "string");
+    return {
+      fecha: due === "" ? "" : new Date(due).toLocaleDateString("es-CL"),
+      quien: first === undefined ? "sin responsable" : nameOf(first),
+      turno: typeof row["series_occurrence"] === "number" ? row["series_occurrence"] : null,
+      titulo: String(row["title"] ?? ""),
+    };
+  });
+  const todayKey = new Date().toLocaleDateString("es-CL");
+  const hoy = lista.find((entry) => entry.fecha === todayKey) ?? null;
+
+  return {
+    encontrado: true,
+    titulo: best.title,
+    rotacion: rotation.map(nameOf),
+    hoy: hoy === null ? null : { fecha: hoy.fecha, quien: hoy.quien, turno: hoy.turno, tarea: hoy.titulo },
+    proximos: lista.filter((entry) => entry !== hoy).slice(0, 6),
+    sigue: siguiente,
+    otras: [],
+  };
+}
+
+/** La respuesta determinista de "¿a quién le toca…?" (sin modelo). */
+function shiftAnswerText(answer: ShiftAnswer): string | null {
+  if (!answer.encontrado) {
+    if (answer.otras.length === 0) {
+      return "En este espacio no hay tareas que se repitan todavía.";
+    }
+    return `No encontré esa. Las que se repiten son: ${answer.otras.join(", ")}.`;
+  }
+  const partes: string[] = [`«${answer.titulo}» se repite.`];
+  if (answer.rotacion.length > 0) {
+    partes.push(`Rotación: ${answer.rotacion.join(", ")}.`);
+  }
+  if (answer.hoy !== null) {
+    partes.push(`Hoy (${answer.hoy.fecha}) le toca a ${answer.hoy.quien}.`);
+  } else if (answer.sigue !== "" && answer.sigue !== "yo") {
+    partes.push(`Hoy no hay turno creado todavía; el siguiente es de ${answer.sigue}.`);
+  } else {
+    partes.push("Hoy no hay turno creado todavía.");
+  }
+  if (answer.proximos.length > 0) {
+    partes.push(
+      `Después: ${answer.proximos.map((entry) => `${entry.quien} (${entry.fecha})`).join(", ")}.`,
+    );
+  }
+  return partes.join(" ");
 }
 
 /**
@@ -975,10 +1216,10 @@ async function execReadTool(
   if (name === "get_today_summary") {
     // "¿cómo viene mi día?": lo mismo que la vista "Tu día" pero en texto.
     // Tareas que vencen hoy + atrasadas, eventos de hoy, listas fijadas con
-    // pendientes y encuestas abiertas sin mi voto. Los turnos aún no tienen
-    // tablas (quedan en [] hasta el prompt de recurrentes).
+    // pendientes, encuestas abiertas sin mi voto y los TURNOS de hoy (las
+    // ocurrencias de series que me tocan).
     const { start, end } = dayRangeISO(new Date());
-    const [tasks, overdue, events, lists, polls] = await Promise.all([
+    const [tasks, overdue, events, lists, polls, shifts] = await Promise.all([
       userRest(
         `/tasks?workspace_id=eq.${ws}&status=neq.done&due_at=gte.${encodeURIComponent(start)}&due_at=lt.${encodeURIComponent(end)}&select=id,title,due_at,project_id&order=due_at.asc&limit=20`,
         jwt,
@@ -999,6 +1240,12 @@ async function execReadTool(
         `/polls?workspace_id=eq.${ws}&closed_at=is.null&select=id,question,kind,closes_at&order=created_at.desc&limit=10`,
         jwt,
       ),
+      uid === undefined
+        ? Promise.resolve({ ok: false, status: 0, data: null })
+        : userRest(
+            `/tasks?workspace_id=eq.${ws}&series_id=not.is.null&status=neq.done&due_at=gte.${encodeURIComponent(start)}&due_at=lt.${encodeURIComponent(end)}&select=id,title,due_at,series_id,series_occurrence,assignee_ids&order=due_at.asc&limit=20`,
+            jwt,
+          ),
     ]);
     // Encuestas sin mi voto (si se conoce el uid; si no, van todas).
     let pollsOpen: unknown = polls.data;
@@ -1036,14 +1283,63 @@ async function execReadTool(
       }));
       pendingLists = counts.filter((c) => c.pendiente);
     }
+    // Turnos de hoy: solo los que me tocan (si se conoce el uid).
+    const turnosHoy = shifts.ok && Array.isArray(shifts.data) && uid !== undefined
+      ? (shifts.data as Record<string, unknown>[])
+          .filter((row) => {
+            const list = row["assignee_ids"];
+            return Array.isArray(list) && list.includes(uid);
+          })
+          .map((row) => ({
+            id: row["id"],
+            titulo: String(row["title"] ?? ""),
+            turno: row["series_occurrence"] ?? null,
+            proyecto: row["project_id"] ?? "",
+          }))
+      : [];
     return JSON.stringify({
       tareas_hoy: tasks.data,
       tareas_atrasadas: overdue.data,
       eventos_hoy: events.data,
       listas_pendientes: pendingLists,
       encuestas_por_votar: pollsOpen,
-      turnos_hoy: [],
+      turnos_hoy: turnosHoy,
     });
+  }
+  if (name === "list_series") {
+    // Tareas que se repiten: regla + rotación en texto (nombres, no uids).
+    const res = await userRest(
+      `/task_series?workspace_id=eq.${ws}&select=id,title,recurrence_kind,recurrence_interval,recurrence_unit,weekdays,month_day,month_week,month_weekday,rotation,rotation_index,next_occurrence,active&order=created_at.asc&limit=50`,
+      jwt,
+    );
+    if (!res.ok || !Array.isArray(res.data)) return "No pude leer las tareas que se repiten.";
+    const rows = res.data as Record<string, unknown>[];
+    if (rows.length === 0) return "En este espacio no hay tareas que se repitan todavía.";
+    const members = await listSpaceMembers(workspaceId as string, jwt);
+    const nameOf = (value: string): string => {
+      const found = members.find((member) => member.uid === value);
+      return found?.name ?? (value === uid ? "yo" : "alguien");
+    };
+    return JSON.stringify({
+      series: rows.map((row) => ({
+        titulo: String(row["title"] ?? ""),
+        regla: describeSeriesRule(row),
+        rotacion: (Array.isArray(row["rotation"]) ? (row["rotation"] as unknown[]) : [])
+          .filter((entry): entry is string => typeof entry === "string")
+          .map(nameOf),
+        activa: row["active"] === true,
+      })),
+    });
+  }
+  if (name === "shift_query") {
+    const asked = (asString(args["title"]) ?? "").trim();
+    const found = await resolveShiftAnswer(
+      workspaceId as string,
+      jwt,
+      asked,
+      uid ?? "",
+    );
+    return JSON.stringify(found);
   }
   if (name === "list_events") {
     const res = await userRest(
@@ -1430,6 +1726,48 @@ async function precheckAction(
     }
     return ok;
   }
+  if (action === "create_series") {
+    // Serie de tareas: título, regla y rotación tienen que calzar antes de
+    // ofrecer la tarjeta (la base vuelve a validarlo al insertar).
+    const title = paramStr(params, "title");
+    if (workspaceId === null || title === null || title.trim() === "") {
+      return { ok: false, message: "Dime qué es lo que se repite." };
+    }
+    const kind = paramStr(params, "kind");
+    if (kind !== "daily" && kind !== "weekly" && kind !== "monthly" && kind !== "interval") {
+      return { ok: false, message: "Dime cada cuánto se repite (cada día, cada martes, el 5 de cada mes…)." };
+    }
+    if (kind === "weekly") {
+      const days = Array.isArray(params["weekdays"])
+        ? params["weekdays"].filter((day): day is number => typeof day === "number" && day >= 0 && day <= 6)
+        : [];
+      if (days.length === 0) {
+        return { ok: false, message: "¿Qué día o días? Por ejemplo: cada martes." };
+      }
+    }
+    if (kind === "monthly") {
+      const hasDay = typeof params["monthDay"] === "number" && (params["monthDay"] as number) >= 1;
+      const hasWeek =
+        typeof params["monthWeek"] === "number" && typeof params["monthWeekday"] === "number";
+      if (!hasDay && !hasWeek) {
+        return { ok: false, message: "¿El día de cada mes o un día de la semana (el primer lunes)?" };
+      }
+    }
+    // La rotación solo puede ser gente del espacio.
+    if (Array.isArray(params["rotation"])) {
+      const wanted = params["rotation"].filter(
+        (entry): entry is string => typeof entry === "string" && entry !== "",
+      );
+      if (wanted.length > 0) {
+        const members = await listSpaceMembers(workspaceId, ctx.jwt);
+        const uids = new Set(members.map((member) => member.uid));
+        if (wanted.some((entry) => !uids.has(entry))) {
+          return { ok: false, message: "En la rotación solo entran miembros del espacio." };
+        }
+      }
+    }
+    return ok;
+  }
   if (action === "create_poll") {
     const chatId = paramStr(params, "chatId") ?? paramStr(params, "chat_id");
     if (workspaceId === null || chatId === null) {
@@ -1768,6 +2106,34 @@ function detectIntentFallback(text: string): LlmToolCall {
   if (/(mis proyectos|proyectos)/.test(lower)) {
     return { name: "list_projects", args: {} };
   }
+  // Tareas recurrentes y turnos (por si el proveedor no soporta tools): el
+  // analizador ya resolvió la regla y la rotación sin modelo.
+  if (/(a quien le toca|quien le toca|turno de|que turno)/.test(lower)) {
+    const asked = analyzeIntent(text);
+    if (asked !== null && asked.action === "shift_query") {
+      return { name: "shift_query", args: { title: asked.title } };
+    }
+  }
+  if (/(cada\s+\w+|todos los|todo el|turno rotativo|rotativo)/.test(lower)) {
+    const parsed = analyzeIntent(text);
+    if (parsed !== null && parsed.action === "create_series" && parsed.series !== null) {
+      const series = parsed.series;
+      return {
+        name: "create_series",
+        args: {
+          title: parsed.title,
+          kind: series.kind,
+          interval: series.interval,
+          unit: series.unit,
+          weekdays: series.weekdays,
+          monthDay: series.monthDay,
+          monthWeek: series.monthWeek,
+          monthWeekday: series.monthWeekday,
+          timeOfDay: series.time ?? "09:00",
+        },
+      };
+    }
+  }
   // Compañero de escritorio (por si el proveedor no soporta tools): el
   // analizador ya resolvió verbo y parámetros sin modelo.
   if (/(mi-?pc|@mi-?pc|@mipc)/.test(lower)) {
@@ -1797,7 +2163,7 @@ function paramStr(params: Record<string, unknown>, key: string): string | null {
 }
 
 export type UndoItem = {
-  kind: "task" | "event" | "post" | "list_item";
+  kind: "task" | "event" | "post" | "list_item" | "series";
   id: string;
   label: string;
   workspaceId: string;
@@ -2432,6 +2798,86 @@ async function execConfirmedAction(
     );
   }
 
+  if (action === "create_series") {
+    // Serie = plantilla. El INSERT es con el JWT del usuario (la RLS exige ser
+    // miembro y crearla a nombre propio) y el trigger `task_series_after_insert`
+    // genera la primera ocurrencia; el resto llega solo por el barrido o al
+    // completar la anterior. Todo con SQL barato: ni una llamada al modelo.
+    const title = paramStr(params, "title");
+    if (workspaceId === null || title === null || title.trim() === "") {
+      return fail("Me falta lo que se repite. Dímelo y la creo.");
+    }
+    const projectId = await targetProject(
+      paramStr(params, "projectId") ?? paramStr(params, "project_id"),
+    );
+    if (projectId === null) {
+      return fail("No pude abrir la Bandeja del espacio. Inténtalo de nuevo.");
+    }
+    const kindRaw = paramStr(params, "kind") ?? "weekly";
+    const kind =
+      kindRaw === "daily" || kindRaw === "monthly" || kindRaw === "interval" ? kindRaw : "weekly";
+    const weekdays = (Array.isArray(params["weekdays"]) ? params["weekdays"] : [])
+      .filter((day): day is number => typeof day === "number" && day >= 0 && day <= 6);
+    const monthDayRaw = params["monthDay"];
+const monthWeekRaw = params["monthWeek"];
+const monthWeekdayRaw = params["monthWeekday"];
+const monthDay = typeof monthDayRaw === "number" ? Math.trunc(monthDayRaw) : null;
+const monthWeek = typeof monthWeekRaw === "number" ? Math.trunc(monthWeekRaw) : null;
+const monthWeekday = typeof monthWeekdayRaw === "number" ? Math.trunc(monthWeekdayRaw) : null;
+    const intervalRaw = params["interval"];
+    const interval =
+      typeof intervalRaw === "number" && Number.isFinite(intervalRaw)
+        ? Math.min(60, Math.max(1, Math.round(intervalRaw)))
+        : 1;
+    const rotation = (Array.isArray(params["rotation"]) ? params["rotation"] : [])
+      .filter((entry): entry is string => typeof entry === "string" && entry !== "")
+      .slice(0, 20);
+    const res = await userRest("/task_series", ctx.jwt, {
+      method: "POST",
+      body: {
+        workspace_id: workspaceId,
+        project_id: projectId,
+        title: title.trim().slice(0, 200),
+        notes: paramStr(params, "notes") ?? "",
+        priority: "normal",
+        recurrence_kind: kind,
+        recurrence_interval: interval,
+        recurrence_unit: paramStr(params, "unit") === "days" ? "days" : "weeks",
+        weekdays: kind === "weekly" ? weekdays : [],
+        month_day: kind === "monthly" ? monthDay : null,
+        month_week: kind === "monthly" && monthDay === null ? monthWeek : null,
+        month_weekday: kind === "monthly" && monthDay === null ? monthWeekday : null,
+        start_date: (paramStr(params, "startDate") ?? "").slice(0, 10) || todayDateISO(),
+        time_of_day: (paramStr(params, "timeOfDay") ?? "09:00").slice(0, 5),
+        remind_time: (paramStr(params, "remindTime") ?? "09:00").slice(0, 5),
+        ends_on: (paramStr(params, "endsOn") ?? "").slice(0, 10) || null,
+        rotation,
+        rotation_index: 0,
+        created_by: ctx.uid,
+      },
+    });
+    if (!res.ok || !isRecord(res.data)) {
+      const detail = isRecord(res.data) ? asString(res.data["message"]) : null;
+      return fail(detail ?? "No pude crear la tarea que se repite. Revisa la regla e inténtalo de nuevo.");
+    }
+    const id = asString(res.data["id"]) ?? "";
+    const regla = describeSeriesRule({
+      recurrence_kind: kind,
+      recurrence_interval: interval,
+      recurrence_unit: paramStr(params, "unit") === "days" ? "days" : "weeks",
+      weekdays: kind === "weekly" ? weekdays : [],
+      month_day: kind === "monthly" ? monthDay : null,
+      month_week: kind === "monthly" && monthDay === null ? monthWeek : null,
+      month_weekday: kind === "monthly" && monthDay === null ? monthWeekday : null,
+    });
+    const rotacion = rotation.length > 0 ? " Los turnos rotan entre los que elegiste." : "";
+    return done(
+      `Listo: «${title.trim().slice(0, 100)}» se repite ${regla}.${rotacion}`,
+      [`/proyectos?tab=turnos`],
+      id === "" ? [] : [{ kind: "series", id, label: title.trim().slice(0, 100), workspaceId, projectId }],
+    );
+  }
+
   return fail("Esa acción no está soportada.");
 }
 
@@ -3035,6 +3481,99 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return sseReplyStream(null, async (_send, sendPending) => {
         sendPending(pending);
       });
+    }
+    // Turnos: "¿a quién le toca la loza?" se responde con la rotación real del
+    // espacio, sin modelo (SQL barato, nada inventado).
+    if (quick !== null && quick.confident && quick.action === "shift_query") {
+      let wsForTurnos: string | undefined;
+      if (input.mode === "mention") {
+        const member = await isMember(input.workspaceId, uid);
+        if (!member) return json(403, { code: "forbidden" });
+        wsForTurnos = input.workspaceId;
+      }
+      const wsId = wsForTurnos ?? await defaultWorkspaceId(uid, token);
+      if (wsId !== null) {
+        const answer = await resolveShiftAnswer(wsId, token, quick.title, uid);
+        const text = shiftAnswerText(answer);
+        if (text !== null) {
+          let saveTurnos: ((full: string) => Promise<void>) | null = null;
+          if (input.mode === "mention") {
+            const { workspaceId: ws, chatId, threadParentId } = input;
+            saveTurnos = (full: string) => saveMentionReply(ws, chatId, full, threadParentId);
+          } else {
+            const chatId = await ensurePersonalChat(uid);
+            if (chatId !== null) saveTurnos = (full: string) => savePersonalReply(chatId, full);
+          }
+          return sseReplyStream(saveTurnos, async (send) => {
+            send(text);
+          });
+        }
+      }
+    }
+    // Serie de tareas: "cada domingo alguien distinto riega las plantas: Sofi,
+    // Tomás y yo" se arma con el analizador (regla + padrón) y pide tarjeta.
+    if (quick !== null && quick.confident && quick.action === "create_series" && quick.series !== null) {
+      let wsForSeries: string | undefined;
+      if (input.mode === "mention") {
+        const member = await isMember(input.workspaceId, uid);
+        if (!member) return json(403, { code: "forbidden" });
+        wsForSeries = input.workspaceId;
+      }
+      const wsId = wsForSeries ?? await defaultWorkspaceId(uid, token);
+      if (wsId !== null) {
+        const series = quick.series;
+        const members = await listSpaceMembers(wsId, token);
+        const rotation: string[] = [];
+        let selfPending = false;
+        for (const person of series.people) {
+          if (person === "yo" || person === "mi" || person === "nosotros") {
+            selfPending = true;
+            continue;
+          }
+          const hit = resolvePerson(person, members, uid);
+          if (hit !== null && "uid" in hit) {
+            if (!rotation.includes(hit.uid)) rotation.push(hit.uid);
+          } else if (hit !== null && "ambiguous" in hit) {
+            return sseReplyStream(null, async (send) => {
+              send(
+                `Hay más de una persona llamada ${person}. Dime el nombre completo y la/armo.`,
+              );
+            });
+          }
+        }
+        if (selfPending && !rotation.includes(uid)) rotation.push(uid);
+        if (series.people.length > 0 && rotation.length === 0) {
+          return sseReplyStream(null, async (send) => {
+            send(
+              "No encontré a esas personas en este espacio. Dime sus nombres como están en el perfil.",
+            );
+          });
+        }
+        const pending = {
+          id: crypto.randomUUID(),
+          action: "create_series",
+          label: actionLabel("create_series"),
+          params: pendingParams(
+            {
+              title: quick.title,
+              kind: series.kind,
+              interval: series.interval,
+              unit: series.unit,
+              weekdays: series.weekdays,
+              monthDay: series.monthDay,
+              monthWeek: series.monthWeek,
+              monthWeekday: series.monthWeekday,
+              startDate: todayDateISO(),
+              timeOfDay: series.time ?? "09:00",
+              rotation,
+            },
+            { workspaceId: wsId },
+          ),
+        };
+        return sseReplyStream(null, async (_send, sendPending) => {
+          sendPending(pending);
+        });
+      }
     }
     // Comandos al PC: "@mi-pc abre Spotify" se arma con el analizador, sin
     // modelo: es código, no IA. Sin PC vinculado (o verbo poco claro) se sigue

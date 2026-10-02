@@ -100,6 +100,61 @@ type TaskRow = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** Serie de la que nació la ocurrencia (20261017000000). */
+  series_id: string | null;
+  /** Número de ocurrencia dentro de la serie (20261017000000). */
+  series_occurrence: number | null;
+};
+
+/**
+ * Serie de tareas que se repiten (`task_series`, migración
+ * `20261017000000_tareas_recurrentes_turnos.sql`). `next_occurrence` y
+ * `last_occurrence` los calcula la base: el cliente no los toca.
+ */
+type TaskSeriesRow = {
+  id: string;
+  workspace_id: string;
+  project_id: string;
+  title: string;
+  notes: string;
+  priority: string;
+  recurrence_kind: string;
+  recurrence_interval: number;
+  recurrence_unit: string;
+  weekdays: number[];
+  month_day: number | null;
+  month_week: number | null;
+  month_weekday: number | null;
+  start_date: string;
+  time_of_day: string;
+  timezone: string;
+  remind_time: string;
+  ends_on: string | null;
+  rotation: string[];
+  rotation_index: number;
+  rotation_skips: Json;
+  pauses: Json;
+  next_occurrence: string | null;
+  last_occurrence: number;
+  active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Intercambio de turno (`shift_swaps`, misma migración). */
+type ShiftSwapRow = {
+  id: string;
+  series_id: string;
+  task_id: string | null;
+  workspace_id: string;
+  from_user_id: string;
+  to_user_id: string;
+  status: string;
+  note: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  created_at: string;
 };
 
 type IdeaRow = {
@@ -147,6 +202,8 @@ type NotificationPrefsRow = {
   agent: boolean;
   /** Compañero de escritorio (20261014000000_devices.sql). */
   device: boolean;
+  /** Turnos rotativos y tareas recurrentes (20261017000000). */
+  shift: boolean;
   quiet_start: string | null;
   quiet_end: string | null;
   updated_at: string;
@@ -1324,6 +1381,8 @@ export type Database = {
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
+          series_id?: string | null;
+          series_occurrence?: number | null;
         };
         Update: {
           id?: string;
@@ -1342,6 +1401,102 @@ export type Database = {
           created_by?: string | null;
           created_at?: string;
           updated_at?: string;
+          series_id?: string | null;
+          series_occurrence?: number | null;
+        };
+        Relationships: [];
+      };
+      task_series: {
+        Row: TaskSeriesRow;
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          project_id: string;
+          title: string;
+          notes?: string;
+          priority?: string;
+          recurrence_kind: string;
+          recurrence_interval?: number;
+          recurrence_unit?: string;
+          weekdays?: number[];
+          month_day?: number | null;
+          month_week?: number | null;
+          month_weekday?: number | null;
+          start_date: string;
+          time_of_day?: string;
+          timezone?: string;
+          remind_time?: string;
+          ends_on?: string | null;
+          rotation?: string[];
+          rotation_index?: number;
+          rotation_skips?: Json;
+          pauses?: Json;
+          next_occurrence?: string | null;
+          last_occurrence?: number;
+          active?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          workspace_id?: string;
+          project_id?: string;
+          title?: string;
+          notes?: string;
+          priority?: string;
+          recurrence_kind?: string;
+          recurrence_interval?: number;
+          recurrence_unit?: string;
+          weekdays?: number[];
+          month_day?: number | null;
+          month_week?: number | null;
+          month_weekday?: number | null;
+          start_date?: string;
+          time_of_day?: string;
+          timezone?: string;
+          remind_time?: string;
+          ends_on?: string | null;
+          rotation?: string[];
+          rotation_index?: number;
+          rotation_skips?: Json;
+          pauses?: Json;
+          next_occurrence?: string | null;
+          last_occurrence?: number;
+          active?: boolean;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      shift_swaps: {
+        Row: ShiftSwapRow;
+        Insert: {
+          id?: string;
+          series_id: string;
+          task_id?: string | null;
+          workspace_id: string;
+          from_user_id: string;
+          to_user_id: string;
+          status?: string;
+          note?: string;
+          resolved_at?: string | null;
+          resolved_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          series_id?: string;
+          task_id?: string | null;
+          workspace_id?: string;
+          from_user_id?: string;
+          to_user_id?: string;
+          status?: string;
+          note?: string;
+          resolved_at?: string | null;
+          resolved_by?: string | null;
+          created_at?: string;
         };
         Relationships: [];
       };
@@ -1417,6 +1572,7 @@ export type Database = {
           daily?: boolean;
           agent?: boolean;
           device?: boolean;
+          shift?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
@@ -1437,6 +1593,7 @@ export type Database = {
           daily?: boolean;
           agent?: boolean;
           device?: boolean;
+          shift?: boolean;
           quiet_start?: string | null;
           quiet_end?: string | null;
           updated_at?: string;
@@ -2227,6 +2384,71 @@ export type Database = {
           p_device_id: string;
         };
         Returns: boolean;
+      };
+      /* Tareas recurrentes y turnos (20261017000000). */
+      materialize_series_occurrences: {
+        Args: {
+          p_series_id?: string | null;
+          p_workspace_id?: string | null;
+          p_horizon_days?: number;
+          p_max_per_series?: number;
+        };
+        Returns: number;
+      };
+      edit_task_series: {
+        Args: {
+          p_series_id: string;
+          p_task_id?: string | null;
+          p_scope?: string;
+          p_patch?: Json;
+        };
+        Returns: number;
+      };
+      delete_task_series: {
+        Args: {
+          p_series_id: string;
+          p_task_id?: string | null;
+          p_scope?: string;
+        };
+        Returns: number;
+      };
+      request_shift_swap: {
+        Args: {
+          p_task_id: string;
+          p_to_user_id: string;
+          p_note?: string;
+        };
+        Returns: string;
+      };
+      resolve_shift_swap: {
+        Args: {
+          p_swap_id: string;
+          p_accept: boolean;
+        };
+        Returns: Json;
+      };
+      skip_shift: {
+        Args: {
+          p_series_id: string;
+          p_user_id: string;
+          p_from: string;
+          p_to?: string | null;
+          p_reason?: string;
+        };
+        Returns: number;
+      };
+      reorder_rotation: {
+        Args: {
+          p_series_id: string;
+          p_order: string[];
+        };
+        Returns: string[];
+      };
+      series_usage: {
+        Args: {
+          p_workspace_id: string;
+        };
+        Returns: Json;
       };
     };
     Enums: {

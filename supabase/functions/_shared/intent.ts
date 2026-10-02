@@ -20,7 +20,9 @@ export type IntentAction =
   | "create_poll"
   | "remember"
   | "recall"
-  | "device_command";
+  | "device_command"
+  | "create_series"
+  | "shift_query";
 
 /** Tipos de encuesta que el analizador puede proponer sin modelo. */
 export type PollIntentKind = "single" | "multiple" | "yesno" | "date";
@@ -41,6 +43,33 @@ export interface IntentRecurrence {
   time: string | null;
 }
 
+/**
+ * Serie pedida en lenguaje natural ("cada martes saca la basura", "cada domingo
+ * alguien distinto riega las plantas: Sofi, Tomás y yo"). Solo en
+ * `create_series`.
+ */
+export interface IntentSeries {
+  kind: "daily" | "weekly" | "monthly" | "interval";
+  /** kind 'interval': cada N (1-60). */
+  interval: number;
+  /** kind 'interval': días o semanas. */
+  unit: "days" | "weeks";
+  /** kind 'weekly': días elegidos (0 domingo … 6 sábado). */
+  weekdays: number[];
+  /** kind 'monthly': día del mes (1-31). */
+  monthDay: number | null;
+  /** kind 'monthly': semana 1-4 o 5 = el último. */
+  monthWeek: number | null;
+  /** kind 'monthly': día 0-6 del "primer lunes". */
+  monthWeekday: number | null;
+  /** Personas dichas para la rotación (minúsculas sin tildes; "yo" incluido). */
+  people: string[];
+  /** True si pidió que rote entre personas ("alguien distinto", "turno rotativo"). */
+  rotates: boolean;
+  /** Hora local "HH:MM" si se dijo ("a las 9"). */
+  time: string | null;
+}
+
 export interface AnalyzedIntent {
   action: IntentAction;
   /** Título limpio (sin verbo, fecha ni menciones de lista). */
@@ -48,6 +77,8 @@ export interface AnalyzedIntent {
   /** ISO UTC del momento (una vez) o null. */
   dateISO: string | null;
   recurrence: IntentRecurrence | null;
+  /** Serie pedida (solo en `create_series`); null en el resto. */
+  series: IntentSeries | null;
   /** Tokens @mencionados normalizados (sin @). */
   mentions: string[];
   /** Nombre de la lista ("súper") en add_list, o null. */
@@ -662,6 +693,238 @@ function parseDevice(original: string, normalized: string): DeviceParse | null {
   return null;
 }
 
+// --- Tareas recurrentes y turnos (create_series / shift_query) -------------
+//
+// "cada martes saca la basura" y "cada domingo alguien distinto riega las
+// plantas: Sofi, Tomás y yo" se resuelven SIN modelo: la recurrencia sale de los
+// días dichos y la rotación de los nombres que aparecen al final. La tarjeta de
+// confirmación deja corregir regla, fecha y turno.
+
+const SERIES_ROTATE_RE =
+  /(alguien distinto|alguien diferente|cada vez (le )?toca|turno rotativo|rotativos?|repartid[oa]s?|le toque a cada uno|por turnos)/;
+const SERIES_RE =
+  /(cada\s+(lunes|martes|miercoles|jueves|viernes|sabado|domingo|dia|dias|\d{1,2}\s*(dias| semanas| semanas|semanas))|todos los dias|todos los (lunes|martes|miercoles|jueves|viernes|sabado|domingo)|cada mes|\bturno\b|\brotac|el?\s*(primer|primero|primera|segundo|segunda|tercer|tercero|cuarto|cuarta|ultimo|ultima)\s+(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\s+(de cada|de este|del)\s+mes)/;
+const SHIFT_QUERY_RE =
+  /(a quien le toca|quien le toca|quien tiene (el |la )?turno|que turno (tengo|es|de)|le toca (hoy|manana|esta semana)|turno de)/;
+
+const SERIES_MONTH_WEEK: Readonly<Record<string, number>> = {
+  primer: 1,
+  primero: 1,
+  primera: 1,
+  segunda: 2,
+  segundo: 2,
+  tercera: 2,
+  tercer: 3,
+  tercero: 3,
+  cuarta: 4,
+  cuarto: 4,
+  ultima: 5,
+  ultimo: 5,
+  última: 5,
+  último: 5,
+};
+
+function weekdayFromName(name: string): number | null {
+  const index = weekdayIndex(name);
+  return index >= 0 ? index : null;
+}
+
+/** "lunes, miércoles y viernes" -> [1,3,5] (en el orden dicho, sin repetir). */
+function weekdaysFromList(text: string): number[] {
+  const out: number[] = [];
+  for (const part of text.split(/\s*(?:,|\/|;|\bo\b|\by\b)\s*/)) {
+    const day = weekdayFromName(part.trim());
+    if (day !== null && !out.includes(day)) out.push(day);
+  }
+  return out;
+}
+
+function emptySeries(): IntentSeries {
+  return {
+    kind: "weekly",
+    interval: 1,
+    unit: "weeks",
+    weekdays: [],
+    monthDay: null,
+    monthWeek: null,
+    monthWeekday: null,
+    people: [],
+    rotates: false,
+    time: null,
+  };
+}
+
+/** Nombres de personas al final: "Sofi, Tomás y yo" -> ["sofi","tomas","yo"]. */
+function peopleFromTail(tail: string): string[] {
+  const out: string[] = [];
+  for (const part of tail.split(/\s*(?:,|\/|;|\bo\b|\by\b)\s*/)) {
+    const name = normalizeIntent(part.trim()).replace(/[^a-zñ ]/g, "").trim();
+    if (name === "" || name.length > 24) continue;
+    if (!out.includes(name)) out.push(name);
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+/**
+ * Regla de la serie en lenguaje natural. Devuelve null si no se entiende la
+ * recurrencia (el llamador sigue al modelo).
+ */
+function parseSeriesRule(
+  original: string,
+  normalized: string,
+  wall: { year: number; month: number; day: number; weekday: number },
+): { series: IntentSeries; title: string } | null {
+  const series = emptySeries();
+  let rest = normalized;
+  const time = extractTime(normalized);
+  const minutes = time === null ? null : time.minutes;
+  const hhmm =
+    minutes === null
+      ? null
+      : `${pad2(Math.floor(minutes / 60))}:${pad2(minutes % 60)}`;
+  series.time = hhmm;
+  series.rotates = SERIES_ROTATE_RE.test(normalized);
+
+  // Personas: la cola tras los dos puntos (o tras "con") es el padrón.
+  const colon = normalized.match(/:\s*([^:]+)$/);
+  if (colon !== null) {
+    series.people = peopleFromTail(colon[1] ?? "");
+    rest = removeSpan(rest, colon[0] ?? "");
+    if (series.people.length > 0) series.rotates = true;
+  }
+  const withPeople = normalized.match(
+    /\bcon\s+([a-zñ0-9áéíóúü ,]+?)\s+(?:para|que|hasta|desde)\b/,
+  );
+  if (withPeople !== null && series.people.length === 0) {
+    series.people = peopleFromTail(withPeople[1] ?? "");
+    if (series.people.length > 0) series.rotates = true;
+  }
+
+  // "cada N días/semanas" (intervalo).
+  const intervalMatch = normalized.match(
+    /cada\s+(\d{1,2})\s*(dias|d[ií]as|semanas|semana)/,
+  );
+  if (intervalMatch !== null) {
+    const amount = parseInt(intervalMatch[1] ?? "1", 10);
+    if (Number.isFinite(amount) && amount >= 1 && amount <= 60) {
+      series.kind = "interval";
+      series.interval = amount;
+      series.unit = (intervalMatch[2] ?? "").startsWith("s") ? "weeks" : "days";
+      rest = removeSpan(rest, intervalMatch[0] ?? "");
+    }
+  }
+
+  if (series.kind !== "interval") {
+    // "todos los días", "cada día", "diariamente".
+    const daily = normalized.match(
+      /(todos los dias|cada dia|diariamente|todos los d[ií]as)/,
+    );
+    // "el 5 de cada mes" / "el primer lunes de cada mes" / "cada mes".
+    const monthDay = normalized.match(/el (\d{1,2}) de cada mes/);
+    const monthWeekday = normalized.match(
+      /el?\s*(primera|primero|primer|segunda|segundo|tercera|tercer|tercero|cuarta|cuarto|ultima|ultimo)\s+(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\s+(?:de\s+cada|de\s+este|del)\s+mes/,
+    );
+    if (daily !== null) {
+      series.kind = "daily";
+      rest = removeSpan(rest, daily[0] ?? "");
+    } else if (monthDay !== null) {
+      const day = parseInt(monthDay[1] ?? "0", 10);
+      if (day >= 1 && day <= 31) {
+        series.kind = "monthly";
+        series.monthDay = day;
+        rest = removeSpan(rest, monthDay[0] ?? "");
+      }
+    } else if (monthWeekday !== null) {
+      const week = SERIES_MONTH_WEEK[monthWeekday[1] ?? ""] ?? 1;
+      const day = weekdayFromName(monthWeekday[2] ?? "");
+      if (day !== null) {
+        series.kind = "monthly";
+        series.monthDay = null;
+        series.monthWeek = week;
+        series.monthWeekday = day;
+        rest = removeSpan(rest, monthWeekday[0] ?? "");
+      }
+    } else if (/cada mes|todos los meses/.test(normalized)) {
+      series.kind = "monthly";
+      series.monthDay = wall.day;
+      rest = removeSpan(rest, "cada mes");
+      rest = removeSpan(rest, "todos los meses");
+    } else {
+      // Varios días ("los martes y jueves") antes que uno ("cada martes").
+      const list = normalized.match(/((?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)(?:\s*(?:,|\/|;|o|y)\s*(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo))+)/);
+      if (list !== null) {
+        const days = weekdaysFromList(list[1] ?? "");
+        if (days.length > 0) {
+          series.kind = "weekly";
+          series.weekdays = days;
+          rest = removeSpan(rest, list[0] ?? "");
+        }
+      } else {
+        const single = normalized.match(
+          /(cada|todos los|los)\s+(lunes|martes|miercoles|jueves|viernes|sabado|domingo)/,
+        );
+        if (single !== null) {
+          const day = weekdayFromName(single[2] ?? "");
+          if (day !== null) {
+            series.kind = "weekly";
+            series.weekdays = [day];
+            rest = removeSpan(rest, single[0] ?? "");
+          }
+        }
+      }
+    }
+  }
+
+  if (series.kind === "weekly" && series.weekdays.length === 0) {
+    // "turno rotativo para…": sin día dicho, se propone hoy y la tarjeta lo
+    // deja cambiar.
+    if (!series.rotates) return null;
+    series.weekdays = [wall.weekday];
+  }
+  if (series.kind === "monthly" && series.monthDay === null && series.monthWeek === null) {
+    return null;
+  }
+
+  // Título: lo que queda, sin conectores ni el "que/alguien distinto".
+  let title = rest;
+  if (time !== null) title = removeSpan(title, time.span);
+  for (const lead of [
+    /^(por favor\s+)?(loki\s*,?\s*)?/,
+    /^(que|para que|de que)\s+/,
+    /^(crea|crear|agrega|agregar|anade|anadir|anota|anotar|suma|sumar|agenda|agendar|programa|programar|pon|poner|haz|hacer|quiero que|necesito que)\s+(una\s+|un\s+|unos\s+|unas\s+)?/,
+    /^(tarea|recordatorio|serie|rotacion|turno)s?\s+(de\s+|para\s+|en\s+)?/,
+    /^(turno rotativo|rotacion|rotativo|turnos)\s+/,
+    /^\s*(de\s+)?todos los\s+/,
+    /\balguien (distinto|diferente)\s+/,
+    /\bque\s+(le\s+)?toca\s+(a\s+)?/,
+    /^\s*toca\s+/,
+  ]) {
+    title = title.replace(lead, "");
+  }
+  // Conectores que quedan al frente ("para sacar la basura").
+  title = title.replace(/^\s*(para|de|con|en|a)\s+/, "");
+  title = title.replace(/@[\p{L}\p{N}_.-]+/gu, "");
+  title = cleanTitle(restoreAccents(original, title) || title);
+  return { series, title };
+}
+
+/** "¿A quién le toca la loza?" -> shift_query con el nombre de la tarea. */
+function parseShiftQuery(original: string, normalized: string): string | null {
+  const match = normalized.match(SHIFT_QUERY_RE);
+  if (match === null) return null;
+  let rest = normalized.slice((match.index ?? 0) + match[0].length);
+  rest = rest
+    .replace(/(hoy|manana|pasado manana|esta semana|el\s+\w+)/g, " ")
+    .replace(/(^|\s)(de|del|en|el|la|los|las|para|con)\s+/g, " ")
+    .replace(/\?\s*$/, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (rest === "") return null;
+  const title = cleanTitle(restoreAccents(original, rest) || rest);
+  return title === "" ? null : title;
+}
+
 /**
  * Analiza un pedido en español. Si `confident` es true, el llamador puede
  * actuar sin modelo (crear con confirmación o responder con plantilla).
@@ -681,6 +944,7 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
       title: device.title,
       dateISO: null,
       recurrence: null,
+      series: null,
       mentions,
       listName: null,
       pollKind: null,
@@ -689,6 +953,50 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
       deviceArgs: device.args,
       confident: device.confident,
     };
+  }
+
+  // Turnos: "¿a quién le toca la loza?" se responde con la rotación real, sin
+  // modelo. Un aviso ("recuérdale que le toca…") sigue siendo recordatorio.
+  if (!REMIND_RE.test(normalized) && SHIFT_QUERY_RE.test(normalized)) {
+    const asked = parseShiftQuery(text, normalized);
+    if (asked !== null) {
+      return {
+        action: "shift_query",
+        title: asked,
+        dateISO: null,
+        recurrence: null,
+        series: null,
+        mentions,
+        listName: null,
+        pollKind: null,
+        pollOptions: [],
+        deviceAction: null,
+        deviceArgs: {},
+        confident: true,
+      };
+    }
+  }
+
+  // Serie de tareas: "cada martes saca la basura", "cada domingo alguien
+  // distinto riega las plantas: Sofi, Tomás y yo".
+  if (SERIES_RE.test(normalized) && !REMIND_RE.test(normalized)) {
+    const parsedSeries = parseSeriesRule(text, normalized, wall);
+    if (parsedSeries !== null && parsedSeries.title !== "") {
+      return {
+        action: "create_series",
+        title: parsedSeries.title,
+        dateISO: null,
+        recurrence: null,
+        series: parsedSeries.series,
+        mentions,
+        listName: null,
+        pollKind: null,
+        pollOptions: [],
+        deviceAction: null,
+        deviceArgs: {},
+        confident: true,
+      };
+    }
   }
 
   // Encuesta: tiene su propio camino (pregunta + opciones, a veces con
@@ -700,6 +1008,7 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
       title: poll.question,
       dateISO: null,
       recurrence: null,
+      series: null,
       mentions,
       listName: null,
       pollKind: poll.kind,
@@ -719,6 +1028,7 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
       title: memory,
       dateISO: null,
       recurrence: null,
+      series: null,
       mentions,
       listName: null,
       pollKind: null,
@@ -891,6 +1201,7 @@ export function analyzeIntent(text: string, options?: AnalyzeOptions): AnalyzedI
     title,
     dateISO,
     recurrence,
+    series: null,
     mentions,
     listName,
     pollKind: null,

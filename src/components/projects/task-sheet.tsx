@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Repeat, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { inputClassName, labelClassName } from "@/components/auth/auth-ui";
+import { SeriesSheet } from "@/components/series/series-sheet";
 import { useMembers } from "@/hooks/use-chat";
 import {
   useCreateTask,
@@ -19,9 +20,11 @@ import {
   useTasks,
   useUpdateTask,
 } from "@/hooks/use-organizer";
+import { useSeries } from "@/hooks/use-series";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
 import type { TaskItem, TaskPriority, TaskStatus } from "@/types/organizer";
+import type { SeriesItem } from "@/types/recurring";
 import { cn } from "@/lib/utils";
 
 const STATUS_OPTIONS: readonly { value: TaskStatus; label: string }[] = [
@@ -85,6 +88,14 @@ export function TaskSheet({
   const createTask = useCreateTask(projectId, currentWorkspaceId);
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
+  /** Hoja "Repetir" / "Turno rotativo" (solo con tarea ya guardada). */
+  const [seriesIntent, setSeriesIntent] = React.useState<"repeat" | "rotation" | null>(null);
+  const [editingSeries, setEditingSeries] = React.useState<SeriesItem | null>(null);
+  const seriesQuery = useSeries(currentWorkspaceId);
+  const parentSeries =
+    task === null || task.seriesId === null
+      ? null
+      : (seriesQuery.data ?? []).find((item) => item.id === task.seriesId) ?? null;
 
   const [title, setTitle] = React.useState(task?.title ?? "");
   const [notes, setNotes] = React.useState(task?.notes ?? "");
@@ -412,6 +423,32 @@ export function TaskSheet({
               </div>
             </div>
           ) : null}
+          {task !== null && task.seriesId !== null ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-start gap-2 rounded-sm bg-surface-soft px-3 py-2.5">
+                <Icon icon={Repeat} size={20} className="mt-0.5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-body-sm text-foreground">
+                    Ocurrencia {task.seriesOccurrence ?? "?"} de una tarea que se repite.
+                  </p>
+                  <p className="text-meta text-muted-foreground">
+                    Al editar o borrar eliges si aplica solo a esta o también a las
+                    siguientes.
+                  </p>
+                </div>
+              </div>
+              {parentSeries !== null ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full"
+                  onClick={() => setEditingSeries(parentSeries)}
+                >
+                  Editar la repetición
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           {error !== null ? (
             <p role="alert" className="text-meta text-danger">
               {error}
@@ -420,6 +457,26 @@ export function TaskSheet({
           <Button type="submit" disabled={saving} className="w-full">
             {saving ? "Guardando…" : task === null ? "Crear tarea" : "Guardar cambios"}
           </Button>
+          {task === null || task.seriesId === null ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setSeriesIntent("repeat")}
+              >
+                <Icon icon={Repeat} size={20} />
+                Repetir
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setSeriesIntent("rotation")}
+              >
+                <Icon icon={Users} size={20} />
+                Turno rotativo
+              </Button>
+            </div>
+          ) : null}
           {task !== null ? (
             <Button
               type="button"
@@ -433,6 +490,31 @@ export function TaskSheet({
           ) : null}
         </form>
       </DialogContent>
+
+      {/* "Repetir" y "Turno rotativo": la tarea es la plantilla de la serie. */}
+      <SeriesSheet
+        open={seriesIntent !== null || editingSeries !== null}
+        wsId={currentWorkspaceId ?? ""}
+        uid={user?.uid ?? ""}
+        intent={seriesIntent ?? "repeat"}
+        template={
+          seriesIntent === null && editingSeries === null
+            ? null
+            : {
+                projectId: task?.projectId ?? projectId,
+                title: task?.title ?? title,
+                notes: task?.notes ?? notes,
+                priority: task?.priority ?? priority,
+                dueAt: task?.dueAt?.toDate() ?? parseInputValue(due),
+              }
+        }
+        series={editingSeries}
+        taskId={editingSeries !== null ? task?.id ?? null : null}
+        onClose={() => {
+          setSeriesIntent(null);
+          setEditingSeries(null);
+        }}
+      />
     </Dialog>
   );
 }

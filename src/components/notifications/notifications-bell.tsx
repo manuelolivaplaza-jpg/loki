@@ -12,6 +12,7 @@ import {
   Heart,
   ListChecks,
   MonitorSmartphone,
+  Repeat,
   Reply,
   Sparkles,
   Sunrise,
@@ -39,6 +40,7 @@ export const NOTIFICATION_ICONS: Record<NotificationType, LucideIcon> = {
   daily: Sunrise,
   agent: Bot,
   device: MonitorSmartphone,
+  shift: Repeat,
 };
 
 /** Campana del header con punto si hay no leídas. */

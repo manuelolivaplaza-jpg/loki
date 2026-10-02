@@ -7,6 +7,7 @@ import { Icon } from "@/components/ui/icon";
 import { formatHour } from "@/lib/chat/format";
 import { SECTIONS } from "@/components/shell/sections";
 import type { EventItem, EventOccurrence } from "@/types/organizer";
+import type { ShiftMark } from "@/components/calendar/calendar-month";
 import { cn } from "@/lib/utils";
 
 function dayKey(date: Date): number {
@@ -29,10 +30,15 @@ function dayMeta(date: Date, today: Date): { badge: string; label: string; isTod
 
 export function CalendarAgenda({
   occurrences,
+  shifts = [],
   onSelectEvent,
+  onSelectShift,
 }: {
   occurrences: EventOccurrence[];
+  /** Turnos y tareas recurrentes de la ventana (marcas discretas). */
+  shifts?: readonly { date: Date; mark: ShiftMark }[];
   onSelectEvent: (event: EventItem) => void;
+  onSelectShift?: (mark: ShiftMark) => void;
 }): React.JSX.Element {
   const today = React.useMemo(() => new Date(), []);
   const groups = React.useMemo(() => {
@@ -54,7 +60,33 @@ export function CalendarAgenda({
     return sorted;
   }, [occurrences]);
 
-  if (groups.length === 0) {
+  const marksByDay = React.useMemo(() => {
+    const map = new Map<string, ShiftMark[]>();
+    for (const entry of shifts) {
+      const key = `${entry.date.getFullYear()}-${entry.date.getMonth()}-${entry.date.getDate()}`;
+      const list = map.get(key) ?? [];
+      list.push(entry.mark);
+      map.set(key, list);
+    }
+    return map;
+  }, [shifts]);
+
+  const markedDays = React.useMemo(
+    () =>
+      [...marksByDay.entries()]
+        .map(([key, marks]) => ({
+          day: new Date(
+            Number(key.split("-")[0]),
+            Number(key.split("-")[1]),
+            Number(key.split("-")[2]),
+          ),
+          marks,
+        }))
+        .sort((a, b) => a.day.getTime() - b.day.getTime()),
+    [marksByDay],
+  );
+
+  if (groups.length === 0 && markedDays.length === 0) {
     const section = SECTIONS.calendario;
     return (
       <EmptyState
@@ -128,6 +160,60 @@ export function CalendarAgenda({
                           </span>
                         ) : null}
                       </span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          </li>
+        );
+      })}
+      {/* Turnos: marcas discretas por día (siguen el motor de la serie). */}
+      {markedDays.map(({ day, marks }) => {
+        const meta = dayMeta(day, today);
+        return (
+          <li key={`turnos-${day.toISOString()}`}>
+            <section aria-label={`Turnos: ${meta.badge}, ${meta.label}`}>
+              <div className="flex items-center gap-3 px-1 pb-2">
+                <span
+                  className={cn(
+                    "flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-2xl leading-none",
+                    meta.isToday
+                      ? "bg-accent/20 text-foreground"
+                      : "bg-surface-soft text-foreground",
+                  )}
+                >
+                  <span className="text-body font-bold leading-5">{day.getDate()}</span>
+                  <span className="text-meta capitalize leading-4 opacity-70">
+                    {new Intl.DateTimeFormat("es", { month: "short" }).format(day).replace(".", "")}
+                  </span>
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-body font-semibold leading-6 text-foreground">
+                    Turnos
+                  </p>
+                  <p className="text-meta leading-4 text-muted-foreground">
+                    {meta.badge} · {marks.length === 1 ? "1 turno" : `${marks.length} turnos`}
+                  </p>
+                </div>
+              </div>
+              <ol className="relative ml-[22px] flex flex-col gap-2 border-l border-dashed border-divider pl-4">
+                {marks.map((mark) => (
+                  <li key={mark.taskId} className="relative">
+                    <span
+                      aria-hidden="true"
+                      className="absolute -left-[21px] top-4 h-2.5 w-2.5 rounded-full border-2 border-background bg-accent"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onSelectShift?.(mark)}
+                      aria-label={`Turno: ${mark.title}`}
+                      className="flex w-full items-center gap-3 rounded-2xl border border-dashed border-divider px-4 py-2.5 text-left outline-none interactive"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-body-sm font-medium text-foreground">
+                        {mark.title}
+                      </span>
+                      <span className="shrink-0 text-meta text-muted-foreground">Turno</span>
                     </button>
                   </li>
                 ))}

@@ -114,6 +114,20 @@ export type TodayPoll = {
   messageId: string;
 };
 
+/**
+ * Turno de hoy: una ocurrencia de una serie que me toca (soy el responsable del
+ * turno). Es una tarea normal (`series_id`), así que se puede completar desde
+ * aquí con el mismo check que cualquier tarea.
+ */
+export type TodayShift = {
+  id: string;
+  seriesId: string;
+  projectId: string;
+  title: string;
+  occurrence: number;
+  dueAt: Timestamp;
+};
+
 function startOfToday(): Date {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -157,6 +171,51 @@ export async function listTodayTasks(wsId: string, uid: string): Promise<{
     .filter((task) => (task.dueAt?.toMillis() ?? 0) < start)
     .sort((a, b) => (a.dueAt?.toMillis() ?? 0) - (b.dueAt?.toMillis() ?? 0));
   return { dueToday, overdue };
+}
+
+/**
+ * Turnos que me tocan hoy (ocurrencias de series con responsable = yo).
+ * Rango en hora local del dispositivo, como el resto de "Tu día".
+ */
+export async function listTodayShifts(
+  wsId: string,
+  uid: string,
+  dayKey: string,
+): Promise<TodayShift[]> {
+  if (wsId === "" || uid === "") return [];
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey);
+  if (match === null) return [];
+  const start = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const end = new Date(start.getTime() + 86_400_000);
+  const { data, error } = await getSupabaseClient()
+    .from("tasks")
+    .select("id, project_id, title, due_at, series_id, series_occurrence, assignee_ids, status")
+    .eq("workspace_id", wsId)
+    .not("series_id", "is", null)
+    .neq("status", "done")
+    .gte("due_at", start.toISOString())
+    .lt("due_at", end.toISOString())
+    .order("due_at", { ascending: true })
+    .limit(20);
+  if (error !== null || data === null) return [];
+  return (data as {
+    id: string;
+    project_id: string;
+    title: string;
+    due_at: string | null;
+    series_id: string | null;
+    series_occurrence: number | null;
+    assignee_ids: string[];
+  }[])
+    .filter((row) => row.series_id !== null && row.assignee_ids.includes(uid) && row.due_at !== null)
+    .map((row) => ({
+      id: row.id,
+      seriesId: row.series_id ?? "",
+      projectId: row.project_id,
+      title: row.title,
+      occurrence: row.series_occurrence ?? 0,
+      dueAt: Timestamp.fromDate(new Date(row.due_at as string)),
+    }));
 }
 
 /** Listas fijadas con pendientes (para "Tu día" y el resumen). */

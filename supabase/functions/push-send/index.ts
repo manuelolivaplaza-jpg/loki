@@ -233,6 +233,9 @@ function prefKeyFor(type: string): string | null {
     case "agent": return "agent";
     // Compañero de escritorio: "Tu PC necesita tu aprobación" (sin datos del PC).
     case "device": return "device";
+    // Turnos rotativos y tareas recurrentes: "mañana te toca", "te toca hoy",
+    // "se te pasó tu turno". El aviso de turno abre la tarea (deep link).
+    case "shift": return "shift";
     default: return null;
   }
 }

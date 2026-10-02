@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import {
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   BellRing,
   Brain,
@@ -10,6 +12,7 @@ import {
   ListPlus,
   Megaphone,
   Pencil,
+  Repeat,
   Undo2,
 } from "lucide-react";
 import type {
@@ -18,7 +21,20 @@ import type {
   LokiConfirmItem,
   UndoItem,
 } from "@/lib/ai/tools-client";
+import { WEEKDAY_CHIPS } from "@/types/recurring";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
+
+/** Chips L M M J V S D (los mismos que en la hoja de repetición). */
+const SERIES_WEEKDAY_CHIPS: readonly { value: number; label: string; short: string }[] =
+  WEEKDAY_CHIPS.map((chip) => ({
+    value: chip.value,
+    label:
+      chip.value === 0
+        ? "domingo"
+        : ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado"][chip.value] ?? "día",
+    short: chip.label,
+  }));
 import {
   deviceCatalogEntry,
   deviceRiskOf,
@@ -40,6 +56,9 @@ function ActionIcon({ action }: { action: string }): React.JSX.Element {
   const className = "h-5 w-5 shrink-0 text-primary";
   if (action === "create_event" || action === "update_event") {
     return <CalendarPlus className={className} aria-hidden="true" />;
+  }
+  if (action === "create_series") {
+    return <Repeat className={className} aria-hidden="true" />;
   }
   if (action === "create_task" || action === "update_task") {
     return <ListPlus className={className} aria-hidden="true" />;
@@ -98,7 +117,26 @@ type ItemDraft = {
   memorySensitive: boolean;
   /** Solo remember: día de caducidad ("" = nunca). */
   memoryExpires: string;
+  /** Solo create_series: regla de repetición. */
+  seriesKind: string;
+  seriesInterval: number;
+  seriesUnit: string;
+  seriesWeekdays: number[];
+  seriesMonthDay: string;
+  seriesMonthWeek: string;
+  seriesMonthWeekday: string;
+  /** Solo create_series: uids de la rotación, en orden. */
+  seriesRotation: string[];
+  /** Solo create_series: hora del aviso. */
+  seriesRemindTime: string;
 };
+
+const SERIES_KIND_LABELS: readonly { value: string; label: string }[] = [
+  { value: "daily", label: "Todos los días" },
+  { value: "weekly", label: "Cada semana" },
+  { value: "monthly", label: "Cada mes" },
+  { value: "interval", label: "Cada N" },
+];
 
 const MEMORY_CATEGORY_LABELS: readonly { value: string; label: string }[] = [
   { value: "salud", label: "Salud" },
@@ -221,6 +259,15 @@ function draftFromParams(params: Record<string, unknown>): ItemDraft {
   const poll = "question" in params ? draftPollOptions(params) : null;
   // Memoria: el texto viaja en `content` (no en `title`).
   const memory = "content" in params ? params : null;
+  // Serie: la regla viaja en `kind`/`weekdays`/`monthDay`… y la rotación en
+  // `rotation` (uids en orden). Se distingue de una encuesta (que también trae
+  // `kind`) por las claves propias de la serie.
+  const series =
+    "kind" in params &&
+    typeof params["kind"] === "string" &&
+    ("startDate" in params || "timeOfDay" in params || "rotation" in params)
+      ? params
+      : null;
   const title =
     poll !== null
       ? typeof params["question"] === "string"
@@ -266,10 +313,23 @@ function draftFromParams(params: Record<string, unknown>): ItemDraft {
   const listName = typeof params["list"] === "string" ? params["list"] : "";
   const listItems = poll !== null ? poll.items : draftListLines(params);
   const checked = typeof params["checked"] === "boolean" ? params["checked"] : true;
+  const rawWeekdays = series !== null && Array.isArray(series["weekdays"]) ? series["weekdays"] : [];
+  const rawRotation =
+    series !== null && Array.isArray(params["rotation"]) ? params["rotation"] : [];
+  const startDate =
+    series !== null && typeof series["startDate"] === "string" ? series["startDate"] : "";
+  const dateParts = startDate === "" ? null : splitDateTime(`${startDate}T12:00`);
+  const remindTime =
+    series !== null && typeof series["remindTime"] === "string" ? series["remindTime"] : "09:00";
+  if (series !== null && time === "") {
+    // En una serie la hora viaja en `timeOfDay` (no en las claves de fecha).
+    time =
+      typeof series["timeOfDay"] === "string" ? series["timeOfDay"].slice(0, 5) : "";
+  }
   return {
     include: true,
     title,
-    date,
+    date: dateParts === null ? date : dateParts.date,
     time,
     assignee,
     projectId,
@@ -285,6 +345,25 @@ function draftFromParams(params: Record<string, unknown>): ItemDraft {
         : "otros",
     memorySensitive: memory !== null && memory["sensitive"] === true,
     memoryExpires: date,
+    seriesKind: series !== null ? String(series["kind"]) : "weekly",
+    seriesInterval:
+      series !== null && typeof series["interval"] === "number" ? series["interval"] : 1,
+    seriesUnit: series !== null && series["unit"] === "days" ? "days" : "weeks",
+    seriesWeekdays: rawWeekdays.filter(
+      (day): day is number => typeof day === "number" && day >= 0 && day <= 6,
+    ),
+    seriesMonthDay:
+      series !== null && typeof series["monthDay"] === "number" ? String(series["monthDay"]) : "",
+    seriesMonthWeek:
+      series !== null && typeof series["monthWeek"] === "number" ? String(series["monthWeek"]) : "",
+    seriesMonthWeekday:
+      series !== null && typeof series["monthWeekday"] === "number"
+        ? String(series["monthWeekday"])
+        : "",
+    seriesRotation: rawRotation.filter(
+      (uid): uid is string => typeof uid === "string" && uid !== "",
+    ),
+    seriesRemindTime: remindTime,
   };
 }
 
@@ -293,6 +372,10 @@ function applyDraft(
   draft: ItemDraft,
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...params };
+  // Una serie trae `kind` (como una encuesta) pero además sus claves propias:
+  // `startDate`, `timeOfDay` o `rotation`.
+  const isSeries =
+    "kind" in next && ("startDate" in next || "timeOfDay" in next || "rotation" in next);
   if ("title" in next) next["title"] = draft.title;
   if ("text" in next && !("title" in next)) next["text"] = draft.title;
   if ("item" in next) next["item"] = draft.title;
@@ -331,7 +414,7 @@ function applyDraft(
   }
   if ("content" in next) {
     // La memoria ya tiene su caducidad: nada más que interpretar fechas aquí.
-  } else if (draft.date !== "") {
+  } else if (draft.date !== "" && !isSeries) {
     const iso = joinDateTime(draft.date, draft.time);
     if (iso !== null) {
       for (const key of DATE_KEYS) {
@@ -344,6 +427,39 @@ function applyDraft(
         next["dueAt"] = iso;
       }
     }
+  }
+  // Serie: la plantilla y la regla viajan en sus propias claves.
+  if (isSeries) {
+    next["title"] = draft.title;
+    next["kind"] = draft.seriesKind;
+    next["interval"] = Math.min(60, Math.max(1, Math.round(draft.seriesInterval)));
+    next["unit"] = draft.seriesUnit;
+    if (draft.seriesKind === "weekly") {
+      next["weekdays"] = draft.seriesWeekdays;
+      next["monthDay"] = null;
+      next["monthWeek"] = null;
+      next["monthWeekday"] = null;
+    } else if (draft.seriesKind === "monthly") {
+      next["weekdays"] = [];
+      if (draft.seriesMonthDay !== "") {
+        next["monthDay"] = Number(draft.seriesMonthDay);
+        next["monthWeek"] = null;
+        next["monthWeekday"] = null;
+      } else {
+        next["monthDay"] = null;
+        next["monthWeek"] = Number(draft.seriesMonthWeek);
+        next["monthWeekday"] = Number(draft.seriesMonthWeekday);
+      }
+    } else {
+      next["weekdays"] = [];
+      next["monthDay"] = null;
+      next["monthWeek"] = null;
+      next["monthWeekday"] = null;
+    }
+    next["startDate"] = draft.date === "" ? next["startDate"] : draft.date;
+    next["timeOfDay"] = draft.time === "" ? next["timeOfDay"] : draft.time;
+    next["remindTime"] = draft.seriesRemindTime;
+    next["rotation"] = draft.seriesRotation;
   }
   if (draft.assignee !== "") {
     next["assigneeIds"] = draft.assignee === "none" ? [] : [draft.assignee];
@@ -407,6 +523,270 @@ function DevicePendingFields({
         {risk === "sensible"
           ? "Acción sensible: al confirmar se pide tu aprobación en el teléfono."
           : "Se ejecuta en tu PC al confirmar."}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Campos de una tarea que se repite: la regla (con chips de día, iguales que
+ * en la hoja) y el padrón de turnos en orden. Todo es código, no IA: la tarjeta
+ * deja corregir lo que el analizador entendió.
+ */
+function SeriesPendingFields({
+  draft,
+  members,
+  onPatch,
+}: {
+  draft: ItemDraft;
+  members: CardMember[];
+  onPatch: (patch: Partial<ItemDraft>) => void;
+}): React.JSX.Element {
+  const inRotation = (uid: string): number => draft.seriesRotation.indexOf(uid);
+  const toggle = (uid: string): void => {
+    onPatch({
+      seriesRotation:
+        inRotation(uid) >= 0
+          ? draft.seriesRotation.filter((value) => value !== uid)
+          : [...draft.seriesRotation, uid],
+    });
+  };
+  const move = (uid: string, delta: number): void => {
+    const copy = [...draft.seriesRotation];
+    const index = copy.indexOf(uid);
+    const next = index + delta;
+    if (index === -1 || next < 0 || next >= copy.length) return;
+    const [moved] = copy.splice(index, 1);
+    if (moved === undefined) return;
+    copy.splice(next, 0, moved);
+    onPatch({ seriesRotation: copy });
+  };
+  const toggleWeekday = (day: number): void => {
+    onPatch({
+      seriesWeekdays: draft.seriesWeekdays.includes(day)
+        ? draft.seriesWeekdays.filter((value) => value !== day)
+        : [...draft.seriesWeekdays, day],
+    });
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <label className="flex flex-col gap-1">
+        <span className={labelClass}>
+          <Pencil className="mr-1 inline h-3 w-3" aria-hidden="true" />
+          Lo que se repite
+        </span>
+        <input
+          type="text"
+          aria-label="Lo que se repite"
+          value={draft.title}
+          onChange={(event) => onPatch({ title: event.target.value })}
+          maxLength={200}
+          className={cn(inputClass, "min-h-11")}
+        />
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="flex flex-col gap-1">
+          <span className={labelClass}>Cada</span>
+          <select
+            aria-label="Frecuencia"
+            value={draft.seriesKind}
+            onChange={(event) => onPatch({ seriesKind: event.target.value })}
+            className={cn(inputClass, "min-h-11")}
+          >
+            {SERIES_KIND_LABELS.map((entry) => (
+              <option key={entry.value} value={entry.value}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {draft.seriesKind === "interval" ? (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Cada</span>
+              <input
+                type="number"
+                min={1}
+                max={60}
+                inputMode="numeric"
+                aria-label="Cada cuántas unidades"
+                value={draft.seriesInterval}
+                onChange={(event) =>
+                  onPatch({ seriesInterval: Number(event.target.value) || 1 })
+                }
+                className={cn(inputClass, "min-h-11")}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Unidad</span>
+              <select
+                aria-label="Unidad del intervalo"
+                value={draft.seriesUnit}
+                onChange={(event) => onPatch({ seriesUnit: event.target.value })}
+                className={cn(inputClass, "min-h-11")}
+              >
+                <option value="days">días</option>
+                <option value="weeks">semanas</option>
+              </select>
+            </label>
+          </div>
+        ) : draft.seriesKind === "monthly" && draft.seriesMonthDay === "" ? (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Cuál</span>
+              <select
+                aria-label="Semana del mes"
+                value={draft.seriesMonthWeek === "" ? "1" : draft.seriesMonthWeek}
+                onChange={(event) => onPatch({ seriesMonthWeek: event.target.value })}
+                className={cn(inputClass, "min-h-11")}
+              >
+                <option value="1">primero</option>
+                <option value="2">segundo</option>
+                <option value="3">tercero</option>
+                <option value="4">cuarto</option>
+                <option value="5">último</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className={labelClass}>Día</span>
+              <select
+                aria-label="Día de la semana"
+                value={draft.seriesMonthWeekday === "" ? "1" : draft.seriesMonthWeekday}
+                onChange={(event) => onPatch({ seriesMonthWeekday: event.target.value })}
+                className={cn(inputClass, "min-h-11")}
+              >
+                <option value="1">lunes</option>
+                <option value="2">martes</option>
+                <option value="3">miércoles</option>
+                <option value="4">jueves</option>
+                <option value="5">viernes</option>
+                <option value="6">sábado</option>
+                <option value="0">domingo</option>
+              </select>
+            </label>
+          </div>
+        ) : draft.seriesKind === "monthly" ? (
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>Día</span>
+            <input
+              type="number"
+              min={1}
+              max={31}
+              inputMode="numeric"
+              aria-label="Día del mes"
+              value={draft.seriesMonthDay}
+              onChange={(event) => onPatch({ seriesMonthDay: event.target.value })}
+              className={cn(inputClass, "min-h-11")}
+            />
+          </label>
+        ) : (
+          <span />
+        )}
+      </div>
+      {draft.seriesKind === "weekly" ? (
+        <div role="group" aria-label="Días de la semana" className="flex gap-1">
+          {SERIES_WEEKDAY_CHIPS.map((chip) => (
+            <button
+              key={chip.value}
+              type="button"
+              aria-pressed={draft.seriesWeekdays.includes(chip.value)}
+              aria-label={chip.label}
+              onClick={() => toggleWeekday(chip.value)}
+              className={cn(
+                "h-10 w-10 rounded-full text-body-sm font-semibold outline-none interactive",
+                draft.seriesWeekdays.includes(chip.value)
+                  ? "bg-foreground text-background dark:bg-white dark:text-black"
+                  : "bg-surface-soft text-muted-foreground",
+              )}
+            >
+              {chip.short}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="grid grid-cols-3 gap-2">
+        <label className="flex flex-col gap-1">
+          <span className={labelClass}>Primera vez</span>
+          <input
+            type="date"
+            aria-label="Primera ocurrencia"
+            value={draft.date}
+            onChange={(event) => onPatch({ date: event.target.value })}
+            className={cn(inputClass, "min-h-11")}
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className={labelClass}>Hora</span>
+          <input
+            type="time"
+            aria-label="Hora de la ocurrencia"
+            value={draft.time}
+            onChange={(event) => onPatch({ time: event.target.value })}
+            className={cn(inputClass, "min-h-11")}
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className={labelClass}>Aviso</span>
+          <input
+            type="time"
+            aria-label="Hora del aviso"
+            value={draft.seriesRemindTime}
+            onChange={(event) => onPatch({ seriesRemindTime: event.target.value })}
+            className={cn(inputClass, "min-h-11")}
+          />
+        </label>
+      </div>
+      <div>
+        <span className={labelClass}>Turnos (en orden)</span>
+        <p className="mb-1 text-meta text-muted-foreground">
+          Toca a quien participe, en el orden que deba tocarle.
+        </p>
+        <div role="group" aria-label="Rotación de turnos" className="flex flex-col">
+          {members.map((member) => {
+            const position = inRotation(member.uid);
+            return (
+              <div key={member.uid} className="flex min-h-11 items-center gap-2">
+                <Checkbox
+                  checked={position >= 0}
+                  onCheckedChange={() => toggle(member.uid)}
+                  label={member.name}
+                />
+                <span className="min-w-0 flex-1 truncate text-body-sm text-foreground">
+                  {member.name}
+                </span>
+                {position >= 0 ? (
+                  <span className="flex items-center gap-1">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-soft text-meta font-semibold text-foreground">
+                      {position + 1}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Subir a ${member.name}`}
+                      disabled={position === 0}
+                      onClick={() => move(member.uid, -1)}
+                      className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground outline-none interactive disabled:opacity-40"
+                    >
+                      <ArrowUp size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Bajar a ${member.name}`}
+                      disabled={position === draft.seriesRotation.length - 1}
+                      onClick={() => move(member.uid, 1)}
+                      className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground outline-none interactive disabled:opacity-40"
+                    >
+                      <ArrowDown size={16} />
+                    </button>
+                  </span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <p className="text-meta text-muted-foreground">
+        Las fechas siguen tu zona horaria y las horas de aviso llegan por push (salvo
+        que las apagues en Configuración → Notificaciones).
       </p>
     </div>
   );
@@ -574,6 +954,12 @@ export function AiToolCard({
                 <DevicePendingFields
                   params={item.params}
                   draft={draft}
+                  onPatch={(patch) => setDraft(index, patch)}
+                />
+              ) : item.action === "create_series" ? (
+                <SeriesPendingFields
+                  draft={draft}
+                  members={members}
                   onPatch={(patch) => setDraft(index, patch)}
                 />
               ) : item.warning !== undefined ? (

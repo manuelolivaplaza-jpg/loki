@@ -8,6 +8,7 @@ import {
   ChevronRight,
   FolderPlus,
   Lightbulb,
+  Repeat,
   Sunrise,
   UserPlus,
   type LucideIcon,
@@ -29,6 +30,7 @@ import {
   useUpdateTask,
   useWorkspaceTasks,
 } from "@/hooks/use-organizer";
+import { useMyOccurrences } from "@/hooks/use-series";
 import { useProfileStore } from "@/stores/profile-store";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaces } from "@/stores/workspace-store";
@@ -129,6 +131,13 @@ function InicioHome(): React.JSX.Element {
   const [quickAccess, setQuickAccess] = React.useState<QuickAccess | null>(null);
 
   const now = React.useMemo(() => new Date(), []);
+  const todayKey = React.useMemo(() => {
+    const pad = (value: number): string => value.toString().padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  }, [now]);
+  const shiftsQuery = useMyOccurrences(currentWorkspaceId, user?.uid ?? null, todayKey);
+  const shifts = shiftsQuery.data ?? [];
+  const updateShift = useUpdateTask();
   const weekStart = React.useMemo(() => {
     const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
@@ -269,7 +278,7 @@ function InicioHome(): React.JSX.Element {
       {/* Tarjeta "Tu día": la push del resumen también abre /inicio?vista=dia. */}
       <Link
         href="/inicio?vista=dia"
-        aria-label={`Tu día, ${dayTasks.length + dayEvents.length} cosas hoy`}
+        aria-label={`Tu día, ${shifts.length + dayTasks.length + dayEvents.length} cosas hoy`}
         className="mt-4 flex min-h-14 items-center gap-3 rounded-lg border border-divider bg-background px-4 py-3 outline-none interactive"
       >
         <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-foreground">
@@ -280,15 +289,76 @@ function InicioHome(): React.JSX.Element {
             Tu día
           </span>
           <span className="block truncate text-body-sm text-muted-foreground">
-            {dayTasks.length + dayEvents.length === 0
+            {shifts.length + dayTasks.length + dayEvents.length === 0
               ? "Nada pendiente hoy"
-              : `${dayTasks.length + dayEvents.length} ${dayTasks.length + dayEvents.length === 1 ? "cosa" : "cosas"} hoy`}
+              : `${shifts.length + dayTasks.length + dayEvents.length} ${shifts.length + dayTasks.length + dayEvents.length === 1 ? "cosa" : "cosas"} hoy`}
           </span>
         </span>
         <Icon icon={ChevronRight} size={20} className="shrink-0 text-muted-foreground" />
       </Link>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 min-[1440px]:grid-cols-3">
+      <section aria-label="Te toca hoy">
+          <SectionLabel>Te toca hoy</SectionLabel>
+          {shifts.length === 0 ? (
+            <Card>
+              <p className="px-4 py-5 text-center text-body-sm text-muted-foreground">
+                Ningún turno hoy. Si quieres repartir algo, crea una repetición en
+                Proyectos → Turnos.
+              </p>
+            </Card>
+          ) : (
+            <Card>
+              {shifts.map((shift, index) => {
+                const label = `${shift.due_at === null ? "" : new Intl.DateTimeFormat("es", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }).format(new Date(shift.due_at))} · turno ${shift.series_occurrence ?? 0}`;
+                return (
+                  <React.Fragment key={shift.id}>
+                    {index > 0 ? <CardDivider /> : null}
+                    <CardRow minHeight="15">
+                      <span
+                        aria-hidden="true"
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-foreground"
+                      >
+                        <Icon icon={Repeat} size={20} />
+                      </span>
+                      <Checkbox
+                        checked={false}
+                        disabled={updateShift.isPending}
+                        onCheckedChange={() => {
+                          setTaskError(null);
+                          updateShift.mutate(
+                            { id: shift.id, patch: { status: "done" } },
+                            { onError: (error) => setTaskError(error.message) },
+                          );
+                        }}
+                        label={shift.title}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-body-sm font-medium text-foreground">
+                          {shift.title}
+                        </span>
+                        <span className="block truncate text-meta leading-4 text-muted-foreground">
+                          {label}
+                        </span>
+                      </span>
+                      <Link
+                        href={`/proyectos?project=${encodeURIComponent(shift.project_id)}&task=${encodeURIComponent(shift.id)}`}
+                        aria-label={`Abrir la tarea ${shift.title}`}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full outline-none interactive"
+                      >
+                        <Icon icon={ChevronRight} size={20} className="text-muted-foreground" />
+                      </Link>
+                    </CardRow>
+                  </React.Fragment>
+                );
+              })}
+            </Card>
+          )}
+        </section>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 min-[1440px]:grid-cols-3">
         <section aria-label="Progreso">
           <Card className="h-full p-4">
             <h2 className="text-body font-semibold text-foreground">Progreso</h2>

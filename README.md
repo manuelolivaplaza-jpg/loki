@@ -121,6 +121,23 @@ flowchart LR
   `device`, pantalla `/dispositivos/aprobar?cmd=…`, con re-autenticación como
   fallback en web) y el PC lo vuelve a comprobar antes de ejecutar. Permisos
   por PC, historial con filtros y auditoría inmutable.
+- **Tareas recurrentes y turnos rotativos** (`/proyectos?tab=turnos`): desde
+  la hoja de tarea, "Repetir" (diario, semanal con los días, mensual por día o
+  "primer lunes", cada N días o semanas, con fecha de término opcional) o
+  "Turno rotativo" (eliges quién y en qué orden). Una serie genera sus
+  ocurrencias como **tareas normales**, así que el kanban, Inicio, la búsqueda y
+  los recordatorios siguen funcionando sin cambios; la siguiente se crea al
+  terminar la actual o cuando llega su momento (SQL barato por triggers +
+  pg_cron, nunca cientos de tareas futuras) y las fechas salen de la zona de la
+  serie, con el horario de verano de Chile bien aplicado. Los turnos se
+  cambian ("¿me cambias el turno?", con aceptación de los dos), se saltan por
+  vacaciones con rango de fechas y se reordenan; hay una vista **Turnos** (en
+  móvil, lista por semana con avatares; en escritorio, grilla semanas × tareas)
+  y marcas discretas en el calendario. Avisos por push tipo `shift` ("Mañana te
+  toca", "Te toca hoy", "Se te pasó tu turno") que abren la tarea, y el bloque
+  "Te toca hoy" en Inicio y en "Tu día". Loki crea series con lenguaje natural
+  ("cada domingo alguien distinto riega las plantas: Sofi, Tomás y yo") y
+  responde "¿a quién le toca la loza?" sin modelo.
 
 ## Requisitos
 

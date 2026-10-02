@@ -602,6 +602,13 @@ export function ConversationView({
             setSendError("No se pudo deshacer todo. Revisa la pantalla correspondiente.");
             return;
           }
+        } else if (item.kind === "series") {
+          // La serie se lleva sus ocurrencias (y se puede volver a crear).
+          const { error } = await client.from("task_series").delete().eq("id", item.id);
+          if (error !== null) {
+            setSendError("No se pudo deshacer todo. Revisa la pantalla correspondiente.");
+            return;
+          }
         } else {
           const { error } = await client
             .from("messages")

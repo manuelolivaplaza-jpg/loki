@@ -321,7 +321,7 @@ begin
       v_from := null;
       v_to := null;
     end;
-    next when v_from is null;
+    continue when v_from is null;
     if v_to is null then v_to := v_from; end if;
     if p_date >= v_from and p_date <= v_to then
       return true;
@@ -344,22 +344,23 @@ declare
   v_item jsonb;
   v_from date;
   v_to date;
+  v_mio boolean;
 begin
   if p_skips is null or jsonb_typeof(p_skips) <> 'array' or p_user_id is null then
     return false;
   end if;
   for v_item in select value from jsonb_array_elements(p_skips) loop
-    begin
-      if lower(btrim(coalesce(v_item ->> 'user_id', ''))) <> p_user_id::text then
-        continue;
-      end if;
-      v_from := nullif(btrim(coalesce(v_item ->> 'from', '')), '')::date;
-      v_to := nullif(btrim(coalesce(v_item ->> 'to', '')), '')::date;
-    exception when others then
-      v_from := null;
-      v_to := null;
-    end;
-    next when v_from is null;
+    v_mio := lower(btrim(coalesce(v_item ->> 'user_id', ''))) = p_user_id::text;
+    if v_mio then
+      begin
+        v_from := nullif(btrim(coalesce(v_item ->> 'from', '')), '')::date;
+        v_to := nullif(btrim(coalesce(v_item ->> 'to', '')), '')::date;
+      exception when others then
+        v_from := null;
+        v_to := null;
+      end;
+    end if;
+    continue when not coalesce(v_mio, false) or v_from is null;
     if v_to is null then v_to := v_from; end if;
     if p_date >= v_from and p_date <= v_to then
       return true;
@@ -1936,13 +1937,16 @@ begin
     if v_user.user_id is null then continue; end if;
     if not v_user.enabled or not v_user.daily_on then continue; end if;
 
-    -- Zona horaria del usuario (si es inválida, se salta sin romper el job).
+    -- Zona horaria del usuario (si es inválida, se salta sin romper el job:
+    -- `continue` no puede saltar desde un bloque con manejador de excepción).
     v_tz := v_user.timezone;
+    v_local := now() at time zone 'America/Santiago';
     begin
       v_local := now() at time zone v_tz;
     exception when others then
-      continue;
+      v_local := null;
     end;
+    if v_local is null then continue; end if;
     v_today := v_local::date;
     v_dedupe := 'daily:' || to_char(v_today, 'YYYYMMDD');
 
@@ -2088,7 +2092,7 @@ begin
         );
     exception when others then
       v_shifts := 0;
-    end if;
+    end;
 
     -- Sin nada: solo sale si el usuario pidió el texto breve.
     if v_events = 0 and v_due_today = 0 and v_overdue = 0

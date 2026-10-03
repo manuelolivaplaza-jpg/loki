@@ -1,6 +1,6 @@
 # PROGRESO de Loki (traspaso a Forja nuevo)
 
-Actualizado: 02-10-2026 ~03:50 (hora de Chile, UTC-3), tras cerrar p16 con p16c.
+Actualizado: 02-10-2026 ~06:45 (hora de Chile, UTC-3), tras verificar el prompt 6.
 
 ## Datos básicos
 - **Proyecto:** `C:\Users\manue\OneDrive\Desktop\loki` (PC de Manu, Windows + PowerShell).
@@ -12,7 +12,7 @@ Actualizado: 02-10-2026 ~03:50 (hora de Chile, UTC-3), tras cerrar p16 con p16c.
 
 | Prompt | Tema | Estado | Commit(s) |
 |---|---|---|---|
-| 6 | Tareas recurrentes y turnos rotativos | **Hecho (tanda posterior a p16)**: migración `20261017000000_tareas_recurrentes_turnos.sql`, UI (hoja de tarea, vista Turnos, "Te toca hoy"), Loki (serie/turnos sin modelo) y tests RLS nuevos | local, sin commit |
+| 6 | Tareas recurrentes y turnos rotativos | **Hecho y verificado**: migración `20261017000000_tareas_recurrentes_turnos.sql` + reparación `20261018000000_reparacion_series_turnos.sql`, UI (hoja de tarea, vista Turnos, "Te toca hoy"), Loki (serie/turnos sin modelo) y tests RLS nuevos | local, sin commit |
 | 7 | Encuestas y decisiones rápidas en el chat | Hecho | `702faf8` + `86e800b` (completar) |
 | 8 | Notas de voz que se vuelven acción | Hecho | `1bbf109` + `f9b9aa2` (completar) |
 | 9 | Memoria del espacio | Hecho | `56a9868` + `fb41b23` (completar) |
@@ -27,10 +27,10 @@ Actualizado: 02-10-2026 ~03:50 (hora de Chile, UTC-3), tras cerrar p16 con p16c.
 - Stash `stash@{0}`: **"p09c parcial (descartado)"** (no aplicar). Rama local `p09c-descartado` apunta a `fb41b23`.
 - `.forja\orphan-p10-spacebunny\`: archivos de una sesión space-bunny huérfana de p10 (apartados, no usados).
 
-## Prompt 6 · tareas recurrentes y turnos rotativos (hecho sobre p16, sin verificar)
+## Prompt 6 · tareas recurrentes y turnos rotativos (hecho sobre p16, verificado 02-10)
 
-Migración nueva `supabase/migrations/20261017000000_tareas_recurrentes_turnos.sql` (nunca se editó
-ninguna anterior):
+Migraciones nuevas `supabase/migrations/20261017000000_tareas_recurrentes_turnos.sql` y
+`20261018000000_reparacion_series_turnos.sql` (nunca se editó ninguna anterior):
 
 - `task_series` (plantilla + regla acotada + zona + rotación `uuid[]` con índice, pausas/saltos en
   `jsonb`, `next_occurrence`/`last_occurrence` guardados por trigger) y `tasks.series_id` /
@@ -55,9 +55,57 @@ ninguna anterior):
   entiende "cada domingo alguien distinto riega las plantas: Sofi, Tomás y yo" y "¿a quién le toca la
   loza?" (sin LLM). `get_today_summary` ya devuelve `turnos_hoy` con datos reales.
 
-Pendiente de esta tanda: la verificación completa (sb:reset, typecheck, lint, test:unit, test:rls,
-build, build:capacitor) va en el prompt final, como siempre. La push con botón "Hecho" no se añadió:
-el canal Android actual no soporta acciones, así que el toque abre la tarea (deep link).
+La push con botón "Hecho" no se añadió: el canal Android actual no soporta acciones, así que el toque
+abre la tarea (deep link).
+
+### Verificación del prompt 6 (02-10 ~06:40)
+
+`sb:reset` fallaba: la migración del prompt 6 **no aplicaba** (3 errores de sintaxis en plpgsql) y,
+ya aplicada, dejaba las series sin ninguna ocurrencia. Todo se corrigió sin tocar migraciones
+commiteadas, salvo los tres errores de sintaxis de `20261017000000` (sin ellos ninguna migración
+posterior corre; el arreglo de lógica va en la nueva `20261018000000`).
+
+Arreglado en `20261018000000_reparacion_series_turnos.sql`:
+
+1. **Sin ocurrencias:** `materialize_series_occurrences` solo creaba tareas dentro del horizonte
+   (1 día) y con una serie semanal la primera caía 4-7 días después, así que la serie se quedaba sin
+   ninguna tarea (kanban, Turnos, "Te toca hoy" y el resumen diario vacíos). Ahora la serie mantiene
+   `series_min_live()` = 2 ocurrencias vivas a la vista, más las del horizonte: sigue acotado, no
+   aparecen cientos de tareas futuras y el barrido de pg_cron es lo único que despierta.
+2. **Alta de la serie:** el trigger creaba 3 ocurrencias de golpe (máximo por defecto); ahora crea
+   exactamente la primera.
+3. **Rotación corrida un puesto:** con `rotation_index = 0` el primer turno se le daba a la *segunda*
+   persona de la lista (`p_index - 1 + k`). Ahora el índice es base 0 sobre la lista, en SQL
+   (`series_pick_rotation`) y en el espejo del cliente.
+4. **`skip_shift` roto:** fallaba siempre con `record "v_task" has no field "project_id"` (el bucle no
+   seleccionaba la columna que usa el enlace del aviso). Con vacaciones, la RPC no funcionaba.
+5. **Borrar "esta y las siguientes"** se llevaba también lo ya completado, que es historial; ahora
+   queda como tarea normal.
+
+Sintaxis corregida en `20261017000000` (imposible aplicar sin eso): `next when` → `continue when` en
+`series_in_pause` y `series_is_skipped`, y en `create_daily_digests` un `end if;` donde iba `end;`
+más un `continue` dentro de un bloque con manejador de excepción (prohibido en plpgsql).
+
+Front y tests:
+- `src/lib/recurring/recurrence.ts` y `src/components/series/shifts-view.tsx`: el espejo de la
+  rotación coincide con SQL y, cuando la ocurrencia ya existe como tarea, se muestra el responsable
+  real de la base (la base es quien avanza la rotación).
+- `supabase/functions/loki-chat/index.ts`: `turnos_hoy` pedía `project_id` que no estaba en el
+  `select`, así que salía siempre vacío.
+- `tests/rls/recurring.test.mjs`: dos tests compares mal `(resultado ?? []).length` en vez de
+  `resultado.data.length` (comparaban `undefined`), la releída de la fila tras el alta (el
+  `RETURNING` del insert no ve lo que hace el AFTER trigger) y un test nuevo: las ocurrencias y los
+  intercambios son invisibles fuera del espacio.
+
+| Chequeo | Resultado |
+|---|---|
+| `npm run sb:reset` | **OK**: aplican las 25 migraciones, incluidas `20261017000000` y `20261018000000`. |
+| `npm run typecheck` | **OK** (0). |
+| `npm run lint` | **OK** (0 errores, los mismos 12 warnings preexistentes). |
+| `npm run test:unit` | **OK**: mentions 70, preview 8, intent 131. |
+| `npm run test:rls` | **OK: 199/199** (antes 191/198: los 7 fallos eran del prompt 6). |
+| `npm run build` | **OK** (29 páginas estáticas). |
+| `npm run build:capacitor` | **OK** (export + `cap sync android`). |
 
 ## Resultado de p16 + p16c (verificación final, 02-10 ~03:45)
 
@@ -84,8 +132,8 @@ Restos de diagnóstico: los 13 `diag-*.sql` se borraron (sin commitear) y `sb:re
 
 ## Pendientes para Manu (tras esta tanda)
 - p16 cerrado (`c0b3a31`). Pendiente: revisión manual en web y Android (puntos 3 y 4 de p16: no los hace opencode) y Edge Functions con `npm run sb:functions`.
-- **Prompt 6 (tareas recurrentes y turnos rotativos)**: hecho en la tanda posterior a p16 (ver la
-  sección de arriba). Falta su verificación y el commit.
+- **Prompt 6 (tareas recurrentes y turnos rotativos)**: verificado y en verde (ver la sección de
+  arriba). Falta el commit local.
 - Revisar y aprobar el push de p07-p16 a `origin/main` (todo local por ahora).
 - Lo de siempre: clave de IA, Google OAuth, FCM real, prueba en teléfono, RAM de WSL (ver "Pendientes y bloqueos").
 
@@ -102,7 +150,7 @@ Restos de diagnóstico: los 13 `diag-*.sql` se borraron (sin commitear) y `sb:re
 ## Tarea en curso
 - Sin tarea de Forja en curso. p16 cerrado en verde (p16c, EXIT 0, 02-10 03:44) y commiteado en `c0b3a31`.
 - Hay 2 procesos opencode de Manu activos desde 01-10 04:12 (`opencode` y `opencode serve --service`). **No matarlos.**
-- Migraciones: `20260929000000_init` · `20260930000000_organizer` · `…01_ai_tools` · `…02_storage` · `…03_search` · `…04_negatives_fix` · `…05_gcal` · `20261001000000_push_direct` · `20261003000000_ai_infra` · `20261004000000_loki_actions` · `20261005000000_convert_digest` · `20261006000000_lists` · `20261007000000_polls` · `20261008000000_transcriptions` · `20261009000000_space_memories` · `20261010000000_search_all` · `20261011000000_daily_digest` · `20261012000000_agents` · `20261013000000_agents_chat` · `20261014000000_devices` · `20261015000000_reparacion_verificacion` (p16) · `20261016000000_reparacion_rls_final` (p16c) · `20261017000000_tareas_recurrentes_turnos` (prompt 6).
+- Migraciones: `20260929000000_init` · `20260930000000_organizer` · `…01_ai_tools` · `…02_storage` · `…03_search` · `…04_negatives_fix` · `…05_gcal` · `20261001000000_push_direct` · `20261003000000_ai_infra` · `20261004000000_loki_actions` · `20261005000000_convert_digest` · `20261006000000_lists` · `20261007000000_polls` · `20261008000000_transcriptions` · `20261009000000_space_memories` · `20261010000000_search_all` · `20261011000000_daily_digest` · `20261012000000_agents` · `20261013000000_agents_chat` · `20261014000000_devices` · `20261015000000_reparacion_verificacion` (p16) · `20261016000000_reparacion_rls_final` (p16c) · `20261017000000_tareas_recurrentes_turnos` (prompt 6) · `20261018000000_reparacion_series_turnos` (verificación del prompt 6).
 - Edge Functions: `loki-chat`, `loki-worker`, `push-send`, `google-calendar`, `agent-callback`, `agent-connections`, `agent-dispatch`, `agent-task`, `device-pair` (secretos en `supabase/functions/.env`, gitignored; plantilla `.env.example`, ahora con `STT_*`).
 
 ## Próximas 5 tareas (criterio de aceptación)

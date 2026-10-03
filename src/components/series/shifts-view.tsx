@@ -103,11 +103,19 @@ function mergeOccurrences(
     const key = `${task.series_id}|${toDateKey(new Date(task.due_at))}`;
     byKey.set(key, task);
   }
-  return planned.map((entry) => ({
-    planned: entry,
-    task: byKey.get(`${entry.seriesId}|${entry.date}`) ?? null,
-    series,
-  }));
+  // Cuando la ocurrencia ya existe como tarea, manda la de la base: su
+  // responsable es el real (la base es quien avanzado la rotación al crearla,
+  // y puede haber cambiado por un intercambio o por vacaciones). El motor del
+  // cliente solo calcula las fechas que aún no existen.
+  return planned.map((entry) => {
+    const task = byKey.get(`${entry.seriesId}|${entry.date}`) ?? null;
+    const assigned = task === null ? "" : (task.assignee_ids ?? [])[0] ?? "";
+    return {
+      planned: { ...entry, assigneeId: assigned },
+      task,
+      series,
+    };
+  });
 }
 
 export function ShiftsView(): React.JSX.Element {

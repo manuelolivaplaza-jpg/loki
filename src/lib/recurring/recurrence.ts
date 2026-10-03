@@ -161,7 +161,8 @@ export function rotationAt(
   const n = rotation.length;
   if (n === 0) return { uid: "", nextIndex: Math.max(0, index) };
   for (let k = 0; k < n; k += 1) {
-    const pos = (((index - 1 + k) % n) + n) % n;
+    // `index` es base 0 sobre la lista: con 0 le toca a la primera persona.
+    const pos = ((index + k) % n + n) % n;
     const candidate = rotation[pos] ?? "";
     if (candidate === "") continue;
     if (isSkipped(skips, candidate, date)) continue;

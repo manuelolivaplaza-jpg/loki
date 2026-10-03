@@ -1243,7 +1243,7 @@ async function execReadTool(
       uid === undefined
         ? Promise.resolve({ ok: false, status: 0, data: null })
         : userRest(
-            `/tasks?workspace_id=eq.${ws}&series_id=not.is.null&status=neq.done&due_at=gte.${encodeURIComponent(start)}&due_at=lt.${encodeURIComponent(end)}&select=id,title,due_at,series_id,series_occurrence,assignee_ids&order=due_at.asc&limit=20`,
+            `/tasks?workspace_id=eq.${ws}&series_id=not.is.null&status=neq.done&due_at=gte.${encodeURIComponent(start)}&due_at=lt.${encodeURIComponent(end)}&select=id,title,due_at,project_id,series_id,series_occurrence,assignee_ids&order=due_at.asc&limit=20`,
             jwt,
           ),
     ]);

@@ -230,10 +230,18 @@ describe("RLS: tareas recurrentes y turnos", () => {
   // --- generación por eventos ------------------------------------------------
 
   it("al crear la serie aparece su primera ocurrencia como tarea normal", async () => {
-    const series = await createSeries({
+    const alta = await createSeries({
       title: "Lavar la loza",
       rotation: [member.id, owner.id],
     });
+    // El AFTER trigger de la serie arma la primera ocurrencia, así que el
+    // `INSERT ... RETURNING` todavía no la ve: se relee la fila.
+    const { data: series, error: rereadError } = await owner.client
+      .from("task_series")
+      .select("id, last_occurrence, next_occurrence")
+      .eq("id", alta.id)
+      .single();
+    if (rereadError) throw rereadError;
     assert.equal(series.last_occurrence, 1, "la primera ocurrencia se generó");
     assert.ok(series.next_occurrence !== null, "queda la siguiente fecha");
 
@@ -281,12 +289,14 @@ describe("RLS: tareas recurrentes y turnos", () => {
       .from("tasks")
       .select("id")
       .eq("series_id", series.id);
+    const antes = before.data ?? [];
+    const despues = after.data ?? [];
     assert.ok(
-      (after ?? []).length <= (before ?? []).length + 3,
+      despues.length <= antes.length + 3,
       "no se crean cientos de tareas futuras",
     );
-    const unique = new Set((after ?? []).map((row) => row.id));
-    assert.equal(unique.size, (after ?? []).length, "sin ocurrencias repetidas");
+    const unique = new Set(despues.map((row) => row.id));
+    assert.equal(unique.size, despues.length, "sin ocurrencias repetidas");
   });
 
   it("un miembro no genera ocurrencias de la serie de otro", async () => {
@@ -306,9 +316,58 @@ describe("RLS: tareas recurrentes y turnos", () => {
       .eq("series_id", series.id);
     assert.equal(made, 0, "un miembro no genera ocurrencias de la serie de otro");
     assert.equal(
-      (after ?? []).length,
-      (before ?? []).length,
+      (after.data ?? []).length,
+      (before.data ?? []).length,
       "no se crean tareas nuevas",
+    );
+  });
+
+  it("las ocurrencias y los intercambios son invisibles fuera del espacio", async () => {
+    const series = await createSeries({
+      title: "Solo del espacio",
+      rotation: [owner.id, member.id],
+    });
+    const { data: tasks } = await owner.client
+      .from("tasks")
+      .select("id")
+      .eq("series_id", series.id);
+    const taskId = (tasks ?? [])[0]?.id;
+    assert.ok(taskId !== undefined, "hay una ocurrencia viva");
+
+    // Un no miembro no ve la ocurrencia ni la serie de otro espacio.
+    const { data: foreignTasks } = await stranger.client
+      .from("tasks")
+      .select("id")
+      .eq("series_id", series.id);
+    assertNoRows(foreignTasks, "un ajeno no ve las ocurrencias");
+    const { data: foreignSeries } = await stranger.client
+      .from("task_series")
+      .select("id")
+      .eq("id", series.id);
+    assertNoRows(foreignSeries, "un ajeno no ve la serie");
+
+    // Y tampoco puede pedir un cambio de turno por su cuenta.
+    assertDenied(
+      await stranger.client.rpc("request_shift_swap", {
+        p_task_id: taskId,
+        p_to_user_id: member.id,
+        p_note: "Me apropio",
+      }),
+      "un ajeno pide el cambio de un turno ajeno",
+    );
+    const { data: strangerSwaps } = await stranger.client
+      .from("shift_swaps")
+      .select("id");
+    assertNoRows(strangerSwaps, "un ajeno no deja intercambios");
+
+    // Un miembro sí puede, porque es del espacio y está en la rotación.
+    assertAllowed(
+      await member.client.rpc("request_shift_swap", {
+        p_task_id: taskId,
+        p_to_user_id: owner.id,
+        p_note: "Lo pido yo",
+      }),
+      "un miembro pide el cambio de un turno de la serie",
     );
   });
 
